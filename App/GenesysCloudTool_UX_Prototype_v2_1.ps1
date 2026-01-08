@@ -6,6 +6,77 @@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
 # -----------------------------
+# XAML Helpers
+# -----------------------------
+
+function Escape-GcXml {
+  <#
+  .SYNOPSIS
+    Escapes special XML characters to prevent parsing errors.
+  
+  .DESCRIPTION
+    Uses System.Security.SecurityElement.Escape to properly escape
+    special characters like &, <, >, ", ' in XML/XAML content.
+  
+  .PARAMETER Text
+    The text to escape for XML/XAML.
+  
+  .EXAMPLE
+    Escape-GcXml "Routing & People"
+    # Returns: "Routing &amp; People"
+  #>
+  param([string]$Text)
+  
+  if ([string]::IsNullOrEmpty($Text)) { return $Text }
+  return [System.Security.SecurityElement]::Escape($Text)
+}
+
+function ConvertFrom-GcXaml {
+  <#
+  .SYNOPSIS
+    Safely loads XAML from a string using XmlReader + XamlReader.Load.
+  
+  .DESCRIPTION
+    This function provides a safe way to load XAML that avoids issues
+    with direct [xml] casting, particularly when XAML contains x:Name
+    or other namespace-dependent elements. It uses XmlReader with
+    proper settings and XamlReader.Load for parsing.
+  
+  .PARAMETER XamlString
+    The XAML string to parse.
+  
+  .EXAMPLE
+    $view = ConvertFrom-GcXaml -XamlString $xamlString
+  #>
+  param([Parameter(Mandatory)][string]$XamlString)
+  
+  try {
+    # Create StringReader from XAML string
+    $stringReader = New-Object System.IO.StringReader($XamlString)
+    
+    # Create XmlReader with appropriate settings
+    $xmlReaderSettings = New-Object System.Xml.XmlReaderSettings
+    $xmlReaderSettings.IgnoreWhitespace = $false
+    $xmlReaderSettings.IgnoreComments = $true
+    
+    $xmlReader = [System.Xml.XmlReader]::Create($stringReader, $xmlReaderSettings)
+    
+    # Load XAML using XamlReader
+    $result = [Windows.Markup.XamlReader]::Load($xmlReader)
+    
+    # Clean up
+    $xmlReader.Close()
+    $stringReader.Close()
+    
+    return $result
+  }
+  catch {
+    Write-Error "Failed to parse XAML: $($_.Exception.Message)"
+    throw
+  }
+}
+
+# -----------------------------
 # State + helpers
 # -----------------------------
 $script:AppState = [ordered]@{
@@ -571,13 +642,17 @@ $LstArtifacts.Add_MouseDoubleClick({
 function New-PlaceholderView {
   param([string]$Title, [string]$Hint)
 
-  [xml]$vx = @"
+  # Escape XML special characters to prevent parsing errors
+  $escapedTitle = Escape-GcXml $Title
+  $escapedHint = Escape-GcXml $Hint
+
+  $xamlString = @"
 <UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
   <Grid>
     <Border CornerRadius="10" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="14">
       <StackPanel>
-        <TextBlock Text="$Title" FontSize="16" FontWeight="SemiBold" Foreground="#FF111827"/>
-        <TextBlock Text="$Hint" Margin="0,8,0,0" Foreground="#FF6B7280" TextWrapping="Wrap"/>
+        <TextBlock Text="$escapedTitle" FontSize="16" FontWeight="SemiBold" Foreground="#FF111827"/>
+        <TextBlock Text="$escapedHint" Margin="0,8,0,0" Foreground="#FF6B7280" TextWrapping="Wrap"/>
         <TextBlock Text="UX-first module shell. Backend wiring comes later via a non-blocking job engine."
                    Margin="0,10,0,0" Foreground="#FF6B7280" TextWrapping="Wrap"/>
       </StackPanel>
@@ -585,13 +660,14 @@ function New-PlaceholderView {
   </Grid>
 </UserControl>
 "@
-  $r = New-Object System.Xml.XmlNodeReader $vx
-  [Windows.Markup.XamlReader]::Load($r)
+
+  ConvertFrom-GcXaml -XamlString $xamlString
 }
 
 function New-ConversationTimelineView {
-  [xml]$vx = @"
-<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
@@ -638,8 +714,8 @@ function New-ConversationTimelineView {
   </Grid>
 </UserControl>
 "@
-  $r = New-Object System.Xml.XmlNodeReader $vx
-  $view = [Windows.Markup.XamlReader]::Load($r)
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
 
   $txtConv  = $view.FindName('TxtConvId')
   $btnBuild = $view.FindName('BtnBuild')
@@ -708,8 +784,9 @@ function New-ConversationTimelineView {
 }
 
 function New-SubscriptionsView {
-  [xml]$vx = @"
-<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
@@ -807,8 +884,7 @@ function New-SubscriptionsView {
 </UserControl>
 "@
 
-  $r = New-Object System.Xml.XmlNodeReader $vx
-  $view = [Windows.Markup.XamlReader]::Load($r)
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
 
   $h = @{
     ChkTranscription = $view.FindName('ChkTranscription')
