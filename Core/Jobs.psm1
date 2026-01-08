@@ -225,4 +225,24 @@ function Get-GcAgentChecklistInferenceJobStatus {
   Invoke-GcRequest -Method GET -Path $path
 }
 
+Export-ModuleMember -Function Wait-GcAsyncJob, `
+  Start-GcAnalyticsConversationDetailsJob, `
+  Get-GcAnalyticsConversationDetailsJobAvailability, `
+  Get-GcAnalyticsConversationDetailsJobStatus, `
+  Stop-GcAnalyticsConversationDetailsJob, `
+  Get-GcAnalyticsConversationDetailsJobResults, `
+  Invoke-GcAnalyticsConversationDetailsQuery, `
+  Start-GcAnalyticsUserDetailsJob, `
+  Get-GcAnalyticsUserDetailsJobAvailability, `
+  Get-GcAnalyticsUserDetailsJobStatus, `
+  Stop-GcAnalyticsUserDetailsJob, `
+  Get-GcAnalyticsUserDetailsJobResults, `
+  Invoke-GcAnalyticsUserDetailsQuery, `
+  Start-GcUsageAggregatesQueryJob, `
+  Get-GcUsageAggregatesQueryJob, `
+  Start-GcClientUsageAggregatesQueryJob, `
+  Get-GcClientUsageAggregatesQueryJob, `
+  Start-GcAgentChecklistInferenceJob, `
+  Get-GcAgentChecklistInferenceJobStatus
+
 ### END: Core Jobs

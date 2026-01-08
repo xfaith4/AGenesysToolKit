@@ -1,0 +1,14 @@
+# Runtime artifacts
+artifacts/
+
+# Sensitive data
+*.token
+*.secrets.json
+
+# Logs
+*.log
+
+# Python cache (if added later)
+__pycache__/
+*.py[cod]
+*$py.class
