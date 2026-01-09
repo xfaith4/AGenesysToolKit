@@ -224,7 +224,7 @@ $script:WorkspaceModules = [ordered]@{
 # -----------------------------
 # XAML - App Shell + Backstage + Snackbar
 # -----------------------------
-[xml]$xaml = @"
+$xamlString = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Genesys Cloud Tool — UX Prototype v2.1" Height="900" Width="1560"
@@ -427,8 +427,7 @@ $script:WorkspaceModules = [ordered]@{
 </Window>
 "@
 
-$reader = New-Object System.Xml.XmlNodeReader $xaml
-$Window = [Windows.Markup.XamlReader]::Load($reader)
+$Window = ConvertFrom-GcXaml -XamlString $xamlString
 
 function Get-El([string]$name) { $Window.FindName($name) }
 
@@ -904,7 +903,9 @@ function New-SubscriptionsView {
   }
 
   # Streaming timer (simulated AudioHook / Agent Assist)
-  $script:StreamTimer?.Stop() | Out-Null
+  if ($null -ne $script:StreamTimer) {
+    $script:StreamTimer.Stop() | Out-Null
+  }
   $script:StreamTimer = New-Object Windows.Threading.DispatcherTimer
   $script:StreamTimer.Interval = [TimeSpan]::FromMilliseconds(650)
 

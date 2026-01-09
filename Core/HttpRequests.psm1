@@ -346,14 +346,18 @@ function Invoke-GcPagedRequest {
           $irmParams = @{
             Uri     = $nextCallUri
             Method  = $Method
-            Headers = ($Headers ? $Headers : @{})
+            Headers = if ($Headers) { $Headers } else { @{} }
           }
 
           if ($AccessToken) { $irmParams.Headers['Authorization'] = "Bearer $($AccessToken)" }
           if (-not $irmParams.Headers.ContainsKey('Content-Type')) { $irmParams.Headers['Content-Type'] = "application/json; charset=utf-8" }
 
           if ($Method -in @('POST','PUT','PATCH') -and $null -ne $Body) {
-            $irmParams['Body'] = ($Body -is [string]) ? $Body : ($Body | ConvertTo-Json -Depth 25)
+            if ($Body -is [string]) {
+              $irmParams['Body'] = $Body
+            } else {
+              $irmParams['Body'] = ($Body | ConvertTo-Json -Depth 25)
+            }
           }
 
           $lastResponse = Invoke-RestMethod @irmParams
