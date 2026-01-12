@@ -102,7 +102,7 @@ $script:AppState = [ordered]@{
   Org          = 'Production'
   Auth         = 'Not logged in'
   TokenStatus  = 'No token'
-  AccessToken  = $null
+  AccessToken  = $null  # STEP 1: Set a token here for testing: $script:AppState.AccessToken = "YOUR_TOKEN_HERE"
 
   Workspace    = 'Operations'
   Module       = 'Topic Subscriptions'
@@ -118,6 +118,10 @@ $script:AppState = [ordered]@{
   StreamCount  = 0
   FocusConversationId = ''
 }
+
+# STEP 1 CHANGE: Make AppState available to HttpRequests module for Invoke-AppGcRequest
+# This allows the wrapper function to automatically inject AccessToken and Region
+Set-GcAppState -State ([ref]$script:AppState)
 
 $script:ArtifactsDir = Join-Path -Path $PSScriptRoot -ChildPath 'artifacts'
 New-Item -ItemType Directory -Path $script:ArtifactsDir -Force | Out-Null
@@ -1365,36 +1369,125 @@ $BtnLogin.Add_Click({
 })
 
 $BtnTestToken.Add_Click({
+  # STEP 1 CHANGE: Updated Test Token handler to use Invoke-AppGcRequest wrapper
+  # This validates the token by calling GET /api/v2/users/me with auto-injected auth
+  
   if (-not $script:AppState.AccessToken) {
-    Set-Status "No token available. Please log in first."
+    # Show error if no token is set
+    [System.Windows.MessageBox]::Show(
+      "No access token available. Please set AppState.AccessToken or use the Login button.",
+      "No Token",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Warning
+    )
+    Set-Status "No token available."
     return
   }
   
+  # Disable button during test
   $BtnTestToken.IsEnabled = $false
   $BtnTestToken.Content = "Testing..."
+  Set-Status "Testing token..."
   
+  # Queue background job to test token via GET /api/v2/users/me
   Queue-RealJob -Name "Test Token" -Type "Auth" -ScriptBlock {
+    # Note: No parameters needed - Invoke-AppGcRequest reads from AppState
     try {
-      $userInfo = Test-GcToken
-      return $userInfo
+      # STEP 1: Call GET /api/v2/users/me using Invoke-AppGcRequest
+      # The wrapper automatically injects AccessToken and InstanceName from AppState
+      $userInfo = Invoke-AppGcRequest -Path '/api/v2/users/me' -Method GET
+      
+      return [PSCustomObject]@{
+        Success = $true
+        UserInfo = $userInfo
+        Error = $null
+      }
     } catch {
-      Write-Error $_
-      return $null
+      # Capture detailed error information for better diagnostics
+      $errorMessage = $_.Exception.Message
+      $statusCode = $null
+      
+      # Try to extract HTTP status code if available
+      if ($_.Exception.Response) {
+        $statusCode = [int]$_.Exception.Response.StatusCode
+      }
+      
+      return [PSCustomObject]@{
+        Success = $false
+        UserInfo = $null
+        Error = $errorMessage
+        StatusCode = $statusCode
+      }
     }
   } -OnComplete {
     param($job)
     
-    if ($job.Result) {
-      $script:AppState.Auth = "Logged in as $($job.Result.name)"
+    if ($job.Result -and $job.Result.Success) {
+      # SUCCESS: Token is valid
+      $userInfo = $job.Result.UserInfo
+      
+      # Update AppState with success status and user information
+      $script:AppState.Auth = "Logged in"
+      if ($userInfo.name) {
+        $script:AppState.Auth = "Logged in as $($userInfo.name)"
+      }
       $script:AppState.TokenStatus = "Token valid"
+      
+      # Update header display
       Set-TopContext
-      Set-Status "Token test: OK. User: $($job.Result.name)"
+      
+      # Show success status with username if available
+      $statusMsg = "Token test: OK"
+      if ($userInfo.name) { $statusMsg += ". User: $($userInfo.name)" }
+      if ($userInfo.organization -and $userInfo.organization.name) {
+        $statusMsg += " | Org: $($userInfo.organization.name)"
+        $script:AppState.Org = $userInfo.organization.name
+      }
+      Set-Status $statusMsg
+      
     } else {
+      # FAILURE: Token test failed
+      $errorMsg = if ($job.Result) { $job.Result.Error } else { "Unknown error" }
+      
+      # Analyze error and provide user-friendly message
+      $userMessage = "Token test failed."
+      $detailMessage = $errorMsg
+      
+      # Check for common error scenarios
+      if ($errorMsg -match "401|Unauthorized") {
+        $userMessage = "Token Invalid or Expired"
+        $detailMessage = "The access token is not valid or has expired. Please log in again."
+      }
+      elseif ($errorMsg -match "Unable to connect|could not be resolved|Name or service not known") {
+        $userMessage = "Connection Failed"
+        $detailMessage = "Cannot connect to region '$($script:AppState.Region)'. Please verify:`n• Region is correct`n• Network connection is available`n`nError: $errorMsg"
+      }
+      elseif ($errorMsg -match "404|Not Found") {
+        $userMessage = "Endpoint Not Found"
+        $detailMessage = "API endpoint not found. This may indicate:`n• Wrong region configured`n• API version mismatch`n`nError: $errorMsg"
+      }
+      elseif ($errorMsg -match "403|Forbidden") {
+        $userMessage = "Permission Denied"
+        $detailMessage = "Token is valid but lacks permission to access user information."
+      }
+      
+      # Update AppState to reflect failure
+      $script:AppState.Auth = "Not logged in"
       $script:AppState.TokenStatus = "Token invalid"
       Set-TopContext
-      Set-Status "Token test failed. Token may be expired."
+      
+      # Show error dialog with details
+      [System.Windows.MessageBox]::Show(
+        $detailMessage,
+        $userMessage,
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Error
+      )
+      
+      Set-Status "Token test failed: $userMessage"
     }
     
+    # Re-enable button
     $BtnTestToken.Content = "Test Token"
     $BtnTestToken.IsEnabled = $true
   }

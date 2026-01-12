@@ -2,6 +2,37 @@
 
 Set-StrictMode -Version Latest
 
+# Module-level AppState reference (set by calling application)
+$script:AppState = $null
+
+function Set-GcAppState {
+  <#
+  .SYNOPSIS
+    Sets the AppState reference for Invoke-AppGcRequest to use.
+  
+  .DESCRIPTION
+    This function allows the calling application to provide its AppState
+    to the HttpRequests module, enabling Invoke-AppGcRequest to automatically
+    inject AccessToken and Region without requiring them as parameters.
+  
+  .PARAMETER State
+    Reference to the application's $script:AppState hashtable
+  
+  .EXAMPLE
+    Set-GcAppState -State ([ref]$script:AppState)
+  
+  .NOTES
+    Added for Step 1: Token plumbing implementation.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]
+    [ref]$State
+  )
+  
+  $script:AppState = $State.Value
+}
+
 function Resolve-GcEndpoint {
   [CmdletBinding()]
   param(
@@ -391,6 +422,134 @@ function Invoke-GcPagedRequest {
   return $lastResponse
 }
 
-Export-ModuleMember -Function Invoke-GcRequest, Invoke-GcPagedRequest
+function Invoke-AppGcRequest {
+  <#
+  .SYNOPSIS
+    Application-level wrapper for Invoke-GcRequest that automatically injects
+    AccessToken and InstanceName from AppState.
+
+  .DESCRIPTION
+    This function wraps Invoke-GcRequest and automatically provides:
+    - AccessToken from $script:AppState.AccessToken
+    - InstanceName derived from $script:AppState.Region
+    
+    Simplifies API calls in the UI by removing the need to pass these
+    parameters explicitly on every request.
+    
+    NOTE: Requires $script:AppState to be set by the calling application.
+
+  .PARAMETER Path
+    API path (e.g., '/api/v2/users/me')
+
+  .PARAMETER Method
+    HTTP method (default: GET)
+
+  .PARAMETER Headers
+    Additional headers (optional)
+
+  .PARAMETER Query
+    Query parameters (optional)
+
+  .PARAMETER PathParams
+    Path parameter substitutions (optional)
+
+  .PARAMETER Body
+    Request body (optional)
+
+  .PARAMETER RetryCount
+    Number of retries on transient failures (default: 2)
+
+  .PARAMETER RetryDelaySeconds
+    Delay between retries (default: 2)
+
+  .EXAMPLE
+    # Simple GET request using app state for auth
+    $user = Invoke-AppGcRequest -Path '/api/v2/users/me'
+
+  .EXAMPLE
+    # POST with body
+    $result = Invoke-AppGcRequest -Path '/api/v2/conversations/calls' -Method POST -Body $callBody
+
+  .NOTES
+    Added for Step 1: Token plumbing + Test Token implementation.
+    Automatically injects AccessToken and InstanceName from AppState.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)] [string] $Path,
+
+    [ValidateSet('GET','POST','PUT','PATCH','DELETE')]
+    [string] $Method = 'GET',
+
+    [hashtable] $Headers,
+    [hashtable] $Query,
+    [hashtable] $PathParams,
+    [object] $Body,
+
+    [int] $RetryCount = 2,
+    [int] $RetryDelaySeconds = 2
+  )
+
+  # Validate AppState is available and properly set
+  if (-not $script:AppState) {
+    throw "AppState not found. Invoke-AppGcRequest requires AppState to be initialized via Set-GcAppState."
+  }
+
+  # Validate required AppState properties
+  if (-not $script:AppState.Region) {
+    throw "AppState.Region is not set. Please configure the region before making API calls."
+  }
+
+  if (-not $script:AppState.AccessToken) {
+    throw "AppState.AccessToken is not set. Please authenticate first (Login or Test Token)."
+  }
+
+  # Derive InstanceName from Region
+  # Region format: 'mypurecloud.com', 'mypurecloud.ie', 'usw2.pure.cloud', etc.
+  # API endpoint format: 'https://api.{region}/'
+  $instanceName = $script:AppState.Region
+
+  # Call the core HTTP function with injected auth
+  $requestParams = @{
+    Path         = $Path
+    Method       = $Method
+    InstanceName = $instanceName
+    AccessToken  = $script:AppState.AccessToken
+    RetryCount   = $RetryCount
+    RetryDelaySeconds = $RetryDelaySeconds
+  }
+
+  if ($Headers) { $requestParams['Headers'] = $Headers }
+  if ($Query) { $requestParams['Query'] = $Query }
+  if ($PathParams) { $requestParams['PathParams'] = $PathParams }
+  if ($Body) { $requestParams['Body'] = $Body }
+
+  try {
+    return Invoke-GcRequest @requestParams
+  } catch {
+    # Enhanced error messages for common issues
+    $errorMessage = $_.Exception.Message
+    
+    # Check for DNS/connectivity errors (region misconfiguration)
+    if ($errorMessage -match 'Unable to connect|could not be resolved|Name or service not known') {
+      throw "Failed to connect to region '$instanceName'. Please verify the region is correct. Original error: $errorMessage"
+    }
+    
+    # Check for auth errors
+    if ($errorMessage -match '401|Unauthorized') {
+      throw "Authentication failed. Token may be invalid or expired. Original error: $errorMessage"
+    }
+    
+    # Check for endpoint not found (may indicate wrong API version or region)
+    if ($errorMessage -match '404|Not Found') {
+      throw "API endpoint not found. This may indicate an incorrect region or API path. Original error: $errorMessage"
+    }
+    
+    # Re-throw with context
+    throw "API request failed: $errorMessage"
+  }
+}
+
+Export-ModuleMember -Function Invoke-GcRequest, Invoke-GcPagedRequest, Invoke-AppGcRequest, Set-GcAppState
 
 ### END: Core.HttpRequests.psm1
