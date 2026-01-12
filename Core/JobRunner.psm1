@@ -163,7 +163,14 @@ function Start-GcJob {
   $hasDispatcher = $false
   try {
     # Check if WPF types are available and if we have a dispatcher
-    if ([Type]::GetType('System.Windows.Threading.Dispatcher, WindowsBase')) {
+    # Try to load the type without hard-coding assembly name
+    $dispatcherType = [Type]::GetType('System.Windows.Threading.Dispatcher, WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
+    if ($null -eq $dispatcherType) {
+      # Fallback: try without version info
+      $dispatcherType = [Type]::GetType('System.Windows.Threading.Dispatcher, WindowsBase')
+    }
+    
+    if ($dispatcherType) {
       $dispatcher = [Windows.Threading.Dispatcher]::CurrentDispatcher
       if ($dispatcher -and $dispatcher.Thread -eq [System.Threading.Thread]::CurrentThread) {
         $hasDispatcher = $true

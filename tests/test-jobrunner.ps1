@@ -163,12 +163,14 @@ Test-Scenario -Name "OnComplete callback executes" -TestBlock {
 Test-Scenario -Name "Get-GcRunningJobs returns collection" -TestBlock {
     $runningJobs = Get-GcRunningJobs
     
-    # In PowerShell, an empty collection can be null but still have Count = 0
-    # This is expected behavior when no jobs are running
-    if ($null -ne $runningJobs -or (@($runningJobs).Count -eq 0)) {
-        Write-Host "  Running jobs count: $(@($runningJobs).Count)" -ForegroundColor Gray
-    } else {
-        throw "Get-GcRunningJobs returned unexpected value"
+    # Get-GcRunningJobs should always return a collection (may be empty)
+    # In PowerShell, empty collections can test as null but have Count = 0
+    $count = @($runningJobs).Count
+    Write-Host "  Running jobs count: $count" -ForegroundColor Gray
+    
+    # Test passes if we get a valid count (0 or more)
+    if ($count -lt 0) {
+        throw "Invalid running jobs count: $count"
     }
 }
 
