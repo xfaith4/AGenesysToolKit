@@ -131,6 +131,66 @@ if (Test-Command -CommandName "Wait-GcAsyncJob") {
 }
 Write-Host ""
 
+# Test 6: Core/Auth.psm1
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Test 6: Core/Auth.psm1" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+$authPath = Join-Path $repoRoot "Core/Auth.psm1"
+if (Test-Module -ModulePath $authPath -ModuleName "Auth") {
+    $testsPassed++
+} else {
+    $testsFailed++
+}
+Write-Host ""
+
+# Test 7: Core/JobRunner.psm1
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Test 7: Core/JobRunner.psm1" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+$jobRunnerPath = Join-Path $repoRoot "Core/JobRunner.psm1"
+if (Test-Module -ModulePath $jobRunnerPath -ModuleName "JobRunner") {
+    $testsPassed++
+} else {
+    $testsFailed++
+}
+Write-Host ""
+
+# Test 8: Core/Subscriptions.psm1
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Test 8: Core/Subscriptions.psm1" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+$subscriptionsPath = Join-Path $repoRoot "Core/Subscriptions.psm1"
+if (Test-Module -ModulePath $subscriptionsPath -ModuleName "Subscriptions") {
+    $testsPassed++
+} else {
+    $testsFailed++
+}
+Write-Host ""
+
+# Test 9: Core/Timeline.psm1
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Test 9: Core/Timeline.psm1" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+$timelinePath = Join-Path $repoRoot "Core/Timeline.psm1"
+if (Test-Module -ModulePath $timelinePath -ModuleName "Timeline") {
+    $testsPassed++
+} else {
+    $testsFailed++
+}
+Write-Host ""
+
+# Test 10: Core/ArtifactGenerator.psm1
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Test 10: Core/ArtifactGenerator.psm1" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+$artifactGenPath = Join-Path $repoRoot "Core/ArtifactGenerator.psm1"
+if (Test-Module -ModulePath $artifactGenPath -ModuleName "ArtifactGenerator") {
+    $testsPassed++
+} else {
+    $testsFailed++
+}
+Write-Host ""
+
 # Summary
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Smoke Test Summary" -ForegroundColor Cyan

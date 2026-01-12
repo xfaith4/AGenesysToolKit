@@ -1,9 +1,19 @@
 ### BEGIN FILE: GenesysCloudTool_UX_Prototype_v2_1.ps1
-# Genesys Cloud Tool — UX Prototype v2.1
-# UX-first shell: Workspaces + Modules + non-blocking Job Center + Backstage Artifacts + Export Snackbar.
-# Backend operations are mocked (timers + simulated events). Goal: validate information architecture + workflow ergonomics.
+# Genesys Cloud Tool — Real Implementation v3.0
+# Money path flow: Login → Start Subscription → Stream events → Open Timeline → Export Packet
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+# Import core modules
+$scriptRoot = Split-Path -Parent $PSCommandPath
+$coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'Auth.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'JobRunner.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'Subscriptions.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
 
 # -----------------------------
 # XAML Helpers
@@ -79,15 +89,27 @@ function ConvertFrom-GcXaml {
 # -----------------------------
 # State + helpers
 # -----------------------------
+
+# Initialize Auth Configuration (user should customize these)
+Set-GcAuthConfig `
+  -Region 'mypurecloud.com' `
+  -ClientId 'YOUR_CLIENT_ID_HERE' `
+  -RedirectUri 'http://localhost:8080/oauth/callback' `
+  -Scopes @('conversations', 'analytics', 'notifications', 'users')
+
 $script:AppState = [ordered]@{
   Region       = 'mypurecloud.com'
   Org          = 'Production'
   Auth         = 'Not logged in'
   TokenStatus  = 'No token'
+  AccessToken  = $null
 
   Workspace    = 'Operations'
   Module       = 'Topic Subscriptions'
   IsStreaming  = $false
+  
+  SubscriptionProvider = $null
+  EventBuffer          = @()
 
   Jobs         = New-Object System.Collections.ObjectModel.ObservableCollection[object]
   Artifacts    = New-Object System.Collections.ObjectModel.ObservableCollection[object]
@@ -186,6 +208,42 @@ function Queue-Job {
   Add-JobLog -Job $job -Message "Queued."
 
   Start-JobSim -Job $job -DurationMs $DurationMs -OnComplete $OnComplete | Out-Null
+  return $job
+}
+
+function Queue-RealJob {
+  <#
+  .SYNOPSIS
+    Queues a real job using the JobRunner module.
+  
+  .PARAMETER Name
+    Job name
+  
+  .PARAMETER Type
+    Job type
+  
+  .PARAMETER ScriptBlock
+    Script block to execute in background
+  
+  .PARAMETER ArgumentList
+    Arguments to pass to script block
+  
+  .PARAMETER OnComplete
+    Completion handler
+  #>
+  param(
+    [string]$Name,
+    [string]$Type = 'General',
+    [scriptblock]$ScriptBlock,
+    [object[]]$ArgumentList = @(),
+    [scriptblock]$OnComplete
+  )
+
+  $job = New-GcJobContext -Name $Name -Type $Type
+  $script:AppState.Jobs.Add($job) | Out-Null
+  Add-GcJobLog -Job $job -Message "Queued."
+
+  Start-GcJob -Job $job -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -OnComplete $OnComplete
   return $job
 }
 
@@ -605,6 +663,19 @@ $BtnCancelJob.Add_Click({
   if ($idx -ge 0 -and $idx -lt $script:AppState.Jobs.Count) {
     $job = $script:AppState.Jobs[$idx]
     if ($job.CanCancel -and $job.Status -eq 'Running') {
+      # Try real job runner cancellation first
+      if (Get-Command -Name Stop-GcJob -ErrorAction SilentlyContinue) {
+        try {
+          Stop-GcJob -Job $job
+          Set-Status "Cancellation requested for: $($job.Name)"
+          Refresh-JobsList
+          return
+        } catch {
+          # Fallback to mock cancellation
+        }
+      }
+      
+      # Fallback: mock cancellation
       $job.Status = 'Canceled'
       $job.CanCancel = $false
       Add-JobLog -Job $job -Message "Cancel requested by user."
@@ -757,24 +828,67 @@ function New-ConversationTimelineView {
     $conv = $txtConv.Text.Trim()
     if (-not $conv) { $conv = "c-unknown" }
 
-    Queue-Job -Name "Export Incident Packet (Timeline) — $conv" -Type 'Export' -DurationMs 1400 -OnComplete {
-      $file = Join-Path -Path $script:ArtifactsDir -ChildPath "incident-packet-$($conv)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-      @(
-        "Incident Packet (mock)",
-        "ConversationId: $conv",
-        "Generated: $(Get-Date)",
-        "",
-        "Contents would include:",
-        "- conversation summary JSON",
-        "- timeline events",
-        "- media stats (MOS, jitter, packet loss)",
-        "- WebRTC error codes",
-        "- subscription event slice + transcript (if applicable)"
-      ) | Set-Content -Path $file -Encoding UTF8
+    if (-not $script:AppState.AccessToken) {
+      [System.Windows.MessageBox]::Show(
+        "Please log in first to export real conversation data.",
+        "Authentication Required",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      
+      # Fallback to mock export
+      Queue-Job -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -DurationMs 1400 -OnComplete {
+        $file = Join-Path -Path $script:ArtifactsDir -ChildPath "incident-packet-mock-$($conv)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+        @(
+          "Incident Packet (mock)",
+          "ConversationId: $conv",
+          "Generated: $(Get-Date)",
+          "",
+          "NOTE: This is a mock packet. Log in to export real conversation data."
+        ) | Set-Content -Path $file -Encoding UTF8
 
-      Add-ArtifactAndNotify -Name "Incident Packet — $conv" -Path $file -ToastTitle 'Export complete'
-      Set-Status "Exported incident packet (mock): $file"
-    } | Out-Null
+        Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
+        Set-Status "Exported mock incident packet: $file"
+      } | Out-Null
+      
+      Refresh-HeaderStats
+      return
+    }
+
+    # Real export using ArtifactGenerator
+    Queue-RealJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
+      param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
+      
+      try {
+        # Export packet
+        $packet = Export-GcConversationPacket `
+          -ConversationId $conversationId `
+          -Region $region `
+          -AccessToken $accessToken `
+          -OutputDirectory $artifactsDir `
+          -SubscriptionEvents $eventBuffer `
+          -CreateZip
+        
+        return $packet
+      } catch {
+        Write-Error "Failed to export packet: $_"
+        return $null
+      }
+    } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
+    -OnComplete {
+      param($job)
+      
+      if ($job.Result) {
+        $packet = $job.Result
+        $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
+        $artifactName = "Incident Packet — $($packet.ConversationId)"
+        
+        Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
+        Set-Status "Exported incident packet: $artifactPath"
+      } else {
+        Set-Status "Failed to export packet. See job logs for details."
+      }
+    }
 
     Refresh-HeaderStats
   })
@@ -1032,25 +1146,71 @@ function New-SubscriptionsView {
   $h.BtnExportPacket.Add_Click({
     $conv = if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') { $h.TxtConv.Text } else { "c-$(Get-Random -Minimum 100000 -Maximum 999999)" }
 
-    Queue-Job -Name "Export Incident Packet (Subscription) — $conv" -Type 'Export' -DurationMs 1400 -OnComplete {
-      $file = Join-Path -Path $script:ArtifactsDir -ChildPath "incident-packet-sub-$($conv)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-      @(
-        "Incident Packet (mock) — Subscription Evidence",
-        "ConversationId: $conv",
-        "Generated: $(Get-Date)",
-        "",
-        "Would include:",
-        "- subscription event slice (NDJSON)",
-        "- transcript.txt (stitched)",
-        "- agent_assist_cards.json",
-        "- summary.md / summary.html",
-        "- any pinned events",
-        "- correlation IDs for follow-up"
-      ) | Set-Content -Path $file -Encoding UTF8
+    if (-not $script:AppState.AccessToken) {
+      [System.Windows.MessageBox]::Show(
+        "Please log in first to export real conversation data.",
+        "Authentication Required",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      
+      # Fallback to mock export
+      Queue-Job -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -DurationMs 1400 -OnComplete {
+        $file = Join-Path -Path $script:ArtifactsDir -ChildPath "incident-packet-mock-$($conv)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+        @(
+          "Incident Packet (mock) — Subscription Evidence",
+          "ConversationId: $conv",
+          "Generated: $(Get-Date)",
+          "",
+          "NOTE: This is a mock packet. Log in to export real conversation data.",
+          ""
+        ) | Set-Content -Path $file -Encoding UTF8
 
-      Add-ArtifactAndNotify -Name "Incident Packet (Sub) — $conv" -Path $file -ToastTitle 'Export complete'
-      Set-Status "Exported incident packet (mock): $file"
-    } | Out-Null
+        Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
+        Set-Status "Exported mock incident packet: $file"
+      } | Out-Null
+      
+      Refresh-HeaderStats
+      return
+    }
+
+    # Real export using ArtifactGenerator
+    Queue-RealJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
+      param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
+      
+      try {
+        # Build subscription events from buffer
+        $subscriptionEvents = $eventBuffer
+        
+        # Export packet
+        $packet = Export-GcConversationPacket `
+          -ConversationId $conversationId `
+          -Region $region `
+          -AccessToken $accessToken `
+          -OutputDirectory $artifactsDir `
+          -SubscriptionEvents $subscriptionEvents `
+          -CreateZip
+        
+        return $packet
+      } catch {
+        Write-Error "Failed to export packet: $_"
+        return $null
+      }
+    } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
+    -OnComplete {
+      param($job)
+      
+      if ($job.Result) {
+        $packet = $job.Result
+        $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
+        $artifactName = "Incident Packet — $($packet.ConversationId)"
+        
+        Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
+        Set-Status "Exported incident packet: $artifactPath"
+      } else {
+        Set-Status "Failed to export packet. See job logs for details."
+      }
+    }
 
     Refresh-HeaderStats
   })
@@ -1149,14 +1309,95 @@ $NavModules.Add_SelectionChanged({
 # Top bar actions
 # -----------------------------
 $BtnLogin.Add_Click({
-  $script:AppState.Auth        = 'Logged in (mock)'
-  $script:AppState.TokenStatus = 'Token OK (mock)'
-  Set-TopContext
-  Set-Status "Auth updated (mock)."
+  $authConfig = Get-GcAuthConfig
+  
+  # Check if client ID is configured
+  if ($authConfig.ClientId -eq 'YOUR_CLIENT_ID_HERE' -or -not $authConfig.ClientId) {
+    [System.Windows.MessageBox]::Show(
+      "Please configure your OAuth Client ID in the script.`n`nSet-GcAuthConfig -ClientId 'your-client-id' -Region 'your-region'",
+      "Configuration Required",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Warning
+    )
+    return
+  }
+  
+  # Disable button during auth
+  $BtnLogin.IsEnabled = $false
+  $BtnLogin.Content = "Authenticating..."
+  Set-Status "Starting OAuth flow..."
+  
+  # Run OAuth flow in background
+  Queue-RealJob -Name "OAuth Login" -Type "Auth" -ScriptBlock {
+    try {
+      $tokenResponse = Get-GcTokenAsync -TimeoutSeconds 300
+      return $tokenResponse
+    } catch {
+      Write-Error $_
+      return $null
+    }
+  } -OnComplete {
+    param($job)
+    
+    if ($job.Result) {
+      $tokenState = Get-GcTokenState
+      $script:AppState.AccessToken = $tokenState.AccessToken
+      $script:AppState.Auth = "Logged in"
+      $script:AppState.TokenStatus = "Token OK"
+      
+      if ($tokenState.UserInfo) {
+        $script:AppState.Auth = "Logged in as $($tokenState.UserInfo.name)"
+      }
+      
+      Set-TopContext
+      Set-Status "Authentication successful!"
+      $BtnLogin.Content = "Logged In"
+      $BtnTestToken.IsEnabled = $true
+    } else {
+      $script:AppState.Auth = "Login failed"
+      $script:AppState.TokenStatus = "No token"
+      Set-TopContext
+      Set-Status "Authentication failed. Check job logs for details."
+      $BtnLogin.Content = "Login..."
+      $BtnLogin.IsEnabled = $true
+    }
+  }
 })
 
 $BtnTestToken.Add_Click({
-  Set-Status "Token test: OK (mock)."
+  if (-not $script:AppState.AccessToken) {
+    Set-Status "No token available. Please log in first."
+    return
+  }
+  
+  $BtnTestToken.IsEnabled = $false
+  $BtnTestToken.Content = "Testing..."
+  
+  Queue-RealJob -Name "Test Token" -Type "Auth" -ScriptBlock {
+    try {
+      $userInfo = Test-GcToken
+      return $userInfo
+    } catch {
+      Write-Error $_
+      return $null
+    }
+  } -OnComplete {
+    param($job)
+    
+    if ($job.Result) {
+      $script:AppState.Auth = "Logged in as $($job.Result.name)"
+      $script:AppState.TokenStatus = "Token valid"
+      Set-TopContext
+      Set-Status "Token test: OK. User: $($job.Result.name)"
+    } else {
+      $script:AppState.TokenStatus = "Token invalid"
+      Set-TopContext
+      Set-Status "Token test failed. Token may be expired."
+    }
+    
+    $BtnTestToken.Content = "Test Token"
+    $BtnTestToken.IsEnabled = $true
+  }
 })
 
 $BtnJobs.Add_Click({ Open-Backstage -Tab 'Jobs' })
