@@ -109,7 +109,8 @@ $script:AppState = [ordered]@{
   IsStreaming  = $false
 
   SubscriptionProvider = $null
-  EventBuffer          = @()
+  EventBuffer          = New-Object System.Collections.ObjectModel.ObservableCollection[object]
+  PinnedEvents         = New-Object System.Collections.ObjectModel.ObservableCollection[object]
 
   Jobs         = New-Object System.Collections.ObjectModel.ObservableCollection[object]
   Artifacts    = New-Object System.Collections.ObjectModel.ObservableCollection[object]
@@ -125,6 +126,44 @@ Set-GcAppState -State ([ref]$script:AppState)
 
 $script:ArtifactsDir = Join-Path -Path $PSScriptRoot -ChildPath 'artifacts'
 New-Item -ItemType Directory -Path $script:ArtifactsDir -Force | Out-Null
+
+function Format-EventSummary {
+  <#
+  .SYNOPSIS
+    Formats an event object into a friendly one-line summary for display.
+
+  .DESCRIPTION
+    Converts structured event objects into human-readable one-line summaries
+    for display in the Live Event Stream list. Preserves object structure
+    while providing consistent, readable formatting.
+
+  .PARAMETER Event
+    The event object to format. Should contain ts, severity, topic, conversationId, and raw properties.
+
+  .EXAMPLE
+    Format-EventSummary -Event $eventObject
+    # Returns: "[13:20:15.123] [warn] audiohook.transcription.final  conv=c-123456  — Caller: I'm having trouble..."
+  #>
+  param(
+    [Parameter(Mandatory)]
+    [object]$Event
+  )
+
+  $ts = if ($Event.ts) { $Event.ts } else { (Get-Date).ToString('HH:mm:ss.fff') }
+  $sev = if ($Event.severity) { $Event.severity } else { 'info' }
+  $topic = if ($Event.topic) { $Event.topic } else { 'unknown' }
+  $conv = if ($Event.conversationId) { $Event.conversationId } else { 'n/a' }
+  
+  # Extract text from raw if available
+  $text = ''
+  if ($Event.raw -and $Event.raw.text) {
+    $text = $Event.raw.text
+  } elseif ($Event.text) {
+    $text = $Event.text
+  }
+
+  return "[$ts] [$sev] $topic  conv=$conv  —  $text"
+}
 
 function New-Artifact {
   param([string]$Name, [string]$Path)
@@ -1026,13 +1065,33 @@ function New-SubscriptionsView {
       "ERROR: Transcription upstream timeout (HTTP 504)."
     )
 
+    $text = ($snips | Get-Random)
+    $ts = Get-Date
+    $queueName = $h.TxtQueue.Text
+
+    # Create raw data object (simulates original parsed JSON)
+    $raw = @{
+      eventId = [guid]::NewGuid().ToString()
+      timestamp = $ts.ToString('o')
+      topicName = $etype
+      eventBody = @{
+        conversationId = $conv
+        text = $text
+        severity = $sev
+        queueName = $queueName
+      }
+    }
+
+    # Return structured event object with consistent schema
     [pscustomobject]@{
-      ts = (Get-Date).ToString('HH:mm:ss.fff')
-      type = $etype
+      ts = $ts
       severity = $sev
+      topic = $etype
       conversationId = $conv
-      queue = $h.TxtQueue.Text
-      text = ($snips | Get-Random)
+      queueId = $null
+      queueName = $queueName
+      text = $text
+      raw = $raw
     }
   }
 
@@ -1040,18 +1099,33 @@ function New-SubscriptionsView {
     if (-not $script:AppState.IsStreaming) { return }
 
     $evt = New-MockEvent
-    $line = "[$($evt.ts)] [$($evt.severity)] $($evt.type)  conv=$($evt.conversationId)  —  $($evt.text)"
-    $h.LstEvents.Items.Insert(0, $line) | Out-Null
+    
+    # Store in EventBuffer for export
+    $script:AppState.EventBuffer.Insert(0, $evt)
+    
+    # Format for display and add to ListBox with object as Tag
+    $listItem = New-Object System.Windows.Controls.ListBoxItem
+    $listItem.Content = Format-EventSummary -Event $evt
+    $listItem.Tag = $evt
+    $h.LstEvents.Items.Insert(0, $listItem) | Out-Null
 
-    if ($evt.type -like 'audiohook.transcription*') { Append-TranscriptLine "$($evt.ts)  $($evt.text)" }
-    if ($evt.type -like 'audiohook.agentassist*')   { Append-TranscriptLine "$($evt.ts)  [Agent Assist] $($evt.text)" }
-    if ($evt.type -eq 'audiohook.error')            { Append-TranscriptLine "$($evt.ts)  [ERROR] $($evt.text)" }
+    # Update transcript panel
+    $tsStr = $evt.ts.ToString('HH:mm:ss.fff')
+    if ($evt.topic -like 'audiohook.transcription*') { Append-TranscriptLine "$tsStr  $($evt.text)" }
+    if ($evt.topic -like 'audiohook.agentassist*')   { Append-TranscriptLine "$tsStr  [Agent Assist] $($evt.text)" }
+    if ($evt.topic -eq 'audiohook.error')            { Append-TranscriptLine "$tsStr  [ERROR] $($evt.text)" }
 
     $script:AppState.StreamCount++
     Refresh-HeaderStats
 
+    # Limit list size (keep most recent 250 events)
     if ($h.LstEvents.Items.Count -gt 250) {
       $h.LstEvents.Items.RemoveAt($h.LstEvents.Items.Count - 1)
+    }
+    
+    # Limit EventBuffer size
+    if ($script:AppState.EventBuffer.Count -gt 1000) {
+      $script:AppState.EventBuffer.RemoveAt($script:AppState.EventBuffer.Count - 1)
     }
   })
   $script:StreamTimer.Start()
@@ -1097,9 +1171,106 @@ function New-SubscriptionsView {
 
   $h.BtnPin.Add_Click({
     if ($h.LstEvents.SelectedItem) {
-      $script:AppState.PinnedCount++
-      Refresh-HeaderStats
-      Set-Status "Pinned event (mock)."
+      $selectedItem = $h.LstEvents.SelectedItem
+      
+      # Get the event object from the ListBoxItem's Tag
+      if ($selectedItem -is [System.Windows.Controls.ListBoxItem] -and $selectedItem.Tag) {
+        $evt = $selectedItem.Tag
+        
+        # Check if already pinned (avoid duplicates)
+        $alreadyPinned = $false
+        foreach ($pinnedEvt in $script:AppState.PinnedEvents) {
+          if ($pinnedEvt.raw.eventId -eq $evt.raw.eventId) {
+            $alreadyPinned = $true
+            break
+          }
+        }
+        
+        if (-not $alreadyPinned) {
+          $script:AppState.PinnedEvents.Add($evt)
+          $script:AppState.PinnedCount++
+          Refresh-HeaderStats
+          Set-Status "Pinned event: $($evt.topic) for conversation $($evt.conversationId)"
+        } else {
+          Set-Status "Event already pinned."
+        }
+      } else {
+        Set-Status "Cannot pin event: invalid selection."
+      }
+    }
+  })
+
+  # Search box filtering
+  $h.TxtSearch.Add_TextChanged({
+    $searchText = $h.TxtSearch.Text
+    
+    # Skip filtering if placeholder text
+    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq 'search (conversationId, error, agent…)') {
+      # Show all events
+      foreach ($item in $h.LstEvents.Items) {
+        if ($item -is [System.Windows.Controls.ListBoxItem]) {
+          $item.Visibility = 'Visible'
+        }
+      }
+      return
+    }
+    
+    $searchLower = $searchText.ToLower()
+    
+    # Filter events
+    foreach ($item in $h.LstEvents.Items) {
+      if ($item -is [System.Windows.Controls.ListBoxItem] -and $item.Tag) {
+        $evt = $item.Tag
+        $shouldShow = $false
+        
+        # Search in conversationId
+        if ($evt.conversationId -and $evt.conversationId.ToLower().Contains($searchLower)) {
+          $shouldShow = $true
+        }
+        
+        # Search in topic/type
+        if (-not $shouldShow -and $evt.topic -and $evt.topic.ToLower().Contains($searchLower)) {
+          $shouldShow = $true
+        }
+        
+        # Search in severity
+        if (-not $shouldShow -and $evt.severity -and $evt.severity.ToLower().Contains($searchLower)) {
+          $shouldShow = $true
+        }
+        
+        # Search in text
+        if (-not $shouldShow -and $evt.text -and $evt.text.ToLower().Contains($searchLower)) {
+          $shouldShow = $true
+        }
+        
+        # Search in raw JSON (stringified)
+        if (-not $shouldShow -and $evt.raw) {
+          try {
+            $rawJson = ($evt.raw | ConvertTo-Json -Compress -Depth 10).ToLower()
+            if ($rawJson.Contains($searchLower)) {
+              $shouldShow = $true
+            }
+          } catch {
+            # Ignore JSON conversion errors
+          }
+        }
+        
+        $item.Visibility = if ($shouldShow) { 'Visible' } else { 'Collapsed' }
+      }
+    }
+  })
+  
+  # Clear search placeholder on focus
+  $h.TxtSearch.Add_GotFocus({
+    if ($h.TxtSearch.Text -eq 'search (conversationId, error, agent…)') {
+      $h.TxtSearch.Text = ''
+    }
+  })
+  
+  # Restore search placeholder on lost focus if empty
+  $h.TxtSearch.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($h.TxtSearch.Text)) {
+      $h.TxtSearch.Text = 'search (conversationId, error, agent…)'
     }
   })
 
@@ -1107,8 +1278,15 @@ function New-SubscriptionsView {
     # Derive conversation ID from selected event if possible
     $conv = ''
     if ($h.LstEvents.SelectedItem) {
-      $s = [string]$h.LstEvents.SelectedItem
-      if ($s -match 'conv=(?<cid>c-\d+)\s') { $conv = $matches['cid'] }
+      # Extract from event object if available
+      if ($h.LstEvents.SelectedItem -is [System.Windows.Controls.ListBoxItem] -and $h.LstEvents.SelectedItem.Tag) {
+        $evt = $h.LstEvents.SelectedItem.Tag
+        $conv = $evt.conversationId
+      } else {
+        # Fallback: parse from string (for backward compatibility)
+        $s = [string]$h.LstEvents.SelectedItem
+        if ($s -match 'conv=(?<cid>c-\d+)\s') { $conv = $matches['cid'] }
+      }
     }
     if (-not $conv -and $h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') { $conv = $h.TxtConv.Text }
     if (-not $conv) { $conv = "c-$(Get-Random -Minimum 100000 -Maximum 999999)" }
