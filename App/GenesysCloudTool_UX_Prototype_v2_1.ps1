@@ -731,6 +731,13 @@ function Start-TokenTest {
     Validates the token in AppState.AccessToken by making a test API call.
     Updates UI with test results including user info and organization.
     Can be called from button handler or programmatically after setting a token.
+    
+    This function depends on:
+    - $script:AppState (global AppState with AccessToken and Region)
+    - $BtnTestToken (UI button element for state management)
+    - Invoke-AppGcRequest (from HttpRequests module)
+    - Set-Status, Set-TopContext (UI helper functions)
+    - Start-AppJob (job runner function)
 
   .EXAMPLE
     Start-TokenTest
@@ -859,6 +866,13 @@ function Show-SetTokenDialog {
     Provides a UI for entering region and access token manually.
     Validates and sets the token, then triggers an immediate token test.
     Useful for testing with tokens obtained from other sources.
+    
+    This function depends on:
+    - $Window (script-scoped main window for dialog owner)
+    - $script:AppState (global AppState for region and token)
+    - ConvertFrom-GcXaml (XAML parsing helper)
+    - Set-TopContext, Set-Status (UI helper functions)
+    - Start-TokenTest (token validation function)
 
   .EXAMPLE
     Show-SetTokenDialog
@@ -977,6 +991,7 @@ function Show-SetTokenDialog {
       }
 
       # Remove "Bearer " prefix if present (case-insensitive)
+      # Accepts single or multiple whitespace after "Bearer" for flexibility
       if ($token -imatch '^Bearer\s+(.+)$') {
         $token = $matches[1].Trim()
       }
