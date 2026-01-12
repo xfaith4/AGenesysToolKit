@@ -420,6 +420,6 @@ If you encounter issues during testing:
 
 ## Additional Resources
 
-- [OAuth 2.0 RFC 6749](https://tools.ietf.org/html/rfc6749)
-- [PKCE RFC 7636](https://tools.ietf.org/html/rfc7636)
+- [OAuth 2.0 RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749)
+- [PKCE RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636)
 - [Genesys Cloud OAuth Documentation](https://developer.genesys.cloud/authorization/platform-auth/)

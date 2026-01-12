@@ -23,7 +23,11 @@ Write-Host ""
 Write-Host "Test 1: Set-GcAuthConfig" -ForegroundColor Cyan
 Write-Host "----------------------------------------" -ForegroundColor Cyan
 try {
-    Set-GcAuthConfig -Region 'mypurecloud.com' -ClientId 'test-client-id' -RedirectUri 'http://localhost:8400/oauth/callback' -Scopes @('conversations', 'analytics')
+    Set-GcAuthConfig `
+      -Region 'mypurecloud.com' `
+      -ClientId 'test-client-id' `
+      -RedirectUri 'http://localhost:8400/oauth/callback' `
+      -Scopes @('conversations', 'analytics')
     $config = Get-GcAuthConfig
     
     if ($config.Region -eq 'mypurecloud.com' -and 
@@ -63,7 +67,10 @@ Write-Host "Test 3: Clear-GcTokenState" -ForegroundColor Cyan
 Write-Host "----------------------------------------" -ForegroundColor Cyan
 try {
     # Set a dummy token first
-    Set-GcAuthConfig -Region 'mypurecloud.com' -ClientId 'test-client-id' -RedirectUri 'http://localhost:8400/oauth/callback'
+    Set-GcAuthConfig `
+      -Region 'mypurecloud.com' `
+      -ClientId 'test-client-id' `
+      -RedirectUri 'http://localhost:8400/oauth/callback'
     
     # Clear token state
     Clear-GcTokenState
