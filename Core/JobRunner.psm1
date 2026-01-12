@@ -162,17 +162,15 @@ function Start-GcJob {
   # Monitor completion on a timer (WPF dispatcher timer if available)
   $hasDispatcher = $false
   try {
-    # Check if WPF types are available and if we have a dispatcher
-    # Try to load the type without hard-coding assembly name
-    $dispatcherType = [Type]::GetType('System.Windows.Threading.Dispatcher, WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
-    if ($null -eq $dispatcherType) {
-      # Fallback: try without version info
-      $dispatcherType = [Type]::GetType('System.Windows.Threading.Dispatcher, WindowsBase')
-    }
-    
-    if ($dispatcherType) {
-      $dispatcher = [Windows.Threading.Dispatcher]::CurrentDispatcher
-      if ($dispatcher -and $dispatcher.Thread -eq [System.Threading.Thread]::CurrentThread) {
+    # Only use DispatcherTimer when we're actually running under a WPF dispatcher context.
+    # In non-UI contexts, Dispatcher.CurrentDispatcher will still create a dispatcher, but
+    # without a message pump the timer never ticks and jobs never complete.
+    $dispatcherTimerType = [Type]::GetType('System.Windows.Threading.DispatcherTimer, WindowsBase')
+    $dispatcherSyncContextType = [Type]::GetType('System.Windows.Threading.DispatcherSynchronizationContext, WindowsBase')
+
+    if ($dispatcherTimerType -and $dispatcherSyncContextType) {
+      $syncContext = [System.Threading.SynchronizationContext]::Current
+      if ($syncContext -and $dispatcherSyncContextType.IsInstanceOfType($syncContext)) {
         $hasDispatcher = $true
       }
     }
@@ -184,9 +182,18 @@ function Start-GcJob {
   if ($hasDispatcher) {
     $timer = New-Object Windows.Threading.DispatcherTimer
     $timer.Interval = [TimeSpan]::FromMilliseconds(200)
+
+    # Capture values for the timer callback (event handlers don't reliably see local variables)
+    $jobContext = $Job
+    $asyncContext = $asyncResult
+    $onCompleteContext = $OnComplete
     
     $timer.Add_Tick({
       param($sender, $args)
+
+      $Job = $jobContext
+      $asyncResult = $asyncContext
+      $OnComplete = $onCompleteContext
       
       # Check for cancellation
       if ($Job.CancellationRequested -and $Job.Status -eq 'Running') {
@@ -261,7 +268,7 @@ function Start-GcJob {
           $script:RunningJobs.TryRemove($Job.Id, [ref]$null) | Out-Null
         }
       }
-    })
+    }.GetNewClosure())
     
     $timer.Start()
   } else {
