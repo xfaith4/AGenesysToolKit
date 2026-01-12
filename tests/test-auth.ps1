@@ -19,15 +19,23 @@ Import-Module $authModulePath -Force
 Write-Host "  [PASS] Module imported" -ForegroundColor Green
 Write-Host ""
 
+# Common test configuration
+$script:TestConfig = @{
+    Region       = 'mypurecloud.com'
+    ClientId     = 'test-client-id'
+    RedirectUri  = 'http://localhost:8400/oauth/callback'
+    Scopes       = @('conversations', 'analytics')
+}
+
 # Test 1: Set-GcAuthConfig
 Write-Host "Test 1: Set-GcAuthConfig" -ForegroundColor Cyan
 Write-Host "----------------------------------------" -ForegroundColor Cyan
 try {
     Set-GcAuthConfig `
-      -Region 'mypurecloud.com' `
-      -ClientId 'test-client-id' `
-      -RedirectUri 'http://localhost:8400/oauth/callback' `
-      -Scopes @('conversations', 'analytics')
+      -Region $script:TestConfig.Region `
+      -ClientId $script:TestConfig.ClientId `
+      -RedirectUri $script:TestConfig.RedirectUri `
+      -Scopes $script:TestConfig.Scopes
     $config = Get-GcAuthConfig
     
     if ($config.Region -eq 'mypurecloud.com' -and 
@@ -68,9 +76,9 @@ Write-Host "----------------------------------------" -ForegroundColor Cyan
 try {
     # Set a dummy token first
     Set-GcAuthConfig `
-      -Region 'mypurecloud.com' `
-      -ClientId 'test-client-id' `
-      -RedirectUri 'http://localhost:8400/oauth/callback'
+      -Region $script:TestConfig.Region `
+      -ClientId $script:TestConfig.ClientId `
+      -RedirectUri $script:TestConfig.RedirectUri
     
     # Clear token state
     Clear-GcTokenState
