@@ -149,17 +149,27 @@ function Format-EventSummary {
     [object]$Event
   )
 
-  $ts = if ($Event.ts) { $Event.ts } else { (Get-Date).ToString('HH:mm:ss.fff') }
+  # Format timestamp consistently - handle both DateTime objects and strings
+  $ts = if ($Event.ts) {
+    if ($Event.ts -is [DateTime]) {
+      $Event.ts.ToString('HH:mm:ss.fff')
+    } else {
+      $Event.ts.ToString()
+    }
+  } else {
+    (Get-Date).ToString('HH:mm:ss.fff')
+  }
+  
   $sev = if ($Event.severity) { $Event.severity } else { 'info' }
   $topic = if ($Event.topic) { $Event.topic } else { 'unknown' }
   $conv = if ($Event.conversationId) { $Event.conversationId } else { 'n/a' }
   
-  # Extract text from raw if available
+  # Extract text - check Event.text first (direct field), then raw.eventBody.text
   $text = ''
-  if ($Event.raw -and $Event.raw.text) {
-    $text = $Event.raw.text
-  } elseif ($Event.text) {
+  if ($Event.text) {
     $text = $Event.text
+  } elseif ($Event.raw -and $Event.raw.eventBody -and $Event.raw.eventBody.text) {
+    $text = $Event.raw.eventBody.text
   }
 
   return "[$ts] [$sev] $topic  conv=$conv  —  $text"
@@ -1243,16 +1253,32 @@ function New-SubscriptionsView {
           $shouldShow = $true
         }
         
-        # Search in raw JSON (stringified)
+        # Search in queueName
+        if (-not $shouldShow -and $evt.queueName -and $evt.queueName.ToLower().Contains($searchLower)) {
+          $shouldShow = $true
+        }
+        
+        # Search in raw JSON (cached in Tag for performance)
         if (-not $shouldShow -and $evt.raw) {
-          try {
-            $rawJson = ($evt.raw | ConvertTo-Json -Compress -Depth 10).ToLower()
-            if ($rawJson.Contains($searchLower)) {
-              $shouldShow = $true
+          # Cache the JSON string in a private property to avoid repeated conversions
+          if (-not $evt.PSObject.Properties['_cachedRawJson']) {
+            try {
+              $cachedJson = ($evt.raw | ConvertTo-Json -Compress -Depth 10).ToLower()
+              Add-Member -InputObject $evt -MemberType NoteProperty -Name '_cachedRawJson' -Value $cachedJson -Force
+            } catch {
+              Add-Member -InputObject $evt -MemberType NoteProperty -Name '_cachedRawJson' -Value '' -Force
             }
-          } catch {
-            # Ignore JSON conversion errors
           }
+          
+          if ($evt._cachedRawJson -and $evt._cachedRawJson.Contains($searchLower)) {
+            $shouldShow = $true
+          }
+        }
+        
+        $item.Visibility = if ($shouldShow) { 'Visible' } else { 'Collapsed' }
+      }
+    }
+  })
         }
         
         $item.Visibility = if ($shouldShow) { 'Visible' } else { 'Collapsed' }
