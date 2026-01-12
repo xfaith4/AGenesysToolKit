@@ -31,6 +31,8 @@ Quick summary:
 2. Edit `App/GenesysCloudTool_UX_Prototype_v2_1.ps1` and update the `Set-GcAuthConfig` section with your Client ID
 3. Launch the application
 
+**Testing**: See [HOW_TO_TEST.md](docs/HOW_TO_TEST.md) for step-by-step testing instructions.
+
 ### Running Smoke Tests
 
 Verify the installation and core module loading:
@@ -227,6 +229,9 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for detailed phased development plan.
 
 ## Documentation
 
+- [**HOW_TO_TEST.md**](docs/HOW_TO_TEST.md) - Quick testing guide for OAuth implementation (5 minutes)
+- [**OAUTH_TESTING.md**](docs/OAUTH_TESTING.md) - Comprehensive OAuth testing scenarios (12+ tests)
+- [**CONFIGURATION.md**](docs/CONFIGURATION.md) - Setup guide for OAuth and configuration
 - [**ARCHITECTURE.md**](docs/ARCHITECTURE.md) - Core contracts, pagination policy, and workspace definitions
 - [**ROADMAP.md**](docs/ROADMAP.md) - Phased development plan and version history
 - [**STYLE.md**](docs/STYLE.md) - Coding conventions, naming patterns, and best practices
