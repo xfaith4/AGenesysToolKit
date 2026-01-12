@@ -23,20 +23,20 @@ function Escape-GcXml {
   <#
   .SYNOPSIS
     Escapes special XML characters to prevent parsing errors.
-  
+
   .DESCRIPTION
     Uses System.Security.SecurityElement.Escape to properly escape
     special characters like &, <, >, ", ' in XML/XAML content.
-  
+
   .PARAMETER Text
     The text to escape for XML/XAML.
-  
+
   .EXAMPLE
     Escape-GcXml "Routing & People"
     # Returns: "Routing &amp; People"
   #>
   param([string]$Text)
-  
+
   if ([string]::IsNullOrEmpty($Text)) { return $Text }
   return [System.Security.SecurityElement]::Escape($Text)
 }
@@ -45,39 +45,39 @@ function ConvertFrom-GcXaml {
   <#
   .SYNOPSIS
     Safely loads XAML from a string using XmlReader + XamlReader.Load.
-  
+
   .DESCRIPTION
     This function provides a safe way to load XAML that avoids issues
     with direct [xml] casting, particularly when XAML contains x:Name
     or other namespace-dependent elements. It uses XmlReader with
     proper settings and XamlReader.Load for parsing.
-  
+
   .PARAMETER XamlString
     The XAML string to parse.
-  
+
   .EXAMPLE
     $view = ConvertFrom-GcXaml -XamlString $xamlString
   #>
   param([Parameter(Mandatory)][string]$XamlString)
-  
+
   try {
     # Create StringReader from XAML string
     $stringReader = New-Object System.IO.StringReader($XamlString)
-    
+
     # Create XmlReader with appropriate settings
     $xmlReaderSettings = New-Object System.Xml.XmlReaderSettings
     $xmlReaderSettings.IgnoreWhitespace = $false
     $xmlReaderSettings.IgnoreComments = $true
-    
+
     $xmlReader = [System.Xml.XmlReader]::Create($stringReader, $xmlReaderSettings)
-    
+
     # Load XAML using XamlReader
     $result = [Windows.Markup.XamlReader]::Load($xmlReader)
-    
+
     # Clean up
     $xmlReader.Close()
     $stringReader.Close()
-    
+
     return $result
   }
   catch {
@@ -107,7 +107,7 @@ $script:AppState = [ordered]@{
   Workspace    = 'Operations'
   Module       = 'Topic Subscriptions'
   IsStreaming  = $false
-  
+
   SubscriptionProvider = $null
   EventBuffer          = @()
 
@@ -139,7 +139,7 @@ function Start-AppJob {
   <#
   .SYNOPSIS
     Starts a background job using PowerShell runspaces - simplified API.
-  
+
   .DESCRIPTION
     Provides a simplified API for starting background jobs that:
     - Run script blocks in background runspaces
@@ -147,25 +147,25 @@ function Start-AppJob {
     - Support cancellation via CancelRequested flag
     - Track Status: Queued/Running/Completed/Failed/Canceled
     - Capture StartTime/EndTime/Duration
-  
+
   .PARAMETER Name
     Human-readable job name
-  
+
   .PARAMETER ScriptBlock
     Script block to execute in background runspace
-  
+
   .PARAMETER ArgumentList
     Arguments to pass to the script block
-  
+
   .PARAMETER OnCompleted
     Script block to execute when job completes (runs on UI thread)
-  
+
   .PARAMETER Type
     Job type category (default: 'General')
-  
+
   .EXAMPLE
     Start-AppJob -Name "Test Job" -ScriptBlock { Start-Sleep 2; "Done" } -OnCompleted { param($job) Write-Host "Completed!" }
-  
+
   .NOTES
     This is a wrapper around New-GcJobContext and Start-GcJob from JobRunner.psm1.
     Compatible with PowerShell 5.1 and 7+.
@@ -174,27 +174,27 @@ function Start-AppJob {
   param(
     [Parameter(Mandatory)]
     [string]$Name,
-    
+
     [Parameter(Mandatory)]
     [scriptblock]$ScriptBlock,
-    
+
     [object[]]$ArgumentList = @(),
-    
+
     [scriptblock]$OnCompleted,
-    
+
     [string]$Type = 'General'
   )
-  
+
   # Create job context using JobRunner
   $job = New-GcJobContext -Name $Name -Type $Type
-  
+
   # Add to app state jobs collection
   $script:AppState.Jobs.Add($job) | Out-Null
   Add-GcJobLog -Job $job -Message "Queued."
-  
+
   # Start the job
   Start-GcJob -Job $job -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -OnComplete $OnCompleted
-  
+
   return $job
 }
 
@@ -625,7 +625,7 @@ $BtnCancelJob.Add_Click({
           # Fallback to mock cancellation
         }
       }
-      
+
       # Fallback: mock cancellation
       $job.Status = 'Canceled'
       $job.CanCancel = $false
@@ -786,13 +786,13 @@ function New-ConversationTimelineView {
         [System.Windows.MessageBoxButton]::OK,
         [System.Windows.MessageBoxImage]::Warning
       )
-      
+
       # Fallback to mock export using Start-AppJob
       Start-AppJob -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -ScriptBlock {
         param($conversationId, $artifactsDir)
-        
+
         Start-Sleep -Milliseconds 1400
-        
+
         $file = Join-Path -Path $artifactsDir -ChildPath "incident-packet-mock-$($conversationId)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
         @(
           "Incident Packet (mock)",
@@ -801,18 +801,18 @@ function New-ConversationTimelineView {
           "",
           "NOTE: This is a mock packet. Log in to export real conversation data."
         ) | Set-Content -Path $file -Encoding UTF8
-        
+
         return $file
       } -ArgumentList @($conv, $script:ArtifactsDir) -OnCompleted {
         param($job)
-        
+
         if ($job.Result) {
           $file = $job.Result
           Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
           Set-Status "Exported mock incident packet: $file"
         }
       } | Out-Null
-      
+
       Refresh-HeaderStats
       return
     }
@@ -820,7 +820,7 @@ function New-ConversationTimelineView {
     # Real export using ArtifactGenerator with Start-AppJob
     Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
-      
+
       try {
         # Export packet
         $packet = Export-GcConversationPacket `
@@ -830,7 +830,7 @@ function New-ConversationTimelineView {
           -OutputDirectory $artifactsDir `
           -SubscriptionEvents $eventBuffer `
           -CreateZip
-        
+
         return $packet
       } catch {
         Write-Error "Failed to export packet: $_"
@@ -839,12 +839,12 @@ function New-ConversationTimelineView {
     } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
     -OnCompleted {
       param($job)
-      
+
       if ($job.Result) {
         $packet = $job.Result
         $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
         $artifactName = "Incident Packet — $($packet.ConversationId)"
-        
+
         Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
         Set-Status "Exported incident packet: $artifactPath"
       } else {
@@ -979,9 +979,12 @@ function New-SubscriptionsView {
   }
 
   # Streaming timer (simulated AudioHook / Agent Assist)
-  if ($null -ne $script:StreamTimer) {
-    $script:StreamTimer.Stop() | Out-Null
+  if (Get-Variable -Name StreamTimer -Scope Script -ErrorAction SilentlyContinue) {
+    if ($null -ne $script:StreamTimer) {
+      $script:StreamTimer.Stop() | Out-Null
+    }
   }
+
   $script:StreamTimer = New-Object Windows.Threading.DispatcherTimer
   $script:StreamTimer.Interval = [TimeSpan]::FromMilliseconds(650)
 
@@ -1125,13 +1128,13 @@ function New-SubscriptionsView {
         [System.Windows.MessageBoxButton]::OK,
         [System.Windows.MessageBoxImage]::Warning
       )
-      
+
       # Fallback to mock export using Start-AppJob
       Start-AppJob -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -ScriptBlock {
         param($conversationId, $artifactsDir)
-        
+
         Start-Sleep -Milliseconds 1400
-        
+
         $file = Join-Path -Path $artifactsDir -ChildPath "incident-packet-mock-$($conversationId)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
         @(
           "Incident Packet (mock) — Subscription Evidence",
@@ -1141,18 +1144,18 @@ function New-SubscriptionsView {
           "NOTE: This is a mock packet. Log in to export real conversation data.",
           ""
         ) | Set-Content -Path $file -Encoding UTF8
-        
+
         return $file
       } -ArgumentList @($conv, $script:ArtifactsDir) -OnCompleted {
         param($job)
-        
+
         if ($job.Result) {
           $file = $job.Result
           Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
           Set-Status "Exported mock incident packet: $file"
         }
       } | Out-Null
-      
+
       Refresh-HeaderStats
       return
     }
@@ -1160,11 +1163,11 @@ function New-SubscriptionsView {
     # Real export using ArtifactGenerator with Start-AppJob
     Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
-      
+
       try {
         # Build subscription events from buffer
         $subscriptionEvents = $eventBuffer
-        
+
         # Export packet
         $packet = Export-GcConversationPacket `
           -ConversationId $conversationId `
@@ -1173,7 +1176,7 @@ function New-SubscriptionsView {
           -OutputDirectory $artifactsDir `
           -SubscriptionEvents $subscriptionEvents `
           -CreateZip
-        
+
         return $packet
       } catch {
         Write-Error "Failed to export packet: $_"
@@ -1182,12 +1185,12 @@ function New-SubscriptionsView {
     } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
     -OnCompleted {
       param($job)
-      
+
       if ($job.Result) {
         $packet = $job.Result
         $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
         $artifactName = "Incident Packet — $($packet.ConversationId)"
-        
+
         Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
         Set-Status "Exported incident packet: $artifactPath"
       } else {
@@ -1301,18 +1304,18 @@ $BtnLogin.Add_Click({
     $script:AppState.AccessToken = $null
     $script:AppState.Auth = "Not logged in"
     $script:AppState.TokenStatus = "No token"
-    
+
     Set-TopContext
     Set-Status "Logged out successfully."
-    
+
     $BtnLogin.Content = "Login…"
     $BtnTestToken.IsEnabled = $false
     return
   }
-  
+
   # Login flow
   $authConfig = Get-GcAuthConfig
-  
+
   # Check if client ID is configured
   if ($authConfig.ClientId -eq 'YOUR_CLIENT_ID_HERE' -or -not $authConfig.ClientId) {
     [System.Windows.MessageBox]::Show(
@@ -1323,12 +1326,12 @@ $BtnLogin.Add_Click({
     )
     return
   }
-  
+
   # Disable button during auth
   $BtnLogin.IsEnabled = $false
   $BtnLogin.Content = "Authenticating..."
   Set-Status "Starting OAuth flow..."
-  
+
   # Run OAuth flow in background
   Start-AppJob -Name "OAuth Login" -Type "Auth" -ScriptBlock {
     try {
@@ -1340,17 +1343,17 @@ $BtnLogin.Add_Click({
     }
   } -OnCompleted {
     param($job)
-    
+
     if ($job.Result) {
       $tokenState = Get-GcTokenState
       $script:AppState.AccessToken = $tokenState.AccessToken
       $script:AppState.Auth = "Logged in"
       $script:AppState.TokenStatus = "Token OK"
-      
+
       if ($tokenState.UserInfo) {
         $script:AppState.Auth = "Logged in as $($tokenState.UserInfo.name)"
       }
-      
+
       Set-TopContext
       Set-Status "Authentication successful!"
       $BtnLogin.Content = "Logout"
@@ -1370,7 +1373,7 @@ $BtnLogin.Add_Click({
 $BtnTestToken.Add_Click({
   # STEP 1 CHANGE: Updated Test Token handler to use Invoke-AppGcRequest wrapper
   # This validates the token by calling GET /api/v2/users/me with auto-injected auth
-  
+
   if (-not $script:AppState.AccessToken) {
     # Show error if no token is set
     [System.Windows.MessageBox]::Show(
@@ -1382,12 +1385,12 @@ $BtnTestToken.Add_Click({
     Set-Status "No token available."
     return
   }
-  
+
   # Disable button during test
   $BtnTestToken.IsEnabled = $false
   $BtnTestToken.Content = "Testing..."
   Set-Status "Testing token..."
-  
+
   # Queue background job to test token via GET /api/v2/users/me
   Start-AppJob -Name "Test Token" -Type "Auth" -ScriptBlock {
     # Note: No parameters needed - Invoke-AppGcRequest reads from AppState
@@ -1395,7 +1398,7 @@ $BtnTestToken.Add_Click({
       # STEP 1: Call GET /api/v2/users/me using Invoke-AppGcRequest
       # The wrapper automatically injects AccessToken and InstanceName from AppState
       $userInfo = Invoke-AppGcRequest -Path '/api/v2/users/me' -Method GET
-      
+
       return [PSCustomObject]@{
         Success = $true
         UserInfo = $userInfo
@@ -1405,12 +1408,12 @@ $BtnTestToken.Add_Click({
       # Capture detailed error information for better diagnostics
       $errorMessage = $_.Exception.Message
       $statusCode = $null
-      
+
       # Try to extract HTTP status code if available
       if ($_.Exception.Response) {
         $statusCode = [int]$_.Exception.Response.StatusCode
       }
-      
+
       return [PSCustomObject]@{
         Success = $false
         UserInfo = $null
@@ -1420,21 +1423,21 @@ $BtnTestToken.Add_Click({
     }
   } -OnCompleted {
     param($job)
-    
+
     if ($job.Result -and $job.Result.Success) {
       # SUCCESS: Token is valid
       $userInfo = $job.Result.UserInfo
-      
+
       # Update AppState with success status and user information
       $script:AppState.Auth = "Logged in"
       if ($userInfo.name) {
         $script:AppState.Auth = "Logged in as $($userInfo.name)"
       }
       $script:AppState.TokenStatus = "Token valid"
-      
+
       # Update header display
       Set-TopContext
-      
+
       # Show success status with username if available
       $statusMsg = "Token test: OK"
       if ($userInfo.name) { $statusMsg += ". User: $($userInfo.name)" }
@@ -1443,15 +1446,15 @@ $BtnTestToken.Add_Click({
         $script:AppState.Org = $userInfo.organization.name
       }
       Set-Status $statusMsg
-      
+
     } else {
       # FAILURE: Token test failed
       $errorMsg = if ($job.Result) { $job.Result.Error } else { "Unknown error" }
-      
+
       # Analyze error and provide user-friendly message
       $userMessage = "Token test failed."
       $detailMessage = $errorMsg
-      
+
       # Check for common error scenarios
       if ($errorMsg -match "401|Unauthorized") {
         $userMessage = "Token Invalid or Expired"
@@ -1469,12 +1472,12 @@ $BtnTestToken.Add_Click({
         $userMessage = "Permission Denied"
         $detailMessage = "Token is valid but lacks permission to access user information."
       }
-      
+
       # Update AppState to reflect failure
       $script:AppState.Auth = "Not logged in"
       $script:AppState.TokenStatus = "Token invalid"
       Set-TopContext
-      
+
       # Show error dialog with details
       [System.Windows.MessageBox]::Show(
         $detailMessage,
@@ -1482,10 +1485,10 @@ $BtnTestToken.Add_Click({
         [System.Windows.MessageBoxButton]::OK,
         [System.Windows.MessageBoxImage]::Error
       )
-      
+
       Set-Status "Token test failed: $userMessage"
     }
-    
+
     # Re-enable button
     $BtnTestToken.Content = "Test Token"
     $BtnTestToken.IsEnabled = $true
