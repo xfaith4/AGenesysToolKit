@@ -93,7 +93,7 @@ function ConvertFrom-GcXaml {
 # Initialize Auth Configuration (user should customize these)
 Set-GcAuthConfig `
   -Region 'mypurecloud.com' `
-  -ClientId 'YOUR_CLIENT_ID_HERE' `
+  -ClientId 'clientid' `
   -RedirectUri 'http://localhost:8400/oauth/callback' `
   -Scopes @('conversations', 'analytics', 'notifications', 'users')
 
@@ -159,11 +159,11 @@ function Format-EventSummary {
   } else {
     (Get-Date).ToString('HH:mm:ss.fff')
   }
-  
+
   $sev = if ($Event.severity) { $Event.severity } else { 'info' }
   $topic = if ($Event.topic) { $Event.topic } else { 'unknown' }
   $conv = if ($Event.conversationId) { $Event.conversationId } else { 'n/a' }
-  
+
   # Extract text - check Event.text first (direct field), then raw.eventBody.text
   $text = ''
   if ($Event.text) {
@@ -253,16 +253,16 @@ function Start-AppJob {
 # Shared scriptblock for timeline retrieval to avoid duplication
 $script:TimelineJobScriptBlock = {
   param($conversationId, $region, $accessToken, $eventBuffer)
-  
+
   # Import required modules in runspace
   $scriptRoot = Split-Path -Parent $PSCommandPath
   $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
   Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
   Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
-  
+
   try {
     Write-Output "Querying analytics for conversation $conversationId..."
-    
+
     # Build analytics query body
     $queryBody = @{
       conversationFilters = @(
@@ -279,7 +279,7 @@ $script:TimelineJobScriptBlock = {
       order = 'asc'
       orderBy = 'conversationStart'
     }
-    
+
     # Submit analytics job
     Write-Output "Submitting analytics job..."
     $jobResponse = Invoke-GcRequest `
@@ -288,42 +288,42 @@ $script:TimelineJobScriptBlock = {
       -Body $queryBody `
       -InstanceName $region `
       -AccessToken $accessToken
-    
+
     $jobId = $jobResponse.id
     if (-not $jobId) { throw "No job ID returned from analytics API." }
-    
+
     Write-Output "Job submitted: $jobId. Waiting for completion..."
-    
+
     # Poll for completion
     $maxAttempts = 120  # 2 minutes max (120 * 1 second)
     $attempt = 0
     $completed = $false
-    
+
     while ($attempt -lt $maxAttempts) {
       Start-Sleep -Milliseconds 1000
       $attempt++
-      
+
       $status = Invoke-GcRequest `
         -Method GET `
         -Path "/api/v2/analytics/conversations/details/jobs/$jobId" `
         -InstanceName $region `
         -AccessToken $accessToken
-      
+
       if ($status.state -match 'FULFILLED|COMPLETED|SUCCESS') {
         $completed = $true
         Write-Output "Job completed successfully."
         break
       }
-      
+
       if ($status.state -match 'FAILED|ERROR') {
         throw "Analytics job failed: $($status.state)"
       }
     }
-    
+
     if (-not $completed) {
       throw "Analytics job timed out after $maxAttempts seconds."
     }
-    
+
     # Fetch results
     Write-Output "Fetching results..."
     $results = Invoke-GcRequest `
@@ -331,15 +331,15 @@ $script:TimelineJobScriptBlock = {
       -Path "/api/v2/analytics/conversations/details/jobs/$jobId/results" `
       -InstanceName $region `
       -AccessToken $accessToken
-    
+
     if (-not $results.conversations -or $results.conversations.Count -eq 0) {
       throw "No conversation data found for ID: $conversationId"
     }
-    
+
     Write-Output "Retrieved conversation data. Building timeline..."
-    
+
     $conversationData = $results.conversations[0]
-    
+
     # Filter subscription events for this conversation
     $relevantSubEvents = @()
     if ($eventBuffer -and $eventBuffer.Count -gt 0) {
@@ -350,15 +350,15 @@ $script:TimelineJobScriptBlock = {
       }
       Write-Output "Found $($relevantSubEvents.Count) subscription events for this conversation."
     }
-    
+
     # Convert to timeline events
     $timeline = ConvertTo-GcTimeline `
       -ConversationData $conversationData `
       -AnalyticsData $conversationData `
       -SubscriptionEvents $relevantSubEvents
-    
+
     Write-Output "Timeline built with $($timeline.Count) events."
-    
+
     # Add "Live Events" category for subscription events
     if ($relevantSubEvents.Count -gt 0) {
       $liveEventsAdded = 0
@@ -374,7 +374,7 @@ $script:TimelineJobScriptBlock = {
             Write-Warning "Subscription event missing timestamp, skipping: $($subEvt.topic)"
             continue
           }
-          
+
           # Create live event
           $timeline += New-GcTimelineEvent `
             -Time $eventTime `
@@ -385,25 +385,25 @@ $script:TimelineJobScriptBlock = {
               conversationId = $conversationId
               eventType = $subEvt.topic
             }
-          
+
           $liveEventsAdded++
         } catch {
           Write-Warning "Failed to parse subscription event timestamp: $_"
           continue
         }
       }
-      
+
       # Re-sort timeline
       $timeline = $timeline | Sort-Object -Property Time
       Write-Output "Added $liveEventsAdded live events to timeline."
     }
-    
+
     return @{
       ConversationId = $conversationId
       Timeline = $timeline
       SubscriptionEvents = $relevantSubEvents
     }
-    
+
   } catch {
     Write-Error "Failed to build timeline: $_"
     throw
@@ -877,13 +877,13 @@ function Show-TimelineWindow {
   <#
   .SYNOPSIS
     Opens a new timeline window for a conversation.
-  
+
   .PARAMETER ConversationId
     The conversation ID to display timeline for
-  
+
   .PARAMETER TimelineEvents
     Array of timeline events to display
-  
+
   .PARAMETER SubscriptionEvents
     Optional array of subscription events to include
   #>
@@ -891,10 +891,10 @@ function Show-TimelineWindow {
   param(
     [Parameter(Mandatory)]
     [string]$ConversationId,
-    
+
     [Parameter(Mandatory)]
     [object[]]$TimelineEvents,
-    
+
     [object[]]$SubscriptionEvents = @()
   )
 
@@ -934,9 +934,9 @@ function Show-TimelineWindow {
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
           </Grid.RowDefinitions>
-          
+
           <TextBlock Grid.Row="0" Text="Timeline Events" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,10"/>
-          
+
           <DataGrid x:Name="DgTimeline" Grid.Row="1"
                     AutoGenerateColumns="False"
                     IsReadOnly="True"
@@ -963,9 +963,9 @@ function Show-TimelineWindow {
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
           </Grid.RowDefinitions>
-          
+
           <TextBlock Grid.Row="0" Text="Event Details" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,10"/>
-          
+
           <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
             <TextBox x:Name="TxtDetail"
                      AcceptsReturn="True"
@@ -986,14 +986,14 @@ function Show-TimelineWindow {
 
   try {
     $window = ConvertFrom-GcXaml -XamlString $xamlString
-    
+
     $dgTimeline = $window.FindName('DgTimeline')
     $txtDetail = $window.FindName('TxtDetail')
     $txtConvInfo = $window.FindName('TxtConvInfo')
-    
+
     # Update conversation info with event count
     $txtConvInfo.Text = "Conversation ID: $ConversationId  |  Events: $($TimelineEvents.Count)"
-    
+
     # Prepare timeline events for display (add formatted time property)
     $displayEvents = @()
     foreach ($evt in $TimelineEvents) {
@@ -1008,10 +1008,10 @@ function Show-TimelineWindow {
       }
       $displayEvents += $displayEvent
     }
-    
+
     # Bind events to DataGrid
     $dgTimeline.ItemsSource = $displayEvents
-    
+
     # Handle selection change to show details
     $dgTimeline.Add_SelectionChanged({
       if ($dgTimeline.SelectedItem) {
@@ -1026,10 +1026,10 @@ function Show-TimelineWindow {
         $txtDetail.Text = ($detailObj | ConvertTo-Json -Depth 10)
       }
     })
-    
+
     # Show window
     $window.ShowDialog() | Out-Null
-    
+
   } catch {
     Write-Error "Failed to show timeline window: $_"
     [System.Windows.MessageBox]::Show(
@@ -1923,7 +1923,7 @@ function New-ConversationTimelineView {
 
   $btnBuild.Add_Click({
     $conv = $txtConv.Text.Trim()
-    
+
     # Validate conversation ID
     if (-not $conv) {
       [System.Windows.MessageBox]::Show(
@@ -1947,16 +1947,16 @@ function New-ConversationTimelineView {
     }
 
     Set-Status "Retrieving timeline for conversation $conv..."
-    
+
     # Start background job to retrieve and build timeline (using shared scriptblock)
     Start-AppJob -Name "Build Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
     -OnCompleted {
       param($job)
-      
+
       if ($job.Result -and $job.Result.Timeline) {
         $result = $job.Result
         Set-Status "Timeline ready for conversation $($result.ConversationId) with $($result.Timeline.Count) events."
-        
+
         # Show timeline window
         Show-TimelineWindow `
           -ConversationId $result.ConversationId `
@@ -1972,7 +1972,7 @@ function New-ConversationTimelineView {
         )
       }
     }
-    
+
     Refresh-HeaderStats
   })
 
@@ -2028,7 +2028,7 @@ function New-ConversationTimelineView {
     # Real export using ArtifactGenerator with Start-AppJob
     Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
-      
+
       # Import required modules in runspace
       $scriptRoot = Split-Path -Parent $PSCommandPath
       $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
@@ -2282,10 +2282,10 @@ function New-SubscriptionsView {
     if (-not $script:AppState.IsStreaming) { return }
 
     $evt = New-MockEvent
-    
+
     # Store in EventBuffer for export
     $script:AppState.EventBuffer.Insert(0, $evt)
-    
+
     # Format for display and add to ListBox with object as Tag
     $listItem = New-Object System.Windows.Controls.ListBoxItem
     $listItem.Content = Format-EventSummary -Event $evt
@@ -2305,7 +2305,7 @@ function New-SubscriptionsView {
     if ($h.LstEvents.Items.Count -gt 250) {
       $h.LstEvents.Items.RemoveAt($h.LstEvents.Items.Count - 1)
     }
-    
+
     # Limit EventBuffer size
     if ($script:AppState.EventBuffer.Count -gt 1000) {
       $script:AppState.EventBuffer.RemoveAt($script:AppState.EventBuffer.Count - 1)
@@ -2355,11 +2355,11 @@ function New-SubscriptionsView {
   $h.BtnPin.Add_Click({
     if ($h.LstEvents.SelectedItem) {
       $selectedItem = $h.LstEvents.SelectedItem
-      
+
       # Get the event object from the ListBoxItem's Tag
       if ($selectedItem -is [System.Windows.Controls.ListBoxItem] -and $selectedItem.Tag) {
         $evt = $selectedItem.Tag
-        
+
         # Check if already pinned (avoid duplicates)
         $alreadyPinned = $false
         foreach ($pinnedEvt in $script:AppState.PinnedEvents) {
@@ -2368,7 +2368,7 @@ function New-SubscriptionsView {
             break
           }
         }
-        
+
         if (-not $alreadyPinned) {
           $script:AppState.PinnedEvents.Add($evt)
           $script:AppState.PinnedCount++
@@ -2386,7 +2386,7 @@ function New-SubscriptionsView {
   # Search box filtering
   $h.TxtSearch.Add_TextChanged({
     $searchText = $h.TxtSearch.Text
-    
+
     # Skip filtering if placeholder text
     if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq 'search (conversationId, error, agent…)') {
       # Show all events
@@ -2397,57 +2397,57 @@ function New-SubscriptionsView {
       }
       return
     }
-    
+
     $searchLower = $searchText.ToLower()
-    
+
     # Filter events
     foreach ($item in $h.LstEvents.Items) {
       if ($item -is [System.Windows.Controls.ListBoxItem] -and $item.Tag) {
         $evt = $item.Tag
         $shouldShow = $false
-        
+
         # Search in conversationId
         if ($evt.conversationId -and $evt.conversationId.ToLower().Contains($searchLower)) {
           $shouldShow = $true
         }
-        
+
         # Search in topic/type
         if (-not $shouldShow -and $evt.topic -and $evt.topic.ToLower().Contains($searchLower)) {
           $shouldShow = $true
         }
-        
+
         # Search in severity
         if (-not $shouldShow -and $evt.severity -and $evt.severity.ToLower().Contains($searchLower)) {
           $shouldShow = $true
         }
-        
+
         # Search in text
         if (-not $shouldShow -and $evt.text -and $evt.text.ToLower().Contains($searchLower)) {
           $shouldShow = $true
         }
-        
+
         # Search in queueName
         if (-not $shouldShow -and $evt.queueName -and $evt.queueName.ToLower().Contains($searchLower)) {
           $shouldShow = $true
         }
-        
+
         # Search in raw JSON (pre-cached during event creation for performance)
         if (-not $shouldShow -and $evt._cachedRawJson -and $evt._cachedRawJson.Contains($searchLower)) {
           $shouldShow = $true
         }
-        
+
         $item.Visibility = if ($shouldShow) { 'Visible' } else { 'Collapsed' }
       }
     }
   })
-  
+
   # Clear search placeholder on focus
   $h.TxtSearch.Add_GotFocus({
     if ($h.TxtSearch.Text -eq 'search (conversationId, error, agent…)') {
       $h.TxtSearch.Text = ''
     }
   })
-  
+
   # Restore search placeholder on lost focus if empty
   $h.TxtSearch.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtSearch.Text)) {
@@ -2458,12 +2458,12 @@ function New-SubscriptionsView {
   $h.BtnOpenTimeline.Add_Click({
     # Derive conversation ID from textbox first, then from selected event
     $conv = ''
-    
+
     # Priority 1: Check conversationId textbox
     if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') {
       $conv = $h.TxtConv.Text.Trim()
     }
-    
+
     # Priority 2: Infer from selected event
     if (-not $conv -and $h.LstEvents.SelectedItem) {
       if ($h.LstEvents.SelectedItem -is [System.Windows.Controls.ListBoxItem] -and $h.LstEvents.SelectedItem.Tag) {
@@ -2475,7 +2475,7 @@ function New-SubscriptionsView {
         if ($s -match 'conv=(?<cid>c-\d+)\s') { $conv = $matches['cid'] }
       }
     }
-    
+
     # Validate we have a conversation ID
     if (-not $conv) {
       [System.Windows.MessageBox]::Show(
@@ -2499,16 +2499,16 @@ function New-SubscriptionsView {
     }
 
     Set-Status "Retrieving timeline for conversation $conv..."
-    
+
     # Start background job to retrieve and build timeline (using shared scriptblock)
     Start-AppJob -Name "Open Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
     -OnCompleted {
       param($job)
-      
+
       if ($job.Result -and $job.Result.Timeline) {
         $result = $job.Result
         Set-Status "Timeline ready for conversation $($result.ConversationId) with $($result.Timeline.Count) events."
-        
+
         # Show timeline window
         Show-TimelineWindow `
           -ConversationId $result.ConversationId `
@@ -2524,7 +2524,7 @@ function New-SubscriptionsView {
         )
       }
     }
-    
+
     Refresh-HeaderStats
   })
 
@@ -2573,7 +2573,7 @@ function New-SubscriptionsView {
     # Real export using ArtifactGenerator with Start-AppJob
     Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
-      
+
       # Import required modules in runspace
       $scriptRoot = Split-Path -Parent $PSCommandPath
       $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
@@ -2760,25 +2760,55 @@ $BtnLogin.Add_Click({
   Set-Status "Starting OAuth flow..."
 
   # Run OAuth flow in background
+  $authModulePath = Join-Path -Path $coreRoot -ChildPath 'Auth.psm1'
+  $authConfigSnapshot = Get-GcAuthConfig
+
   Start-AppJob -Name "OAuth Login" -Type "Auth" -ScriptBlock {
+    param($authModulePath, $authConfigSnapshot, $artifactsDir)
+
+    Import-Module $authModulePath -Force
+    Enable-GcAuthDiagnostics -LogDirectory $artifactsDir | Out-Null
+
+    # Re-apply auth configuration inside the job runspace (module state is per-runspace).
+    Set-GcAuthConfig `
+      -Region $authConfigSnapshot.Region `
+      -ClientId $authConfigSnapshot.ClientId `
+      -RedirectUri $authConfigSnapshot.RedirectUri `
+      -Scopes $authConfigSnapshot.Scopes `
+      -ClientSecret $authConfigSnapshot.ClientSecret
+
     try {
       $tokenResponse = Get-GcTokenAsync -TimeoutSeconds 300
-      return $tokenResponse
+      if (-not $tokenResponse -or -not $tokenResponse.access_token) {
+        return $null
+      }
+
+      $userInfo = $null
+      try { $userInfo = Test-GcToken } catch { }
+
+      $diag = Get-GcAuthDiagnostics
+
+      return [PSCustomObject]@{
+        AccessToken = $tokenResponse.access_token
+        TokenType   = $tokenResponse.token_type
+        ExpiresIn   = $tokenResponse.expires_in
+        UserInfo    = $userInfo
+        AuthLogPath = $diag.LogPath
+      }
     } catch {
       Write-Error $_
       return $null
     }
-  } -OnCompleted {
+  } -ArgumentList @($authModulePath, $authConfigSnapshot, $script:ArtifactsDir) -OnCompleted {
     param($job)
 
     if ($job.Result) {
-      $tokenState = Get-GcTokenState
-      $script:AppState.AccessToken = $tokenState.AccessToken
+      $script:AppState.AccessToken = $job.Result.AccessToken
       $script:AppState.Auth = "Logged in"
       $script:AppState.TokenStatus = "Token OK"
 
-      if ($tokenState.UserInfo) {
-        $script:AppState.Auth = "Logged in as $($tokenState.UserInfo.name)"
+      if ($job.Result.UserInfo) {
+        $script:AppState.Auth = "Logged in as $($job.Result.UserInfo.name)"
       }
 
       Set-TopContext
@@ -2790,7 +2820,22 @@ $BtnLogin.Add_Click({
       $script:AppState.Auth = "Login failed"
       $script:AppState.TokenStatus = "No token"
       Set-TopContext
-      Set-Status "Authentication failed. Check job logs for details."
+      $authLogPath = $null
+      try {
+        $combined = @()
+        if ($job.Errors) { $combined += @($job.Errors) }
+        if ($job.Logs) { $combined += @($job.Logs) }
+        $text = ($combined -join "`n")
+        if ($text -match 'Auth diagnostics:\s*(?<p>[^)\r\n]+)') {
+          $authLogPath = $matches['p'].Trim()
+        }
+      } catch { }
+
+      if ($authLogPath) {
+        Set-Status "Authentication failed. Auth log: $authLogPath"
+      } else {
+        Set-Status "Authentication failed. Check job logs for details."
+      }
       $BtnLogin.Content = "Login…"
       $BtnLogin.IsEnabled = $true
     }
