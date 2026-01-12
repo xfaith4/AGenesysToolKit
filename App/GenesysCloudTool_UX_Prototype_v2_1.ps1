@@ -248,6 +248,169 @@ function Start-AppJob {
 }
 
 # -----------------------------
+# Timeline Job Helper
+# -----------------------------
+# Shared scriptblock for timeline retrieval to avoid duplication
+$script:TimelineJobScriptBlock = {
+  param($conversationId, $region, $accessToken, $eventBuffer)
+  
+  # Import required modules in runspace
+  $scriptRoot = Split-Path -Parent $PSCommandPath
+  $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+  Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
+  Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
+  
+  try {
+    Write-Output "Querying analytics for conversation $conversationId..."
+    
+    # Build analytics query body
+    $queryBody = @{
+      conversationFilters = @(
+        @{
+          type = 'and'
+          predicates = @(
+            @{
+              dimension = 'conversationId'
+              value = $conversationId
+            }
+          )
+        }
+      )
+      order = 'asc'
+      orderBy = 'conversationStart'
+    }
+    
+    # Submit analytics job
+    Write-Output "Submitting analytics job..."
+    $jobResponse = Invoke-GcRequest `
+      -Method POST `
+      -Path '/api/v2/analytics/conversations/details/jobs' `
+      -Body $queryBody `
+      -InstanceName $region `
+      -AccessToken $accessToken
+    
+    $jobId = $jobResponse.id
+    if (-not $jobId) { throw "No job ID returned from analytics API." }
+    
+    Write-Output "Job submitted: $jobId. Waiting for completion..."
+    
+    # Poll for completion
+    $maxAttempts = 120  # 2 minutes max (120 * 1 second)
+    $attempt = 0
+    $completed = $false
+    
+    while ($attempt -lt $maxAttempts) {
+      Start-Sleep -Milliseconds 1000
+      $attempt++
+      
+      $status = Invoke-GcRequest `
+        -Method GET `
+        -Path "/api/v2/analytics/conversations/details/jobs/$jobId" `
+        -InstanceName $region `
+        -AccessToken $accessToken
+      
+      if ($status.state -match 'FULFILLED|COMPLETED|SUCCESS') {
+        $completed = $true
+        Write-Output "Job completed successfully."
+        break
+      }
+      
+      if ($status.state -match 'FAILED|ERROR') {
+        throw "Analytics job failed: $($status.state)"
+      }
+    }
+    
+    if (-not $completed) {
+      throw "Analytics job timed out after $maxAttempts seconds."
+    }
+    
+    # Fetch results
+    Write-Output "Fetching results..."
+    $results = Invoke-GcRequest `
+      -Method GET `
+      -Path "/api/v2/analytics/conversations/details/jobs/$jobId/results" `
+      -InstanceName $region `
+      -AccessToken $accessToken
+    
+    if (-not $results.conversations -or $results.conversations.Count -eq 0) {
+      throw "No conversation data found for ID: $conversationId"
+    }
+    
+    Write-Output "Retrieved conversation data. Building timeline..."
+    
+    $conversationData = $results.conversations[0]
+    
+    # Filter subscription events for this conversation
+    $relevantSubEvents = @()
+    if ($eventBuffer -and $eventBuffer.Count -gt 0) {
+      foreach ($evt in $eventBuffer) {
+        if ($evt.conversationId -eq $conversationId) {
+          $relevantSubEvents += $evt
+        }
+      }
+      Write-Output "Found $($relevantSubEvents.Count) subscription events for this conversation."
+    }
+    
+    # Convert to timeline events
+    $timeline = ConvertTo-GcTimeline `
+      -ConversationData $conversationData `
+      -AnalyticsData $conversationData `
+      -SubscriptionEvents $relevantSubEvents
+    
+    Write-Output "Timeline built with $($timeline.Count) events."
+    
+    # Add "Live Events" category for subscription events
+    if ($relevantSubEvents.Count -gt 0) {
+      $liveEventsAdded = 0
+      foreach ($subEvt in $relevantSubEvents) {
+        try {
+          # Parse event timestamp with error handling
+          $eventTime = $null
+          if ($subEvt.ts -is [datetime]) {
+            $eventTime = $subEvt.ts
+          } elseif ($subEvt.ts) {
+            $eventTime = [datetime]::Parse($subEvt.ts)
+          } else {
+            Write-Warning "Subscription event missing timestamp, skipping: $($subEvt.topic)"
+            continue
+          }
+          
+          # Create live event
+          $timeline += New-GcTimelineEvent `
+            -Time $eventTime `
+            -Category 'Live Events' `
+            -Label "$($subEvt.topic): $($subEvt.text)" `
+            -Details $subEvt `
+            -CorrelationKeys @{
+              conversationId = $conversationId
+              eventType = $subEvt.topic
+            }
+          
+          $liveEventsAdded++
+        } catch {
+          Write-Warning "Failed to parse subscription event timestamp: $_"
+          continue
+        }
+      }
+      
+      # Re-sort timeline
+      $timeline = $timeline | Sort-Object -Property Time
+      Write-Output "Added $liveEventsAdded live events to timeline."
+    }
+    
+    return @{
+      ConversationId = $conversationId
+      Timeline = $timeline
+      SubscriptionEvents = $relevantSubEvents
+    }
+    
+  } catch {
+    Write-Error "Failed to build timeline: $_"
+    throw
+  }
+}
+
+# -----------------------------
 # Workspaces + Modules
 # -----------------------------
 $script:WorkspaceModules = [ordered]@{
@@ -709,6 +872,175 @@ $LstArtifacts.Add_MouseDoubleClick({
 # -----------------------------
 # Views
 # -----------------------------
+
+function Show-TimelineWindow {
+  <#
+  .SYNOPSIS
+    Opens a new timeline window for a conversation.
+  
+  .PARAMETER ConversationId
+    The conversation ID to display timeline for
+  
+  .PARAMETER TimelineEvents
+    Array of timeline events to display
+  
+  .PARAMETER SubscriptionEvents
+    Optional array of subscription events to include
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]
+    [string]$ConversationId,
+    
+    [Parameter(Mandatory)]
+    [object[]]$TimelineEvents,
+    
+    [object[]]$SubscriptionEvents = @()
+  )
+
+  $xamlString = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Conversation Timeline - $ConversationId"
+        Height="700" Width="1200"
+        WindowStartupLocation="CenterScreen"
+        Background="#FFF7F7F9">
+  <Grid Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <!-- Header -->
+    <Border Grid.Row="0" Background="#FF111827" CornerRadius="6" Padding="12" Margin="0,0,0,12">
+      <StackPanel>
+        <TextBlock Text="Conversation Timeline" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
+        <TextBlock x:Name="TxtConvInfo" Text="Conversation ID: $ConversationId" FontSize="12" Foreground="#FFA0AEC0" Margin="0,4,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Main Content -->
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="2*"/>
+        <ColumnDefinition Width="12"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+
+      <!-- Timeline Grid -->
+      <Border Grid.Column="0" Background="White" CornerRadius="6" BorderBrush="#FFE5E7EB" BorderThickness="1" Padding="12">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          
+          <TextBlock Grid.Row="0" Text="Timeline Events" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,10"/>
+          
+          <DataGrid x:Name="DgTimeline" Grid.Row="1"
+                    AutoGenerateColumns="False"
+                    IsReadOnly="True"
+                    SelectionMode="Single"
+                    GridLinesVisibility="None"
+                    HeadersVisibility="Column"
+                    CanUserResizeRows="False"
+                    CanUserSortColumns="True"
+                    AlternatingRowBackground="#FFF9FAFB"
+                    Background="White">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Time" Binding="{Binding TimeFormatted}" Width="140" CanUserSort="True"/>
+              <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="120" CanUserSort="True"/>
+              <DataGridTextColumn Header="Label" Binding="{Binding Label}" Width="*" CanUserSort="True"/>
+            </DataGrid.Columns>
+          </DataGrid>
+        </Grid>
+      </Border>
+
+      <!-- Detail Pane -->
+      <Border Grid.Column="2" Background="White" CornerRadius="6" BorderBrush="#FFE5E7EB" BorderThickness="1" Padding="12">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          
+          <TextBlock Grid.Row="0" Text="Event Details" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,10"/>
+          
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+            <TextBox x:Name="TxtDetail"
+                     AcceptsReturn="True"
+                     IsReadOnly="True"
+                     BorderThickness="0"
+                     Background="Transparent"
+                     FontFamily="Consolas"
+                     FontSize="11"
+                     TextWrapping="NoWrap"
+                     Text="Select an event to view details..."/>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>
+"@
+
+  try {
+    $window = ConvertFrom-GcXaml -XamlString $xamlString
+    
+    $dgTimeline = $window.FindName('DgTimeline')
+    $txtDetail = $window.FindName('TxtDetail')
+    $txtConvInfo = $window.FindName('TxtConvInfo')
+    
+    # Update conversation info with event count
+    $txtConvInfo.Text = "Conversation ID: $ConversationId  |  Events: $($TimelineEvents.Count)"
+    
+    # Prepare timeline events for display (add formatted time property)
+    $displayEvents = @()
+    foreach ($evt in $TimelineEvents) {
+      $displayEvent = [PSCustomObject]@{
+        Time = $evt.Time
+        TimeFormatted = $evt.Time.ToString('yyyy-MM-dd HH:mm:ss.fff')
+        Category = $evt.Category
+        Label = $evt.Label
+        Details = $evt.Details
+        CorrelationKeys = $evt.CorrelationKeys
+        OriginalEvent = $evt
+      }
+      $displayEvents += $displayEvent
+    }
+    
+    # Bind events to DataGrid
+    $dgTimeline.ItemsSource = $displayEvents
+    
+    # Handle selection change to show details
+    $dgTimeline.Add_SelectionChanged({
+      if ($dgTimeline.SelectedItem) {
+        $selected = $dgTimeline.SelectedItem
+        $detailObj = [ordered]@{
+          Time = $selected.Time.ToString('o')
+          Category = $selected.Category
+          Label = $selected.Label
+          CorrelationKeys = $selected.CorrelationKeys
+          Details = $selected.Details
+        }
+        $txtDetail.Text = ($detailObj | ConvertTo-Json -Depth 10)
+      }
+    })
+    
+    # Show window
+    $window.ShowDialog() | Out-Null
+    
+  } catch {
+    Write-Error "Failed to show timeline window: $_"
+    [System.Windows.MessageBox]::Show(
+      "Failed to show timeline window: $_",
+      "Error",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Error
+    )
+  }
+}
+
 function New-PlaceholderView {
   param([string]$Title, [string]$Hint)
 
@@ -799,22 +1131,57 @@ function New-ConversationTimelineView {
 
   $btnBuild.Add_Click({
     $conv = $txtConv.Text.Trim()
-    if (-not $conv) { $conv = "c-$(Get-Random -Minimum 100000 -Maximum 999999)" ; $txtConv.Text = $conv }
+    
+    # Validate conversation ID
+    if (-not $conv) {
+      [System.Windows.MessageBox]::Show(
+        "Please enter a conversation ID.",
+        "No Conversation ID",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      return
+    }
 
-    $lst.Items.Clear()
-    $events = @(
-      "13:20:01  Call connected (conv=$conv)",
-      "13:20:17  Entered IVR",
-      "13:21:02  Entered Queue: Support - Voice",
-      "13:22:44  WebRTC errorCode: ICE_FAILED",
-      "13:23:10  Agent connected: a-$(Get-Random -Minimum 1000 -Maximum 9999)",
-      "13:24:05  MOS dropped below 3.5 (jitter spike)",
-      "13:25:40  Hold started",
-      "13:26:02  Hold ended",
-      "13:27:18  Recording: enabled"
-    )
-    foreach ($e in $events) { $lst.Items.Add($e) | Out-Null }
-    Set-Status "Timeline built (mock) for $conv."
+    # Check if authenticated
+    if (-not $script:AppState.AccessToken) {
+      [System.Windows.MessageBox]::Show(
+        "Please log in first to retrieve conversation details.",
+        "Authentication Required",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      return
+    }
+
+    Set-Status "Retrieving timeline for conversation $conv..."
+    
+    # Start background job to retrieve and build timeline (using shared scriptblock)
+    Start-AppJob -Name "Build Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
+    -OnCompleted {
+      param($job)
+      
+      if ($job.Result -and $job.Result.Timeline) {
+        $result = $job.Result
+        Set-Status "Timeline ready for conversation $($result.ConversationId) with $($result.Timeline.Count) events."
+        
+        # Show timeline window
+        Show-TimelineWindow `
+          -ConversationId $result.ConversationId `
+          -TimelineEvents $result.Timeline `
+          -SubscriptionEvents $result.SubscriptionEvents
+      } else {
+        Set-Status "Failed to build timeline. See job logs for details."
+        [System.Windows.MessageBox]::Show(
+          "Failed to retrieve conversation timeline. Check job logs for details.",
+          "Timeline Error",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Error
+        )
+      }
+    }
+    
+    Refresh-HeaderStats
   })
 
   $lst.Add_SelectionChanged({
@@ -1292,10 +1659,16 @@ function New-SubscriptionsView {
   })
 
   $h.BtnOpenTimeline.Add_Click({
-    # Derive conversation ID from selected event if possible
+    # Derive conversation ID from textbox first, then from selected event
     $conv = ''
-    if ($h.LstEvents.SelectedItem) {
-      # Extract from event object if available
+    
+    # Priority 1: Check conversationId textbox
+    if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') {
+      $conv = $h.TxtConv.Text.Trim()
+    }
+    
+    # Priority 2: Infer from selected event
+    if (-not $conv -and $h.LstEvents.SelectedItem) {
       if ($h.LstEvents.SelectedItem -is [System.Windows.Controls.ListBoxItem] -and $h.LstEvents.SelectedItem.Tag) {
         $evt = $h.LstEvents.SelectedItem.Tag
         $conv = $evt.conversationId
@@ -1305,12 +1678,57 @@ function New-SubscriptionsView {
         if ($s -match 'conv=(?<cid>c-\d+)\s') { $conv = $matches['cid'] }
       }
     }
-    if (-not $conv -and $h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') { $conv = $h.TxtConv.Text }
-    if (-not $conv) { $conv = "c-$(Get-Random -Minimum 100000 -Maximum 999999)" }
+    
+    # Validate we have a conversation ID
+    if (-not $conv) {
+      [System.Windows.MessageBox]::Show(
+        "Please enter a conversation ID or select an event from the stream.",
+        "No Conversation ID",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      return
+    }
 
-    $script:AppState.FocusConversationId = $conv
-    Set-Status "Opening Conversation Timeline for $conv (mock)."
-    Show-WorkspaceAndModule -Workspace 'Conversations' -Module 'Conversation Timeline'
+    # Check if authenticated
+    if (-not $script:AppState.AccessToken) {
+      [System.Windows.MessageBox]::Show(
+        "Please log in first to retrieve conversation details.",
+        "Authentication Required",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      return
+    }
+
+    Set-Status "Retrieving timeline for conversation $conv..."
+    
+    # Start background job to retrieve and build timeline (using shared scriptblock)
+    Start-AppJob -Name "Open Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
+    -OnCompleted {
+      param($job)
+      
+      if ($job.Result -and $job.Result.Timeline) {
+        $result = $job.Result
+        Set-Status "Timeline ready for conversation $($result.ConversationId) with $($result.Timeline.Count) events."
+        
+        # Show timeline window
+        Show-TimelineWindow `
+          -ConversationId $result.ConversationId `
+          -TimelineEvents $result.Timeline `
+          -SubscriptionEvents $result.SubscriptionEvents
+      } else {
+        Set-Status "Failed to build timeline. See job logs for details."
+        [System.Windows.MessageBox]::Show(
+          "Failed to retrieve conversation timeline. Check job logs for details.",
+          "Timeline Error",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Error
+        )
+      }
+    }
+    
+    Refresh-HeaderStats
   })
 
   $h.BtnExportPacket.Add_Click({

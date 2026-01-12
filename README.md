@@ -61,8 +61,13 @@ Verify the installation and core module loading:
 The tool implements the complete "money path" for incident investigation:
 
 1. **Login** → Click "Login…" button, authenticate via OAuth
-2. **Navigate** to Conversations → Conversation Timeline
-3. **Enter Conversation ID**
+2. **Start Subscription** → Navigate to Operations → Topic Subscriptions, click "Start" to begin streaming events
+3. **Open Timeline** → Click "Open Timeline" button (from either Topic Subscriptions or Conversations → Conversation Timeline)
+   - Enter conversation ID or select an event from the stream
+   - Background job retrieves conversation details from Analytics API
+   - Timeline window displays sortable events with Time/Category/Label
+   - Select event to view JSON details and correlation keys
+   - Includes segments, participants, media stats, and correlated subscription events
 4. **Export Packet** → Generates comprehensive incident packet with:
    - `conversation.json` - Raw API response
    - `timeline.json` - Normalized timeline events
