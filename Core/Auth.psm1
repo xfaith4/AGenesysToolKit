@@ -46,7 +46,7 @@ function Set-GcAuthConfig {
     Optional client secret for client credentials flow
   
   .EXAMPLE
-    Set-GcAuthConfig -Region 'mypurecloud.com' -ClientId 'abc123' -RedirectUri 'http://localhost:8080' -Scopes @('conversations:readonly')
+    Set-GcAuthConfig -Region 'mypurecloud.com' -ClientId 'abc123' -RedirectUri 'http://localhost:8400/oauth/callback' -Scopes @('conversations:readonly')
   #>
   [CmdletBinding()]
   param(

@@ -1317,7 +1317,7 @@ $BtnLogin.Add_Click({
   if ($script:AppState.AccessToken) {
     # Logout: Clear token and reset UI
     Clear-GcTokenState
-    $script:AppState.AccessToken = $null
+    $script:AppState.AccessToken = $null  # Clear from AppState (Clear-GcTokenState clears module state)
     $script:AppState.Auth = "Not logged in"
     $script:AppState.TokenStatus = "No token"
     
