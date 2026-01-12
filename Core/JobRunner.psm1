@@ -160,7 +160,21 @@ function Start-GcJob {
   $asyncResult = $ps.BeginInvoke()
   
   # Monitor completion on a timer (WPF dispatcher timer if available)
-  if ([Windows.Threading.Dispatcher]::CurrentDispatcher) {
+  $hasDispatcher = $false
+  try {
+    # Check if WPF types are available and if we have a dispatcher
+    if ([Type]::GetType('System.Windows.Threading.Dispatcher, WindowsBase')) {
+      $dispatcher = [Windows.Threading.Dispatcher]::CurrentDispatcher
+      if ($dispatcher -and $dispatcher.Thread -eq [System.Threading.Thread]::CurrentThread) {
+        $hasDispatcher = $true
+      }
+    }
+  } catch {
+    # WPF not available, use fallback
+    $hasDispatcher = $false
+  }
+  
+  if ($hasDispatcher) {
     $timer = New-Object Windows.Threading.DispatcherTimer
     $timer.Interval = [TimeSpan]::FromMilliseconds(200)
     
@@ -245,19 +259,42 @@ function Start-GcJob {
     $timer.Start()
   } else {
     # Fallback: block until complete (non-UI scenarios)
-    $Job.Result = $ps.EndInvoke($asyncResult)
-    $Job.Status = 'Completed'
-    $Job.Progress = 100
-    $Job.Ended = Get-Date
-    Add-GcJobLog -Job $Job -Message "Completed."
-    
-    if ($OnComplete) {
-      & $OnComplete $Job
+    try {
+      $Job.Result = $ps.EndInvoke($asyncResult)
+      
+      # Check for errors
+      if ($ps.Streams.Error.Count -gt 0) {
+        foreach ($err in $ps.Streams.Error) {
+          $Job.Errors += $err.ToString()
+          Add-GcJobLog -Job $Job -Message "ERROR: $err"
+        }
+      }
+      
+      # Check for warnings
+      if ($ps.Streams.Warning.Count -gt 0) {
+        foreach ($warn in $ps.Streams.Warning) {
+          Add-GcJobLog -Job $Job -Message "WARNING: $warn"
+        }
+      }
+      
+      $Job.Status = 'Completed'
+      $Job.Progress = 100
+      $Job.Ended = Get-Date
+      Add-GcJobLog -Job $Job -Message "Completed."
+      
+      if ($OnComplete) {
+        & $OnComplete $Job
+      }
+    } catch {
+      $Job.Status = 'Failed'
+      $Job.Errors += $_.ToString()
+      Add-GcJobLog -Job $Job -Message "Failed: $_"
+      $Job.Ended = Get-Date
+    } finally {
+      $ps.Dispose()
+      $runspace.Close()
+      $script:RunningJobs.TryRemove($Job.Id, [ref]$null) | Out-Null
     }
-    
-    $ps.Dispose()
-    $runspace.Close()
-    $script:RunningJobs.TryRemove($Job.Id, [ref]$null) | Out-Null
   }
 }
 
@@ -289,7 +326,11 @@ function Get-GcRunningJobs {
   [CmdletBinding()]
   param()
   
-  return $script:RunningJobs.Values
+  $values = $script:RunningJobs.Values
+  if ($null -eq $values) {
+    return @()
+  }
+  return $values
 }
 
 Export-ModuleMember -Function New-GcJobContext, Add-GcJobLog, Start-GcJob, Stop-GcJob, Get-GcRunningJobs
