@@ -717,6 +717,345 @@ function Refresh-ArtifactsList {
   Refresh-HeaderStats
 }
 
+### BEGIN: Manual Token Entry
+# -----------------------------
+# Manual Token Entry Dialog
+# -----------------------------
+
+function Start-TokenTest {
+  <#
+  .SYNOPSIS
+    Tests the current access token by calling GET /api/v2/users/me.
+
+  .DESCRIPTION
+    Validates the token in AppState.AccessToken by making a test API call.
+    Updates UI with test results including user info and organization.
+    Can be called from button handler or programmatically after setting a token.
+    
+    This function depends on:
+    - $script:AppState (global AppState with AccessToken and Region)
+    - $BtnTestToken (UI button element for state management)
+    - Invoke-AppGcRequest (from HttpRequests module)
+    - Set-Status, Set-TopContext (UI helper functions)
+    - Start-AppJob (job runner function)
+
+  .EXAMPLE
+    Start-TokenTest
+  #>
+
+  if (-not $script:AppState.AccessToken) {
+    Set-Status "No token available to test."
+    return
+  }
+
+  # Disable button during test
+  $BtnTestToken.IsEnabled = $false
+  $BtnTestToken.Content = "Testing..."
+  Set-Status "Testing token..."
+
+  # Queue background job to test token via GET /api/v2/users/me
+  Start-AppJob -Name "Test Token" -Type "Auth" -ScriptBlock {
+    # Note: No parameters needed - Invoke-AppGcRequest reads from AppState
+    try {
+      # Call GET /api/v2/users/me using Invoke-AppGcRequest
+      # The wrapper automatically injects AccessToken and InstanceName from AppState
+      $userInfo = Invoke-AppGcRequest -Path '/api/v2/users/me' -Method GET
+
+      return [PSCustomObject]@{
+        Success = $true
+        UserInfo = $userInfo
+        Error = $null
+      }
+    } catch {
+      # Capture detailed error information for better diagnostics
+      $errorMessage = $_.Exception.Message
+      $statusCode = $null
+
+      # Try to extract HTTP status code if available
+      if ($_.Exception.Response) {
+        $statusCode = [int]$_.Exception.Response.StatusCode
+      }
+
+      return [PSCustomObject]@{
+        Success = $false
+        UserInfo = $null
+        Error = $errorMessage
+        StatusCode = $statusCode
+      }
+    }
+  } -OnCompleted {
+    param($job)
+
+    if ($job.Result -and $job.Result.Success) {
+      # SUCCESS: Token is valid
+      $userInfo = $job.Result.UserInfo
+
+      # Update AppState with success status and user information
+      $script:AppState.Auth = "Logged in"
+      if ($userInfo.name) {
+        $script:AppState.Auth = "Logged in as $($userInfo.name)"
+      }
+      $script:AppState.TokenStatus = "Token valid"
+
+      # Update header display
+      Set-TopContext
+
+      # Show success status with username if available
+      $statusMsg = "Token test: OK"
+      if ($userInfo.name) { $statusMsg += ". User: $($userInfo.name)" }
+      if ($userInfo.organization -and $userInfo.organization.name) {
+        $statusMsg += " | Org: $($userInfo.organization.name)"
+        $script:AppState.Org = $userInfo.organization.name
+      }
+      Set-Status $statusMsg
+
+    } else {
+      # FAILURE: Token test failed
+      $errorMsg = if ($job.Result) { $job.Result.Error } else { "Unknown error" }
+
+      # Analyze error and provide user-friendly message
+      $userMessage = "Token test failed."
+      $detailMessage = $errorMsg
+
+      # Check for common error scenarios
+      if ($errorMsg -match "401|Unauthorized") {
+        $userMessage = "Token Invalid or Expired"
+        $detailMessage = "The access token is not valid or has expired. Please log in again."
+      }
+      elseif ($errorMsg -match "Unable to connect|could not be resolved|Name or service not known") {
+        $userMessage = "Connection Failed"
+        $detailMessage = "Cannot connect to region '$($script:AppState.Region)'. Please verify:`n• Region is correct`n• Network connection is available`n`nError: $errorMsg"
+      }
+      elseif ($errorMsg -match "404|Not Found") {
+        $userMessage = "Endpoint Not Found"
+        $detailMessage = "API endpoint not found. This may indicate:`n• Wrong region configured`n• API version mismatch`n`nError: $errorMsg"
+      }
+      elseif ($errorMsg -match "403|Forbidden") {
+        $userMessage = "Permission Denied"
+        $detailMessage = "Token is valid but lacks permission to access user information."
+      }
+
+      # Update AppState to reflect failure
+      $script:AppState.Auth = "Not logged in"
+      $script:AppState.TokenStatus = "Token invalid"
+      Set-TopContext
+
+      # Show error dialog with details
+      [System.Windows.MessageBox]::Show(
+        $detailMessage,
+        $userMessage,
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Error
+      )
+
+      Set-Status "Token test failed: $userMessage"
+    }
+
+    # Re-enable button
+    $BtnTestToken.Content = "Test Token"
+    $BtnTestToken.IsEnabled = $true
+  }
+}
+
+function Show-SetTokenDialog {
+  <#
+  .SYNOPSIS
+    Opens a modal dialog for manually setting an access token.
+
+  .DESCRIPTION
+    Provides a UI for entering region and access token manually.
+    Validates and sets the token, then triggers an immediate token test.
+    Useful for testing with tokens obtained from other sources.
+    
+    This function depends on:
+    - $Window (script-scoped main window for dialog owner)
+    - $script:AppState (global AppState for region and token)
+    - ConvertFrom-GcXaml (XAML parsing helper)
+    - Set-TopContext, Set-Status (UI helper functions)
+    - Start-TokenTest (token validation function)
+
+  .EXAMPLE
+    Show-SetTokenDialog
+  #>
+
+  $xamlString = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Set Access Token"
+        Height="380" Width="520"
+        WindowStartupLocation="CenterOwner"
+        Background="#FFF7F7F9"
+        ResizeMode="NoResize">
+  <Grid Margin="16">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>   <!-- Header -->
+      <RowDefinition Height="Auto"/>   <!-- Region Input -->
+      <RowDefinition Height="Auto"/>   <!-- Token Label -->
+      <RowDefinition Height="*"/>      <!-- Token Input -->
+      <RowDefinition Height="Auto"/>   <!-- Buttons -->
+    </Grid.RowDefinitions>
+
+    <!-- Header -->
+    <Border Grid.Row="0" Background="#FF111827" CornerRadius="6" Padding="12" Margin="0,0,0,16">
+      <StackPanel>
+        <TextBlock Text="Manual Token Entry" FontSize="14" FontWeight="SemiBold" Foreground="White"/>
+        <TextBlock Text="Paste an access token for testing or manual authentication" 
+                   FontSize="11" Foreground="#FFA0AEC0" Margin="0,4,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Region Input -->
+    <StackPanel Grid.Row="1" Margin="0,0,0,12">
+      <TextBlock Text="Region:" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
+      <TextBox x:Name="TxtRegion" Height="28" Padding="6,4" FontSize="12"/>
+    </StackPanel>
+
+    <!-- Token Input -->
+    <StackPanel Grid.Row="2" Margin="0,0,0,12">
+      <TextBlock Text="Access Token:" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
+      <TextBlock Text="(Bearer prefix will be automatically removed if present)" 
+                 FontSize="10" Foreground="#FF6B7280" Margin="0,0,0,4"/>
+    </StackPanel>
+
+    <Border Grid.Row="3" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="4" 
+            Background="White" Padding="6" Margin="0,0,0,16">
+      <TextBox x:Name="TxtToken" 
+               AcceptsReturn="True"
+               TextWrapping="Wrap"
+               VerticalScrollBarVisibility="Auto"
+               BorderThickness="0"
+               FontFamily="Consolas"
+               FontSize="10"/>
+    </Border>
+
+    <!-- Buttons -->
+    <Grid Grid.Row="4">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+
+      <Button x:Name="BtnClearToken" Grid.Column="0" Content="Clear Token" 
+              Width="100" Height="30" HorizontalAlignment="Left"/>
+
+      <StackPanel Grid.Column="1" Orientation="Horizontal">
+        <Button x:Name="BtnSetTest" Content="Set + Test" Width="100" Height="30" Margin="0,0,8,0"/>
+        <Button x:Name="BtnCancel" Content="Cancel" Width="80" Height="30"/>
+      </StackPanel>
+    </Grid>
+  </Grid>
+</Window>
+"@
+
+  try {
+    $dialog = ConvertFrom-GcXaml -XamlString $xamlString
+    
+    # Set owner if parent window is available
+    if ($Window) {
+      $dialog.Owner = $Window
+    }
+
+    $txtRegion = $dialog.FindName('TxtRegion')
+    $txtToken = $dialog.FindName('TxtToken')
+    $btnSetTest = $dialog.FindName('BtnSetTest')
+    $btnCancel = $dialog.FindName('BtnCancel')
+    $btnClearToken = $dialog.FindName('BtnClearToken')
+
+    # Prefill region from current AppState
+    $txtRegion.Text = $script:AppState.Region
+
+    # Set + Test button handler
+    $btnSetTest.Add_Click({
+      $region = $txtRegion.Text.Trim()
+      $token = $txtToken.Text.Trim()
+
+      # Validate inputs
+      if ([string]::IsNullOrWhiteSpace($region)) {
+        [System.Windows.MessageBox]::Show(
+          "Please enter a region (e.g., mypurecloud.com)",
+          "Region Required",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
+        return
+      }
+
+      if ([string]::IsNullOrWhiteSpace($token)) {
+        [System.Windows.MessageBox]::Show(
+          "Please enter an access token",
+          "Token Required",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
+        return
+      }
+
+      # Remove "Bearer " prefix if present (case-insensitive)
+      # Accepts single or multiple whitespace after "Bearer" for flexibility
+      if ($token -imatch '^Bearer\s+(.+)$') {
+        $token = $matches[1].Trim()
+      }
+
+      # Update AppState
+      $script:AppState.Region = $region
+      $script:AppState.AccessToken = $token
+      $script:AppState.TokenStatus = "Token set (manual)"
+      $script:AppState.Auth = "Manual token"
+
+      # Update UI context
+      Set-TopContext
+
+      # Close dialog
+      $dialog.DialogResult = $true
+      $dialog.Close()
+
+      # Trigger token test using the dedicated helper function
+      Start-TokenTest
+    })
+
+    # Cancel button handler
+    $btnCancel.Add_Click({
+      $dialog.DialogResult = $false
+      $dialog.Close()
+    })
+
+    # Clear Token button handler
+    $btnClearToken.Add_Click({
+      $result = [System.Windows.MessageBox]::Show(
+        "This will clear the current access token. Continue?",
+        "Clear Token",
+        [System.Windows.MessageBoxButton]::YesNo,
+        [System.Windows.MessageBoxImage]::Question
+      )
+
+      if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
+        $script:AppState.AccessToken = $null
+        $script:AppState.Auth = "Not logged in"
+        $script:AppState.TokenStatus = "No token"
+        Set-TopContext
+        Set-Status "Token cleared."
+
+        $dialog.DialogResult = $false
+        $dialog.Close()
+      }
+    })
+
+    # Show dialog
+    $dialog.ShowDialog() | Out-Null
+
+  } catch {
+    Write-Error "Failed to show token dialog: $_"
+    [System.Windows.MessageBox]::Show(
+      "Failed to show token dialog: $_",
+      "Error",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Error
+    )
+  }
+}
+
+### END: Manual Token Entry
+
 # -----------------------------
 # Snackbar logic (Export complete)
 # -----------------------------
@@ -2721,6 +3060,21 @@ $NavModules.Add_SelectionChanged({
 # -----------------------------
 # Top bar actions
 # -----------------------------
+
+### BEGIN: Manual Token Entry
+# Add right-click context menu to Login button for manual token entry
+$loginContextMenu = New-Object System.Windows.Controls.ContextMenu
+
+$pasteTokenMenuItem = New-Object System.Windows.Controls.MenuItem
+$pasteTokenMenuItem.Header = "Paste Token…"
+$pasteTokenMenuItem.Add_Click({
+  Show-SetTokenDialog
+})
+
+$loginContextMenu.Items.Add($pasteTokenMenuItem) | Out-Null
+$BtnLogin.ContextMenu = $loginContextMenu
+### END: Manual Token Entry
+
 $BtnLogin.Add_Click({
   # Check if already logged in - if so, logout
   if ($script:AppState.AccessToken) {
@@ -2843,128 +3197,16 @@ $BtnLogin.Add_Click({
 })
 
 $BtnTestToken.Add_Click({
-  # STEP 1 CHANGE: Updated Test Token handler to use Invoke-AppGcRequest wrapper
-  # This validates the token by calling GET /api/v2/users/me with auto-injected auth
-
+  ### BEGIN: Manual Token Entry
+  # If no token exists, open the manual token entry dialog instead of showing an error
   if (-not $script:AppState.AccessToken) {
-    # Show error if no token is set
-    [System.Windows.MessageBox]::Show(
-      "No access token available. Please set AppState.AccessToken or use the Login button.",
-      "No Token",
-      [System.Windows.MessageBoxButton]::OK,
-      [System.Windows.MessageBoxImage]::Warning
-    )
-    Set-Status "No token available."
+    Show-SetTokenDialog
     return
   }
-
-  # Disable button during test
-  $BtnTestToken.IsEnabled = $false
-  $BtnTestToken.Content = "Testing..."
-  Set-Status "Testing token..."
-
-  # Queue background job to test token via GET /api/v2/users/me
-  Start-AppJob -Name "Test Token" -Type "Auth" -ScriptBlock {
-    # Note: No parameters needed - Invoke-AppGcRequest reads from AppState
-    try {
-      # STEP 1: Call GET /api/v2/users/me using Invoke-AppGcRequest
-      # The wrapper automatically injects AccessToken and InstanceName from AppState
-      $userInfo = Invoke-AppGcRequest -Path '/api/v2/users/me' -Method GET
-
-      return [PSCustomObject]@{
-        Success = $true
-        UserInfo = $userInfo
-        Error = $null
-      }
-    } catch {
-      # Capture detailed error information for better diagnostics
-      $errorMessage = $_.Exception.Message
-      $statusCode = $null
-
-      # Try to extract HTTP status code if available
-      if ($_.Exception.Response) {
-        $statusCode = [int]$_.Exception.Response.StatusCode
-      }
-
-      return [PSCustomObject]@{
-        Success = $false
-        UserInfo = $null
-        Error = $errorMessage
-        StatusCode = $statusCode
-      }
-    }
-  } -OnCompleted {
-    param($job)
-
-    if ($job.Result -and $job.Result.Success) {
-      # SUCCESS: Token is valid
-      $userInfo = $job.Result.UserInfo
-
-      # Update AppState with success status and user information
-      $script:AppState.Auth = "Logged in"
-      if ($userInfo.name) {
-        $script:AppState.Auth = "Logged in as $($userInfo.name)"
-      }
-      $script:AppState.TokenStatus = "Token valid"
-
-      # Update header display
-      Set-TopContext
-
-      # Show success status with username if available
-      $statusMsg = "Token test: OK"
-      if ($userInfo.name) { $statusMsg += ". User: $($userInfo.name)" }
-      if ($userInfo.organization -and $userInfo.organization.name) {
-        $statusMsg += " | Org: $($userInfo.organization.name)"
-        $script:AppState.Org = $userInfo.organization.name
-      }
-      Set-Status $statusMsg
-
-    } else {
-      # FAILURE: Token test failed
-      $errorMsg = if ($job.Result) { $job.Result.Error } else { "Unknown error" }
-
-      # Analyze error and provide user-friendly message
-      $userMessage = "Token test failed."
-      $detailMessage = $errorMsg
-
-      # Check for common error scenarios
-      if ($errorMsg -match "401|Unauthorized") {
-        $userMessage = "Token Invalid or Expired"
-        $detailMessage = "The access token is not valid or has expired. Please log in again."
-      }
-      elseif ($errorMsg -match "Unable to connect|could not be resolved|Name or service not known") {
-        $userMessage = "Connection Failed"
-        $detailMessage = "Cannot connect to region '$($script:AppState.Region)'. Please verify:`n• Region is correct`n• Network connection is available`n`nError: $errorMsg"
-      }
-      elseif ($errorMsg -match "404|Not Found") {
-        $userMessage = "Endpoint Not Found"
-        $detailMessage = "API endpoint not found. This may indicate:`n• Wrong region configured`n• API version mismatch`n`nError: $errorMsg"
-      }
-      elseif ($errorMsg -match "403|Forbidden") {
-        $userMessage = "Permission Denied"
-        $detailMessage = "Token is valid but lacks permission to access user information."
-      }
-
-      # Update AppState to reflect failure
-      $script:AppState.Auth = "Not logged in"
-      $script:AppState.TokenStatus = "Token invalid"
-      Set-TopContext
-
-      # Show error dialog with details
-      [System.Windows.MessageBox]::Show(
-        $detailMessage,
-        $userMessage,
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Error
-      )
-
-      Set-Status "Token test failed: $userMessage"
-    }
-
-    # Re-enable button
-    $BtnTestToken.Content = "Test Token"
-    $BtnTestToken.IsEnabled = $true
-  }
+  
+  # Use the dedicated token test function
+  Start-TokenTest
+  ### END: Manual Token Entry
 })
 
 $BtnJobs.Add_Click({ Open-Backstage -Tab 'Jobs' })
@@ -3001,4 +3243,103 @@ Refresh-ArtifactsList
 
 # Show
 [void]$Window.ShowDialog()
+
+### BEGIN: Manual Token Entry - Test Checklist
+<#
+MANUAL TEST CHECKLIST - Manual Token Entry Flow
+
+Prerequisites:
+- Valid Genesys Cloud access token (obtain from Developer Tools or OAuth flow)
+- Valid region (e.g., mypurecloud.com, mypurecloud.com.au, etc.)
+
+Test Cases:
+
+1. Test Token Button (No Token):
+   [ ] Click "Test Token" button when no token is set
+   [ ] Verify "Set Access Token" dialog opens
+   [ ] Verify Region field is prefilled with current region
+   [ ] Verify Token field is empty
+
+2. Manual Token Entry - Valid Token:
+   [ ] Right-click "Login…" button
+   [ ] Select "Paste Token…" from context menu
+   [ ] Verify dialog opens
+   [ ] Enter valid region (e.g., mypurecloud.com)
+   [ ] Paste valid access token
+   [ ] Click "Set + Test" button
+   [ ] Verify dialog closes
+   [ ] Verify token test job starts automatically
+   [ ] Verify status bar shows "Testing token..."
+   [ ] Verify top context updates with "Manual token" and "Token set (manual)"
+   [ ] Verify token test succeeds with user info displayed
+
+3. Manual Token Entry - Bearer Prefix Removal:
+   [ ] Open "Set Access Token" dialog
+   [ ] Paste token with "Bearer " prefix (e.g., "Bearer abc123...")
+   [ ] Click "Set + Test"
+   [ ] Verify token is accepted and "Bearer " prefix is removed
+   [ ] Verify token test succeeds
+
+4. Manual Token Entry - Invalid Token:
+   [ ] Open "Set Access Token" dialog
+   [ ] Enter invalid token
+   [ ] Click "Set + Test"
+   [ ] Verify token test starts
+   [ ] Verify error message appears indicating token is invalid
+   [ ] Verify AppState shows "Token invalid"
+
+5. Manual Token Entry - Cancel:
+   [ ] Open "Set Access Token" dialog
+   [ ] Enter region and token
+   [ ] Click "Cancel" button
+   [ ] Verify dialog closes without changes
+   [ ] Verify AppState remains unchanged
+
+6. Manual Token Entry - Clear Token:
+   [ ] Set a valid token first
+   [ ] Open "Set Access Token" dialog
+   [ ] Click "Clear Token" button
+   [ ] Verify confirmation dialog appears
+   [ ] Click "Yes" to confirm
+   [ ] Verify token is cleared from AppState
+   [ ] Verify top context updates to show "Not logged in" and "No token"
+   [ ] Verify status bar shows "Token cleared."
+
+7. Manual Token Entry - Validation:
+   [ ] Open "Set Access Token" dialog
+   [ ] Leave Region field empty
+   [ ] Click "Set + Test"
+   [ ] Verify warning message: "Region Required"
+   [ ] Enter region, leave Token field empty
+   [ ] Click "Set + Test"
+   [ ] Verify warning message: "Token Required"
+
+8. Context Menu:
+   [ ] Right-click "Login…" button
+   [ ] Verify context menu appears with "Paste Token…" option
+   [ ] Click "Paste Token…"
+   [ ] Verify "Set Access Token" dialog opens
+
+9. Integration with Token Test:
+   [ ] Set a manual token using the dialog
+   [ ] Click "Test Token" button (not from dialog)
+   [ ] Verify token test runs with existing token
+   [ ] Verify no dialog appears when token already exists
+
+10. UI State After Manual Token:
+    [ ] Set manual token successfully
+    [ ] Verify "Login…" button remains as "Login…" (not "Logout")
+    [ ] Verify top bar shows correct region, org, auth status, and token status
+    [ ] Verify "Test Token" button remains enabled
+    [ ] Verify can perform operations requiring authentication (e.g., Open Timeline)
+
+Notes:
+- All changes are marked with "### BEGIN: Manual Token Entry" and "### END: Manual Token Entry" comments
+- Dialog is modal and centers on parent window
+- Token is automatically trimmed and "Bearer " prefix is removed if present
+- Dialog triggers existing token test logic after setting token
+- No changes to main window layout or OAuth login flow
+#>
+### END: Manual Token Entry - Test Checklist
+
 ### END FILE
