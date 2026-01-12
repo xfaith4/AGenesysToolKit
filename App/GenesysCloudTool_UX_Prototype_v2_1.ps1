@@ -1092,6 +1092,14 @@ function New-SubscriptionsView {
       }
     }
 
+    # Pre-calculate cached JSON for search performance
+    $cachedJson = ''
+    try {
+      $cachedJson = ($raw | ConvertTo-Json -Compress -Depth 10).ToLower()
+    } catch {
+      # If JSON conversion fails, use empty string
+    }
+
     # Return structured event object with consistent schema
     [pscustomobject]@{
       ts = $ts
@@ -1102,6 +1110,7 @@ function New-SubscriptionsView {
       queueName = $queueName
       text = $text
       raw = $raw
+      _cachedRawJson = $cachedJson
     }
   }
 
@@ -1258,27 +1267,9 @@ function New-SubscriptionsView {
           $shouldShow = $true
         }
         
-        # Search in raw JSON (cached in Tag for performance)
-        if (-not $shouldShow -and $evt.raw) {
-          # Cache the JSON string in a private property to avoid repeated conversions
-          if (-not $evt.PSObject.Properties['_cachedRawJson']) {
-            try {
-              $cachedJson = ($evt.raw | ConvertTo-Json -Compress -Depth 10).ToLower()
-              Add-Member -InputObject $evt -MemberType NoteProperty -Name '_cachedRawJson' -Value $cachedJson -Force
-            } catch {
-              Add-Member -InputObject $evt -MemberType NoteProperty -Name '_cachedRawJson' -Value '' -Force
-            }
-          }
-          
-          if ($evt._cachedRawJson -and $evt._cachedRawJson.Contains($searchLower)) {
-            $shouldShow = $true
-          }
-        }
-        
-        $item.Visibility = if ($shouldShow) { 'Visible' } else { 'Collapsed' }
-      }
-    }
-  })
+        # Search in raw JSON (pre-cached during event creation for performance)
+        if (-not $shouldShow -and $evt._cachedRawJson -and $evt._cachedRawJson.Contains($searchLower)) {
+          $shouldShow = $true
         }
         
         $item.Visibility = if ($shouldShow) { 'Visible' } else { 'Collapsed' }
