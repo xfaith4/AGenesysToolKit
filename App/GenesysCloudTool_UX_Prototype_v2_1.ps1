@@ -717,6 +717,198 @@ function Refresh-ArtifactsList {
   Refresh-HeaderStats
 }
 
+### BEGIN: Manual Token Entry
+# -----------------------------
+# Manual Token Entry Dialog
+# -----------------------------
+
+function Show-SetTokenDialog {
+  <#
+  .SYNOPSIS
+    Opens a modal dialog for manually setting an access token.
+
+  .DESCRIPTION
+    Provides a UI for entering region and access token manually.
+    Validates and sets the token, then triggers an immediate token test.
+    Useful for testing with tokens obtained from other sources.
+
+  .EXAMPLE
+    Show-SetTokenDialog
+  #>
+
+  $xamlString = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Set Access Token"
+        Height="380" Width="520"
+        WindowStartupLocation="CenterOwner"
+        Background="#FFF7F7F9"
+        ResizeMode="NoResize">
+  <Grid Margin="16">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <!-- Header -->
+    <Border Grid.Row="0" Background="#FF111827" CornerRadius="6" Padding="12" Margin="0,0,0,16">
+      <StackPanel>
+        <TextBlock Text="Manual Token Entry" FontSize="14" FontWeight="SemiBold" Foreground="White"/>
+        <TextBlock Text="Paste an access token for testing or manual authentication" 
+                   FontSize="11" Foreground="#FFA0AEC0" Margin="0,4,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Region Input -->
+    <StackPanel Grid.Row="1" Margin="0,0,0,12">
+      <TextBlock Text="Region:" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
+      <TextBox x:Name="TxtRegion" Height="28" Padding="6,4" FontSize="12"/>
+    </StackPanel>
+
+    <!-- Token Input -->
+    <StackPanel Grid.Row="2" Margin="0,0,0,12">
+      <TextBlock Text="Access Token:" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
+      <TextBlock Text="(Bearer prefix will be automatically removed if present)" 
+                 FontSize="10" Foreground="#FF6B7280" Margin="0,0,0,4"/>
+    </StackPanel>
+
+    <Border Grid.Row="3" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="4" 
+            Background="White" Padding="6" Margin="0,0,0,16">
+      <TextBox x:Name="TxtToken" 
+               AcceptsReturn="True"
+               TextWrapping="Wrap"
+               VerticalScrollBarVisibility="Auto"
+               BorderThickness="0"
+               FontFamily="Consolas"
+               FontSize="10"/>
+    </Border>
+
+    <!-- Buttons -->
+    <Grid Grid.Row="4">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+
+      <Button x:Name="BtnClearToken" Grid.Column="0" Content="Clear Token" 
+              Width="100" Height="30" HorizontalAlignment="Left"/>
+
+      <StackPanel Grid.Column="1" Orientation="Horizontal">
+        <Button x:Name="BtnSetTest" Content="Set + Test" Width="100" Height="30" Margin="0,0,8,0"/>
+        <Button x:Name="BtnCancel" Content="Cancel" Width="80" Height="30"/>
+      </StackPanel>
+    </Grid>
+  </Grid>
+</Window>
+"@
+
+  try {
+    $dialog = ConvertFrom-GcXaml -XamlString $xamlString
+    $dialog.Owner = $Window
+
+    $txtRegion = $dialog.FindName('TxtRegion')
+    $txtToken = $dialog.FindName('TxtToken')
+    $btnSetTest = $dialog.FindName('BtnSetTest')
+    $btnCancel = $dialog.FindName('BtnCancel')
+    $btnClearToken = $dialog.FindName('BtnClearToken')
+
+    # Prefill region from current AppState
+    $txtRegion.Text = $script:AppState.Region
+
+    # Set + Test button handler
+    $btnSetTest.Add_Click({
+      $region = $txtRegion.Text.Trim()
+      $token = $txtToken.Text.Trim()
+
+      # Validate inputs
+      if ([string]::IsNullOrWhiteSpace($region)) {
+        [System.Windows.MessageBox]::Show(
+          "Please enter a region (e.g., mypurecloud.com)",
+          "Region Required",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
+        return
+      }
+
+      if ([string]::IsNullOrWhiteSpace($token)) {
+        [System.Windows.MessageBox]::Show(
+          "Please enter an access token",
+          "Token Required",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
+        return
+      }
+
+      # Remove "Bearer " prefix if present (case-insensitive)
+      if ($token -match '^Bearer\s+(.+)$') {
+        $token = $matches[1].Trim()
+      }
+
+      # Update AppState
+      $script:AppState.Region = $region
+      $script:AppState.AccessToken = $token
+      $script:AppState.TokenStatus = "Token set (manual)"
+      $script:AppState.Auth = "Manual token"
+
+      # Update UI context
+      Set-TopContext
+
+      # Close dialog
+      $dialog.DialogResult = $true
+      $dialog.Close()
+
+      # Trigger token test by invoking BtnTestToken click handler
+      $BtnTestToken.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent))
+    })
+
+    # Cancel button handler
+    $btnCancel.Add_Click({
+      $dialog.DialogResult = $false
+      $dialog.Close()
+    })
+
+    # Clear Token button handler
+    $btnClearToken.Add_Click({
+      $result = [System.Windows.MessageBox]::Show(
+        "This will clear the current access token. Continue?",
+        "Clear Token",
+        [System.Windows.MessageBoxButton]::YesNo,
+        [System.Windows.MessageBoxImage]::Question
+      )
+
+      if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
+        $script:AppState.AccessToken = $null
+        $script:AppState.Auth = "Not logged in"
+        $script:AppState.TokenStatus = "No token"
+        Set-TopContext
+        Set-Status "Token cleared."
+
+        $dialog.DialogResult = $false
+        $dialog.Close()
+      }
+    })
+
+    # Show dialog
+    $dialog.ShowDialog() | Out-Null
+
+  } catch {
+    Write-Error "Failed to show token dialog: $_"
+    [System.Windows.MessageBox]::Show(
+      "Failed to show token dialog: $_",
+      "Error",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Error
+    )
+  }
+}
+
+### END: Manual Token Entry
+
 # -----------------------------
 # Snackbar logic (Export complete)
 # -----------------------------
@@ -2721,6 +2913,21 @@ $NavModules.Add_SelectionChanged({
 # -----------------------------
 # Top bar actions
 # -----------------------------
+
+### BEGIN: Manual Token Entry
+# Add right-click context menu to Login button for manual token entry
+$loginContextMenu = New-Object System.Windows.Controls.ContextMenu
+
+$pasteTokenMenuItem = New-Object System.Windows.Controls.MenuItem
+$pasteTokenMenuItem.Header = "Paste Token…"
+$pasteTokenMenuItem.Add_Click({
+  Show-SetTokenDialog
+})
+
+$loginContextMenu.Items.Add($pasteTokenMenuItem) | Out-Null
+$BtnLogin.ContextMenu = $loginContextMenu
+### END: Manual Token Entry
+
 $BtnLogin.Add_Click({
   # Check if already logged in - if so, logout
   if ($script:AppState.AccessToken) {
@@ -2846,17 +3053,13 @@ $BtnTestToken.Add_Click({
   # STEP 1 CHANGE: Updated Test Token handler to use Invoke-AppGcRequest wrapper
   # This validates the token by calling GET /api/v2/users/me with auto-injected auth
 
+  ### BEGIN: Manual Token Entry
+  # If no token exists, open the manual token entry dialog instead of showing an error
   if (-not $script:AppState.AccessToken) {
-    # Show error if no token is set
-    [System.Windows.MessageBox]::Show(
-      "No access token available. Please set AppState.AccessToken or use the Login button.",
-      "No Token",
-      [System.Windows.MessageBoxButton]::OK,
-      [System.Windows.MessageBoxImage]::Warning
-    )
-    Set-Status "No token available."
+    Show-SetTokenDialog
     return
   }
+  ### END: Manual Token Entry
 
   # Disable button during test
   $BtnTestToken.IsEnabled = $false
@@ -3001,4 +3204,103 @@ Refresh-ArtifactsList
 
 # Show
 [void]$Window.ShowDialog()
+
+### BEGIN: Manual Token Entry - Test Checklist
+<#
+MANUAL TEST CHECKLIST - Manual Token Entry Flow
+
+Prerequisites:
+- Valid Genesys Cloud access token (obtain from Developer Tools or OAuth flow)
+- Valid region (e.g., mypurecloud.com, mypurecloud.com.au, etc.)
+
+Test Cases:
+
+1. Test Token Button (No Token):
+   [ ] Click "Test Token" button when no token is set
+   [ ] Verify "Set Access Token" dialog opens
+   [ ] Verify Region field is prefilled with current region
+   [ ] Verify Token field is empty
+
+2. Manual Token Entry - Valid Token:
+   [ ] Right-click "Login…" button
+   [ ] Select "Paste Token…" from context menu
+   [ ] Verify dialog opens
+   [ ] Enter valid region (e.g., mypurecloud.com)
+   [ ] Paste valid access token
+   [ ] Click "Set + Test" button
+   [ ] Verify dialog closes
+   [ ] Verify token test job starts automatically
+   [ ] Verify status bar shows "Testing token..."
+   [ ] Verify top context updates with "Manual token" and "Token set (manual)"
+   [ ] Verify token test succeeds with user info displayed
+
+3. Manual Token Entry - Bearer Prefix Removal:
+   [ ] Open "Set Access Token" dialog
+   [ ] Paste token with "Bearer " prefix (e.g., "Bearer abc123...")
+   [ ] Click "Set + Test"
+   [ ] Verify token is accepted and "Bearer " prefix is removed
+   [ ] Verify token test succeeds
+
+4. Manual Token Entry - Invalid Token:
+   [ ] Open "Set Access Token" dialog
+   [ ] Enter invalid token
+   [ ] Click "Set + Test"
+   [ ] Verify token test starts
+   [ ] Verify error message appears indicating token is invalid
+   [ ] Verify AppState shows "Token invalid"
+
+5. Manual Token Entry - Cancel:
+   [ ] Open "Set Access Token" dialog
+   [ ] Enter region and token
+   [ ] Click "Cancel" button
+   [ ] Verify dialog closes without changes
+   [ ] Verify AppState remains unchanged
+
+6. Manual Token Entry - Clear Token:
+   [ ] Set a valid token first
+   [ ] Open "Set Access Token" dialog
+   [ ] Click "Clear Token" button
+   [ ] Verify confirmation dialog appears
+   [ ] Click "Yes" to confirm
+   [ ] Verify token is cleared from AppState
+   [ ] Verify top context updates to show "Not logged in" and "No token"
+   [ ] Verify status bar shows "Token cleared."
+
+7. Manual Token Entry - Validation:
+   [ ] Open "Set Access Token" dialog
+   [ ] Leave Region field empty
+   [ ] Click "Set + Test"
+   [ ] Verify warning message: "Region Required"
+   [ ] Enter region, leave Token field empty
+   [ ] Click "Set + Test"
+   [ ] Verify warning message: "Token Required"
+
+8. Context Menu:
+   [ ] Right-click "Login…" button
+   [ ] Verify context menu appears with "Paste Token…" option
+   [ ] Click "Paste Token…"
+   [ ] Verify "Set Access Token" dialog opens
+
+9. Integration with Token Test:
+   [ ] Set a manual token using the dialog
+   [ ] Click "Test Token" button (not from dialog)
+   [ ] Verify token test runs with existing token
+   [ ] Verify no dialog appears when token already exists
+
+10. UI State After Manual Token:
+    [ ] Set manual token successfully
+    [ ] Verify "Login…" button remains as "Login…" (not "Logout")
+    [ ] Verify top bar shows correct region, org, auth status, and token status
+    [ ] Verify "Test Token" button remains enabled
+    [ ] Verify can perform operations requiring authentication (e.g., Open Timeline)
+
+Notes:
+- All changes are marked with "### BEGIN: Manual Token Entry" and "### END: Manual Token Entry" comments
+- Dialog is modal and centers on parent window
+- Token is automatically trimmed and "Bearer " prefix is removed if present
+- Dialog triggers existing token test logic after setting token
+- No changes to main window layout or OAuth login flow
+#>
+### END: Manual Token Entry - Test Checklist
+
 ### END FILE
