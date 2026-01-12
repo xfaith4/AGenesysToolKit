@@ -706,7 +706,7 @@ function New-ConversationTimelineView {
           <TextBlock Text="Detail" FontWeight="SemiBold" Foreground="#FF111827"/>
           <TextBox x:Name="TxtDetail" Margin="0,10,0,0" AcceptsReturn="True" Height="520"
                    VerticalScrollBarVisibility="Auto" FontFamily="Consolas" TextWrapping="NoWrap"
-                   Text="{ &quot;hint&quot;: &quot;Select an event to view raw payload, correlation IDs, and media stats.&quot; }"/>
+                   Text="{} { &quot;hint&quot;: &quot;Select an event to view raw payload, correlation IDs, and media stats.&quot; }"/>
         </StackPanel>
       </Border>
     </Grid>
