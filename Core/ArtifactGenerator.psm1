@@ -103,7 +103,7 @@ function New-GcIncidentPacket {
       $speaker = if ($event.speaker) { $event.speaker } else { "System" }
       $text = if ($event.text) { $event.text } else { "(no text)" }
       
-      $transcriptLines += "[$timeStr] $speaker:"
+      $transcriptLines += "[$timeStr] ${speaker}:"
       $transcriptLines += "  $text"
       $transcriptLines += ""
     }
