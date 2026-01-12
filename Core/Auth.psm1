@@ -6,7 +6,7 @@ Set-StrictMode -Version Latest
 $script:GcAuthConfig = @{
   Region       = 'mypurecloud.com'
   ClientId     = ''
-  RedirectUri  = 'http://localhost:8080/oauth/callback'
+  RedirectUri  = 'http://localhost:8400/oauth/callback'
   Scopes       = @()
   ClientSecret = ''  # Optional, for client credentials flow
 }

@@ -94,7 +94,7 @@ function ConvertFrom-GcXaml {
 Set-GcAuthConfig `
   -Region 'mypurecloud.com' `
   -ClientId 'YOUR_CLIENT_ID_HERE' `
-  -RedirectUri 'http://localhost:8080/oauth/callback' `
+  -RedirectUri 'http://localhost:8400/oauth/callback' `
   -Scopes @('conversations', 'analytics', 'notifications', 'users')
 
 $script:AppState = [ordered]@{
@@ -1313,6 +1313,23 @@ $NavModules.Add_SelectionChanged({
 # Top bar actions
 # -----------------------------
 $BtnLogin.Add_Click({
+  # Check if already logged in - if so, logout
+  if ($script:AppState.AccessToken) {
+    # Logout: Clear token and reset UI
+    Clear-GcTokenState
+    $script:AppState.AccessToken = $null
+    $script:AppState.Auth = "Not logged in"
+    $script:AppState.TokenStatus = "No token"
+    
+    Set-TopContext
+    Set-Status "Logged out successfully."
+    
+    $BtnLogin.Content = "Login…"
+    $BtnTestToken.IsEnabled = $false
+    return
+  }
+  
+  # Login flow
   $authConfig = Get-GcAuthConfig
   
   # Check if client ID is configured
@@ -1355,14 +1372,15 @@ $BtnLogin.Add_Click({
       
       Set-TopContext
       Set-Status "Authentication successful!"
-      $BtnLogin.Content = "Logged In"
+      $BtnLogin.Content = "Logout"
+      $BtnLogin.IsEnabled = $true
       $BtnTestToken.IsEnabled = $true
     } else {
       $script:AppState.Auth = "Login failed"
       $script:AppState.TokenStatus = "No token"
       Set-TopContext
       Set-Status "Authentication failed. Check job logs for details."
-      $BtnLogin.Content = "Login..."
+      $BtnLogin.Content = "Login…"
       $BtnLogin.IsEnabled = $true
     }
   }

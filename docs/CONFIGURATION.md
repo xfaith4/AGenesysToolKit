@@ -16,7 +16,7 @@ This guide explains how to configure the Genesys Cloud Tool for real operation.
 4. Configure:
    - **App Name**: "Genesys Cloud Tool" (or your preferred name)
    - **Grant Type**: Select **Code Authorization**
-   - **Authorized redirect URIs**: Add `http://localhost:8080/oauth/callback`
+   - **Authorized redirect URIs**: Add `http://localhost:8400/oauth/callback`
    - **Scope**: Select the following scopes:
      - `conversations` - For conversation data
      - `analytics` - For analytics queries
@@ -36,7 +36,7 @@ Edit the file `App/GenesysCloudTool_UX_Prototype_v2_1.ps1` and update the OAuth 
 Set-GcAuthConfig `
   -Region 'mypurecloud.com' `
   -ClientId 'YOUR_CLIENT_ID_HERE' `
-  -RedirectUri 'http://localhost:8080/oauth/callback' `
+  -RedirectUri 'http://localhost:8400/oauth/callback' `
   -Scopes @('conversations', 'analytics', 'notifications', 'users')
 ```
 
@@ -50,7 +50,7 @@ Replace:
 Set-GcAuthConfig `
   -Region 'mypurecloud.com' `
   -ClientId 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' `
-  -RedirectUri 'http://localhost:8080/oauth/callback' `
+  -RedirectUri 'http://localhost:8400/oauth/callback' `
   -Scopes @('conversations', 'analytics', 'notifications', 'users', 'routing')
 ```
 
@@ -107,8 +107,8 @@ If you see this error when clicking Login, ensure you've updated the `Set-GcAuth
 ### Authentication Fails
 
 - Verify your Client ID is correct
-- Ensure the redirect URI `http://localhost:8080/oauth/callback` is configured in your OAuth client
-- Check that port 8080 is not in use by another application
+- Ensure the redirect URI `http://localhost:8400/oauth/callback` is configured in your OAuth client
+- Check that port 8400 is not in use by another application
 - Verify you're using the correct region
 
 ### Token Test Fails
@@ -141,7 +141,7 @@ Update both the `Set-GcAuthConfig` region and the `$script:AppState.Region` valu
 
 ### Custom Redirect URI
 
-If port 8080 is unavailable, you can use a different port:
+If port 8400 is unavailable, you can use a different port:
 
 1. Update the OAuth client in Genesys Cloud to use the new redirect URI
 2. Update `Set-GcAuthConfig -RedirectUri` to match
