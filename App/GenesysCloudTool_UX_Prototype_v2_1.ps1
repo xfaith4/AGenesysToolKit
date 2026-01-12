@@ -746,11 +746,11 @@ function Show-SetTokenDialog {
         ResizeMode="NoResize">
   <Grid Margin="16">
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>   <!-- Header -->
+      <RowDefinition Height="Auto"/>   <!-- Region Input -->
+      <RowDefinition Height="Auto"/>   <!-- Token Label -->
+      <RowDefinition Height="*"/>      <!-- Token Input -->
+      <RowDefinition Height="Auto"/>   <!-- Buttons -->
     </Grid.RowDefinitions>
 
     <!-- Header -->
@@ -807,7 +807,11 @@ function Show-SetTokenDialog {
 
   try {
     $dialog = ConvertFrom-GcXaml -XamlString $xamlString
-    $dialog.Owner = $Window
+    
+    # Set owner if parent window is available
+    if ($Window) {
+      $dialog.Owner = $Window
+    }
 
     $txtRegion = $dialog.FindName('TxtRegion')
     $txtToken = $dialog.FindName('TxtToken')
@@ -845,7 +849,7 @@ function Show-SetTokenDialog {
       }
 
       # Remove "Bearer " prefix if present (case-insensitive)
-      if ($token -match '^Bearer\s+(.+)$') {
+      if ($token -imatch '^Bearer\s+(.+)$') {
         $token = $matches[1].Trim()
       }
 
@@ -862,8 +866,13 @@ function Show-SetTokenDialog {
       $dialog.DialogResult = $true
       $dialog.Close()
 
-      # Trigger token test by invoking BtnTestToken click handler
-      $BtnTestToken.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent))
+      # Trigger token test by programmatically invoking the button click
+      # Use Dispatcher to ensure we're on the UI thread
+      $Window.Dispatcher.Invoke([action]{
+        # Simulate button click by calling PerformClick equivalent
+        $clickEvent = New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent, $BtnTestToken)
+        $BtnTestToken.RaiseEvent($clickEvent)
+      }, [System.Windows.Threading.DispatcherPriority]::Normal)
     })
 
     # Cancel button handler
