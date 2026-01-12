@@ -4,9 +4,9 @@ Set-StrictMode -Version Latest
 
 # OAuth Configuration
 $script:GcAuthConfig = @{
-  Region       = 'mypurecloud.com'
+  Region       = 'usw2.pure.cloud'
   ClientId     = ''
-  RedirectUri  = 'http://localhost:8400/oauth/callback'
+  RedirectUri  = 'http://localhost:8085/callback'
   Scopes       = @()
   ClientSecret = ''  # Optional, for client credentials flow
 }
@@ -266,26 +266,26 @@ function Set-GcAuthConfig {
   <#
   .SYNOPSIS
     Configure OAuth settings for Genesys Cloud authentication.
-  
+
   .DESCRIPTION
     Sets up the OAuth configuration including region, client ID, redirect URI,
     scopes, and optional client secret for authentication flows.
-  
+
   .PARAMETER Region
     The Genesys Cloud region (e.g., 'mypurecloud.com', 'mypurecloud.ie')
-  
+
   .PARAMETER ClientId
     OAuth client ID from Genesys Cloud
-  
+
   .PARAMETER RedirectUri
     OAuth redirect URI (must match configuration in Genesys Cloud)
-  
+
   .PARAMETER Scopes
     Array of OAuth scopes to request
-  
+
   .PARAMETER ClientSecret
     Optional client secret for client credentials flow
-  
+
   .EXAMPLE
     Set-GcAuthConfig -Region 'mypurecloud.com' -ClientId 'abc123' -RedirectUri 'http://localhost:8400/oauth/callback' -Scopes @('conversations:readonly')
   #>
@@ -297,7 +297,7 @@ function Set-GcAuthConfig {
     [string[]]$Scopes,
     [string]$ClientSecret
   )
-  
+
   if ($Region) { $script:GcAuthConfig.Region = $Region }
   if ($ClientId) { $script:GcAuthConfig.ClientId = $ClientId }
   if ($RedirectUri) { $script:GcAuthConfig.RedirectUri = $RedirectUri }
@@ -312,7 +312,7 @@ function Get-GcAuthConfig {
   #>
   [CmdletBinding()]
   param()
-  
+
   return $script:GcAuthConfig
 }
 
@@ -320,28 +320,28 @@ function Get-GcPkceChallenge {
   <#
   .SYNOPSIS
     Generates PKCE code verifier and challenge for OAuth flow.
-  
+
   .DESCRIPTION
     Creates a cryptographically random code verifier and derives the
     code challenge using SHA256, as required for OAuth PKCE flow.
-  
+
   .OUTPUTS
     PSCustomObject with CodeVerifier and CodeChallenge properties
   #>
   [CmdletBinding()]
   param()
-  
+
   # Generate code verifier (43-128 characters, base64url encoded)
   $bytes = New-Object byte[] 32
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
   $rng.GetBytes($bytes)
   $codeVerifier = [Convert]::ToBase64String($bytes) -replace '\+', '-' -replace '/', '_' -replace '=', ''
-  
+
   # Generate code challenge (SHA256 hash of verifier, base64url encoded)
   $sha256 = [System.Security.Cryptography.SHA256]::Create()
   $challengeBytes = $sha256.ComputeHash([Text.Encoding]::ASCII.GetBytes($codeVerifier))
   $codeChallenge = [Convert]::ToBase64String($challengeBytes) -replace '\+', '-' -replace '/', '_' -replace '=', ''
-  
+
   return [PSCustomObject]@{
     CodeVerifier  = $codeVerifier
     CodeChallenge = $codeChallenge
@@ -352,14 +352,14 @@ function Start-GcAuthCodeFlow {
   <#
   .SYNOPSIS
     Initiates OAuth authorization code flow with PKCE.
-  
+
   .DESCRIPTION
     Starts a local HTTP listener, opens the browser to the OAuth authorization
     page, and waits for the callback with the authorization code.
-  
+
   .PARAMETER TimeoutSeconds
     How long to wait for the OAuth callback (default: 300 seconds)
-  
+
   .OUTPUTS
     PSCustomObject with AuthCode and CodeVerifier properties, or $null if failed
   #>
@@ -367,7 +367,7 @@ function Start-GcAuthCodeFlow {
   param(
     [int]$TimeoutSeconds = 300
   )
-  
+
   if (-not $script:GcAuthConfig.ClientId) {
     Write-Error "ClientId not configured. Call Set-GcAuthConfig first."
     return $null
@@ -384,32 +384,32 @@ function Start-GcAuthCodeFlow {
     ScopesCount = @($script:GcAuthConfig.Scopes).Count
     ClientId    = (ConvertTo-GcAuthSafeString -Value $script:GcAuthConfig.ClientId)
   }
-  
+
   # Generate PKCE challenge
   $pkce = Get-GcPkceChallenge
-  
+
   # Build authorization URL
   $region = $script:GcAuthConfig.Region
   $clientId = $script:GcAuthConfig.ClientId
   $redirectUri = $script:GcAuthConfig.RedirectUri
   $scopes = ($script:GcAuthConfig.Scopes -join ' ')
-  
+
   $state = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes([Guid]::NewGuid().ToString())) -replace '=', ''
-  
-  $authUrl = "https://login.$region/oauth/authorize?" + 
+
+  $authUrl = "https://login.$region/oauth/authorize?" +
              "response_type=code" +
              "&client_id=$([Uri]::EscapeDataString($clientId))" +
              "&redirect_uri=$([Uri]::EscapeDataString($redirectUri))" +
              "&code_challenge=$([Uri]::EscapeDataString($pkce.CodeChallenge))" +
              "&code_challenge_method=S256" +
              "&state=$([Uri]::EscapeDataString($state))"
-  
+
   if ($scopes) {
     $authUrl += "&scope=$([Uri]::EscapeDataString($scopes))"
   }
-  
+
   Write-Verbose "Opening authorization URL: $authUrl"
-  
+
   # Start local HTTP listener
   try {
     $listenerPrefix = $null
@@ -443,30 +443,30 @@ function Start-GcAuthCodeFlow {
       Prefix  = $listenerPrefix
       TimeoutSeconds = $TimeoutSeconds
     }
-    
+
     Write-Host "Starting OAuth flow. Opening browser..."
     Start-Process $authUrl
-    
+
     # Wait for callback
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $authCode = $null
     $receivedState = $null
-    
+
     while ((Get-Date) -lt $deadline -and $listener.IsListening) {
       $contextTask = $listener.GetContextAsync()
 
       if ($null -eq $contextTask) {
         throw "HttpListener.GetContextAsync() returned null (unexpected)."
       }
-      
+
       # Poll with timeout
       $waitResult = $contextTask.Wait(1000)
       if (-not $waitResult) { continue }
-      
+
       $context = $contextTask.GetAwaiter().GetResult()
       $request = $context.Request
       $response = $context.Response
-      
+
       # Parse query string
       $query = ''
       try { $query = $request.Url.Query } catch { $query = '' }
@@ -481,25 +481,25 @@ function Start-GcAuthCodeFlow {
       if ($query -match 'state=([^&]+)') {
         $receivedState = [Uri]::UnescapeDataString($matches[1])
       }
-      
+
       # Send response to browser
       $responseHtml = if ($authCode) {
         "<html><body><h1>Authentication Successful</h1><p>You can close this window.</p></body></html>"
       } else {
         "<html><body><h1>Authentication Failed</h1><p>No authorization code received.</p></body></html>"
       }
-      
+
       $buffer = [Text.Encoding]::UTF8.GetBytes($responseHtml)
       $response.ContentLength64 = $buffer.Length
       $response.ContentType = "text/html"
       $output = $response.OutputStream
       $output.Write($buffer, 0, $buffer.Length)
       $output.Close()
-      
+
       $listener.Stop()
       break
     }
-    
+
     if (-not $authCode) {
       Write-GcAuthDiag -Level ERROR -Message "No authorization code received before timeout" -Data @{
         TimeoutSeconds = $TimeoutSeconds
@@ -508,7 +508,7 @@ function Start-GcAuthCodeFlow {
       Write-Error "Failed to receive authorization code within timeout period."
       return $null
     }
-    
+
     if ($receivedState -ne $state) {
       Write-Warning "State mismatch in OAuth callback. Possible CSRF attack."
       Write-GcAuthDiag -Level WARN -Message "OAuth state mismatch" -Data @{
@@ -520,12 +520,12 @@ function Start-GcAuthCodeFlow {
     Write-GcAuthDiag -Level INFO -Message "Received authorization code" -Data @{
       AuthCodeLength = $authCode.Length
     }
-    
+
     return [PSCustomObject]@{
       AuthCode     = $authCode
       CodeVerifier = $pkce.CodeVerifier
     }
-    
+
   } catch {
     $exInfo = Get-GcAuthExceptionInfo -ErrorRecord $_
     Write-GcAuthDiag -Level ERROR -Message "Error during OAuth flow" -Data $exInfo
@@ -544,13 +544,13 @@ function Get-GcTokenFromAuthCode {
   <#
   .SYNOPSIS
     Exchanges authorization code for access token.
-  
+
   .PARAMETER AuthCode
     Authorization code from OAuth callback
-  
+
   .PARAMETER CodeVerifier
     PKCE code verifier used in the initial request
-  
+
   .OUTPUTS
     Token response object with access_token, expires_in, etc.
   #>
@@ -558,17 +558,17 @@ function Get-GcTokenFromAuthCode {
   param(
     [Parameter(Mandatory)]
     [string]$AuthCode,
-    
+
     [Parameter(Mandatory)]
     [string]$CodeVerifier
   )
-  
+
   $region = $script:GcAuthConfig.Region
   $clientId = $script:GcAuthConfig.ClientId
   $redirectUri = $script:GcAuthConfig.RedirectUri
-  
+
   $tokenUrl = "https://login.$region/oauth/token"
-  
+
   $body = @{
     grant_type    = 'authorization_code'
     code          = $AuthCode
@@ -592,7 +592,7 @@ function Get-GcTokenFromAuthCode {
     AuthCodeLength  = $AuthCode.Length
     VerifierLength  = $CodeVerifier.Length
   }
-  
+
   try {
     $irmParams = @{
       Uri         = $tokenUrl
@@ -612,7 +612,7 @@ function Get-GcTokenFromAuthCode {
       try { $keys = @($response.PSObject.Properties.Name) } catch { }
       throw ("Token response missing access_token. Keys: {0}" -f ($keys -join ', '))
     }
-    
+
     # Store token state
     $script:GcTokenState.AccessToken = $response.access_token
     $script:GcTokenState.TokenType = $response.token_type
@@ -625,7 +625,7 @@ function Get-GcTokenFromAuthCode {
       ExpiresIn    = $response.expires_in
       HasRefresh   = [bool]$response.refresh_token
     }
-    
+
     return $response
   } catch {
     $exInfo = Get-GcAuthExceptionInfo -ErrorRecord $_
@@ -641,14 +641,14 @@ function Get-GcTokenAsync {
   <#
   .SYNOPSIS
     Complete OAuth flow: authorize + exchange code for token.
-  
+
   .DESCRIPTION
     Performs the full OAuth authorization code + PKCE flow,
     storing the resulting token in module state.
-  
+
   .PARAMETER TimeoutSeconds
     How long to wait for the OAuth callback
-  
+
   .OUTPUTS
     Token response or $null if failed
   #>
@@ -663,13 +663,13 @@ function Get-GcTokenAsync {
       TimeoutSeconds = $TimeoutSeconds
     }
   }
-  
+
   $authResult = Start-GcAuthCodeFlow -TimeoutSeconds $TimeoutSeconds
   if (-not $authResult) {
     Write-GcAuthDiag -Level ERROR -Message "Auth code flow failed (no result)"
     return $null
   }
-  
+
   $tokenResponse = Get-GcTokenFromAuthCode -AuthCode $authResult.AuthCode -CodeVerifier $authResult.CodeVerifier
   return $tokenResponse
 }
@@ -678,40 +678,40 @@ function Test-GcToken {
   <#
   .SYNOPSIS
     Tests the current access token by calling /api/v2/users/me.
-  
+
   .DESCRIPTION
     Validates that the stored access token works by making a test
     API call. Returns user info if successful.
-  
+
   .OUTPUTS
     User info object or $null if token is invalid
   #>
   [CmdletBinding()]
   param()
-  
+
   if (-not $script:GcTokenState.AccessToken) {
     Write-Warning "No access token available. Call Get-GcTokenAsync first."
     return $null
   }
-  
+
   $region = $script:GcAuthConfig.Region
   $token = $script:GcTokenState.AccessToken
-  
+
   $uri = "https://api.$region/api/v2/users/me"
-  
+
   try {
     $headers = @{
       'Authorization' = "Bearer $token"
       'Content-Type'  = 'application/json'
     }
-    
+
     $response = Invoke-RestMethod -Uri $uri -Method GET -Headers $headers
     $script:GcTokenState.UserInfo = $response
 
     Write-GcAuthDiag -Level INFO -Message "Token test succeeded" -Data @{
       Uri = $uri
     }
-    
+
     return $response
   } catch {
     $exInfo = Get-GcAuthExceptionInfo -ErrorRecord $_
@@ -729,7 +729,7 @@ function Get-GcAccessToken {
   #>
   [CmdletBinding()]
   param()
-  
+
   return $script:GcTokenState.AccessToken
 }
 
@@ -740,7 +740,7 @@ function Get-GcTokenState {
   #>
   [CmdletBinding()]
   param()
-  
+
   return $script:GcTokenState
 }
 
@@ -751,7 +751,7 @@ function Clear-GcTokenState {
   #>
   [CmdletBinding()]
   param()
-  
+
   $script:GcTokenState.AccessToken = $null
   $script:GcTokenState.TokenType = $null
   $script:GcTokenState.ExpiresIn = $null

@@ -92,13 +92,14 @@ function ConvertFrom-GcXaml {
 
 # Initialize Auth Configuration (user should customize these)
 Set-GcAuthConfig `
-  -Region 'mypurecloud.com' `
+  -Region 'usw2.pure.cloud' `
+  -Org 'Production' `
   -ClientId 'clientid' `
-  -RedirectUri 'http://localhost:8400/oauth/callback' `
+  -RedirectUri 'http://localhost:8085/callback' `
   -Scopes @('conversations', 'analytics', 'notifications', 'users')
 
 $script:AppState = [ordered]@{
-  Region       = 'mypurecloud.com'
+  Region       = 'usw2.pure.cloud'
   Org          = 'Production'
   Auth         = 'Not logged in'
   TokenStatus  = 'No token'
