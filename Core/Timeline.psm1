@@ -31,7 +31,7 @@ function New-GcTimelineEvent {
     [datetime]$Time,
     
     [Parameter(Mandatory)]
-    [ValidateSet('Segment', 'MediaStats', 'Error', 'AgentAssist', 'Transcription', 'System', 'Quality')]
+    [ValidateSet('Segment', 'MediaStats', 'Error', 'AgentAssist', 'Transcription', 'System', 'Quality', 'Live Events')]
     [string]$Category,
     
     [Parameter(Mandatory)]
