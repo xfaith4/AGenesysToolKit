@@ -756,11 +756,15 @@ function Start-TokenTest {
 
   # Queue background job to test token via GET /api/v2/users/me
   Start-AppJob -Name "Test Token" -Type "Auth" -ScriptBlock {
-    # Note: No parameters needed - Invoke-AppGcRequest reads from AppState
+    param($region, $token, $coreModulePath)
+    
+    # Import required modules in runspace
+    Import-Module (Join-Path -Path $coreModulePath -ChildPath 'HttpRequests.psm1') -Force
+    
     try {
-      # Call GET /api/v2/users/me using Invoke-AppGcRequest
-      # The wrapper automatically injects AccessToken and InstanceName from AppState
-      $userInfo = Invoke-AppGcRequest -Path '/api/v2/users/me' -Method GET
+      # Call GET /api/v2/users/me using Invoke-GcRequest with explicit parameters
+      $userInfo = Invoke-GcRequest -Path '/api/v2/users/me' -Method GET `
+        -InstanceName $region -AccessToken $token
 
       return [PSCustomObject]@{
         Success = $true
@@ -784,7 +788,7 @@ function Start-TokenTest {
         StatusCode = $statusCode
       }
     }
-  } -OnCompleted {
+  } -ArgumentList @($script:AppState.Region, $script:AppState.AccessToken, $coreRoot) -OnCompleted {
     param($job)
 
     if ($job.Result -and $job.Result.Success) {
