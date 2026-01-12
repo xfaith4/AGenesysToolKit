@@ -31,15 +31,22 @@ Quick summary:
 2. Edit `App/GenesysCloudTool_UX_Prototype_v2_1.ps1` and update the `Set-GcAuthConfig` section with your Client ID
 3. Launch the application
 
-**Testing**: See [HOW_TO_TEST.md](docs/HOW_TO_TEST.md) for step-by-step testing instructions.
+**Testing**: 
+- See [HOW_TO_TEST.md](docs/HOW_TO_TEST.md) for OAuth and general testing instructions.
+- See [HOW_TO_TEST_JOBRUNNER.md](docs/HOW_TO_TEST_JOBRUNNER.md) for JobRunner-specific testing scenarios.
 
-### Running Smoke Tests
+### Running Tests
 
 Verify the installation and core module loading:
 
 ```powershell
 # From repository root
+
+# Run smoke tests (10 tests - module loading)
 ./tests/smoke.ps1
+
+# Run JobRunner tests (12 tests - background job execution)
+./tests/test-jobrunner.ps1
 ```
 
 ### Launching the Application
@@ -146,22 +153,37 @@ $results = Get-GcAnalyticsConversationDetailsJobResults -JobId $job.id
 
 ### Background Job Runner
 
-UI jobs run in PowerShell runspaces (off UI thread):
+UI jobs run in PowerShell runspaces (no ThreadJob dependency):
 
 ```powershell
-# Create job context
-$job = New-GcJobContext -Name "Export Packet" -Type "Export"
-
-# Start background job
-Start-GcJob -Job $job -ScriptBlock {
+# Simplified API (recommended)
+Start-AppJob -Name "Export Packet" -ScriptBlock {
   param($conversationId)
   # Long-running work here
+  Export-GcConversationPacket -ConversationId $conversationId
+} -ArgumentList @($convId) -OnCompleted {
+  param($job)
+  Write-Host "Job completed: $($job.Result)"
+}
+
+# Advanced API (full control)
+$job = New-GcJobContext -Name "Export Packet" -Type "Export"
+Start-GcJob -Job $job -ScriptBlock {
+  param($conversationId)
   Export-GcConversationPacket -ConversationId $conversationId
 } -ArgumentList @($convId) -OnComplete {
   param($job)
   Write-Host "Job completed: $($job.Result)"
 }
 ```
+
+**Key Features:**
+- ✅ Real runspace-based execution (PowerShell 5.1 + 7 compatible)
+- ✅ Thread-safe log streaming via ObservableCollection
+- ✅ Cancellation support (CancellationRequested flag)
+- ✅ Status tracking: Queued/Running/Completed/Failed/Canceled
+- ✅ Time tracking: StartTime/EndTime/Duration
+- ✅ No ThreadJob module dependency
 
 ### Conversation Timeline
 
@@ -204,20 +226,23 @@ $packet = Export-GcConversationPacket `
 
 ## Development Status
 
-**Current Phase: Money Path Implementation Complete ✅**
+**Current Phase: JobRunner Implementation Complete ✅**
 
 - [x] Repository structure established
 - [x] Core HTTP primitives implemented
 - [x] Job pattern implemented (analytics)
 - [x] **OAuth authentication with PKCE**
-- [x] **Background job runner (runspaces)**
+- [x] **Background job runner (runspaces) - REPLACED JobSim**
+- [x] **Start-AppJob simplified API**
 - [x] **WebSocket subscription provider**
 - [x] **Conversation timeline reconstruction**
 - [x] **Incident packet generator (ZIP archives)**
 - [x] **Real Export Packet flow (end-to-end)**
 - [x] Documentation complete
 - [x] Smoke tests passing (10/10)
+- [x] **JobRunner tests passing (12/12)**
 - [x] WPF UI integrated with real backend
+- [x] **All mock jobs replaced with real runspace-based execution**
 
 **Next Phase: Subscription Engine Integration**
 
@@ -230,6 +255,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for detailed phased development plan.
 ## Documentation
 
 - [**HOW_TO_TEST.md**](docs/HOW_TO_TEST.md) - Quick testing guide for OAuth implementation (5 minutes)
+- [**HOW_TO_TEST_JOBRUNNER.md**](docs/HOW_TO_TEST_JOBRUNNER.md) - JobRunner testing scenarios and manual UI tests
 - [**OAUTH_TESTING.md**](docs/OAUTH_TESTING.md) - Comprehensive OAuth testing scenarios (12+ tests)
 - [**CONFIGURATION.md**](docs/CONFIGURATION.md) - Setup guide for OAuth and configuration
 - [**ARCHITECTURE.md**](docs/ARCHITECTURE.md) - Core contracts, pagination policy, and workspace definitions
