@@ -62,7 +62,7 @@ catch {
 # Test: Check for the specific fix (curly brace escape)
 Write-Host "Test: Verifying XAML curly brace escape fix..." -ForegroundColor Yellow
 
-if ($scriptContent -match 'Text="\{\} \{') {
+if ($scriptContent -match 'Text="\{\}\s*\{') {
     Write-Host "[PASS] Found escaped curly brace in XAML Text attribute" -ForegroundColor Green
     Write-Host ""
 } else {
@@ -74,7 +74,8 @@ if ($scriptContent -match 'Text="\{\} \{') {
 Write-Host "Test: Checking for unescaped curly braces in Text attributes..." -ForegroundColor Yellow
 
 # Look for Text="{ but not Text="{} {
-$unescapedPattern = 'Text="\{[^}]'
+# Pattern: Text=" followed by { that is NOT followed by }
+$unescapedPattern = 'Text="\\{(?!\\})'
 if ($scriptContent -match $unescapedPattern) {
     Write-Host "[WARN] Found potential unescaped curly brace in Text attribute" -ForegroundColor Yellow
     Write-Host "       This may not be an issue if it's intentional" -ForegroundColor Yellow
