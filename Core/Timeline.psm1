@@ -415,7 +415,7 @@ function Export-GcTimelineToMarkdown {
     if ($event.CorrelationKeys) {
       $lines += "**Correlation Keys:**"
       foreach ($key in $event.CorrelationKeys.Keys) {
-        $lines += "- $key`: $($event.CorrelationKeys[$key])"
+        $lines += "- ${key}: $($event.CorrelationKeys[$key])"
       }
       $lines += ""
     }
