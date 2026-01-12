@@ -1197,10 +1197,11 @@ function New-OperationalEventLogsView {
         pageNumber = 1
       }
 
-      # Use Invoke-AppGcRequest to query audit logs
+      # Use Invoke-GcPagedRequest to query audit logs
+      $maxItems = 500  # Limit to prevent excessive API calls
       try {
         $results = Invoke-GcPagedRequest -Path '/api/v2/audits/query' -Method POST -Body $queryBody `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems 500
+          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
 
         return $results
       } catch {
@@ -1472,9 +1473,10 @@ function New-AuditLogsView {
       }
 
       # Use Invoke-GcPagedRequest to query audit logs
+      $maxItems = 500  # Limit to prevent excessive API calls
       try {
         $results = Invoke-GcPagedRequest -Path '/api/v2/audits/query' -Method POST -Body $queryBody `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems 500
+          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
 
         return $results
       } catch {
@@ -1716,9 +1718,10 @@ function New-OAuthTokenUsageView {
 
     Start-AppJob -Name "Query OAuth Clients" -Type "Query" -ScriptBlock {
       # Use Invoke-GcPagedRequest to query OAuth clients
+      $maxItems = 500  # Limit to prevent excessive API calls
       try {
         $results = Invoke-GcPagedRequest -Path '/api/v2/oauth/clients' -Method GET `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems 500
+          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
 
         return $results
       } catch {
