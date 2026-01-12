@@ -135,119 +135,66 @@ function New-Artifact {
   }
 }
 
-function New-Job {
-  param([string]$Name, [string]$Type = 'General')
-  [pscustomobject]@{
-    Id        = [Guid]::NewGuid().ToString()
-    Name      = $Name
-    Type      = $Type
-    Status    = 'Queued'
-    Progress  = 0
-    Started   = $null
-    Ended     = $null
-    Logs      = New-Object System.Collections.ObjectModel.ObservableCollection[string]
-    CanCancel = $true
-  }
-}
-
-function Add-JobLog {
-  param([object]$Job, [string]$Message)
-  $ts = (Get-Date).ToString('HH:mm:ss')
-  $Job.Logs.Add("[$ts] $Message") | Out-Null
-}
-
-function Start-JobSim {
-  param(
-    [object]$Job,
-    [int]$DurationMs = 1800,
-    [scriptblock]$OnComplete,
-    [scriptblock]$OnTick
-  )
-
-  $Job.Status  = 'Running'
-  $Job.Started = Get-Date
-  Add-JobLog -Job $Job -Message "Started ($($Job.Type))."
-
-  $ticks = [Math]::Max(6, [int]($DurationMs / 250))
-  $step  = [Math]::Max(1, [int](100 / $ticks))
-
-  $timer = New-Object Windows.Threading.DispatcherTimer
-  $timer.Interval = [TimeSpan]::FromMilliseconds(250)
-
-  $timer.Add_Tick({
-    if ($Job.Status -eq 'Canceled') {
-      $timer.Stop()
-      Add-JobLog -Job $Job -Message "Canceled."
-      $Job.Ended = Get-Date
-      return
-    }
-
-    $Job.Progress = [Math]::Min(100, $Job.Progress + $step)
-    if ($OnTick) { & $OnTick $Job }
-
-    if ($Job.Progress -ge 100) {
-      $timer.Stop()
-      $Job.Status    = 'Completed'
-      $Job.Ended     = Get-Date
-      $Job.CanCancel = $false
-      Add-JobLog -Job $Job -Message "Completed."
-      if ($OnComplete) { & $OnComplete $Job }
-    }
-  })
-
-  $timer.Start()
-  return $timer
-}
-
-function Queue-Job {
-  param(
-    [string]$Name,
-    [string]$Type = 'General',
-    [int]$DurationMs = 1800,
-    [scriptblock]$OnComplete
-  )
-
-  $job = New-Job -Name $Name -Type $Type
-  $script:AppState.Jobs.Add($job) | Out-Null
-  Add-JobLog -Job $job -Message "Queued."
-
-  Start-JobSim -Job $job -DurationMs $DurationMs -OnComplete $OnComplete | Out-Null
-  return $job
-}
-
-function Queue-RealJob {
+function Start-AppJob {
   <#
   .SYNOPSIS
-    Queues a real job using the JobRunner module.
+    Starts a background job using PowerShell runspaces - simplified API.
+  
+  .DESCRIPTION
+    Provides a simplified API for starting background jobs that:
+    - Run script blocks in background runspaces
+    - Stream log lines back to the UI via thread-safe collections
+    - Support cancellation via CancelRequested flag
+    - Track Status: Queued/Running/Completed/Failed/Canceled
+    - Capture StartTime/EndTime/Duration
   
   .PARAMETER Name
-    Job name
-  
-  .PARAMETER Type
-    Job type
+    Human-readable job name
   
   .PARAMETER ScriptBlock
-    Script block to execute in background
+    Script block to execute in background runspace
   
   .PARAMETER ArgumentList
-    Arguments to pass to script block
+    Arguments to pass to the script block
   
-  .PARAMETER OnComplete
-    Completion handler
+  .PARAMETER OnCompleted
+    Script block to execute when job completes (runs on UI thread)
+  
+  .PARAMETER Type
+    Job type category (default: 'General')
+  
+  .EXAMPLE
+    Start-AppJob -Name "Test Job" -ScriptBlock { Start-Sleep 2; "Done" } -OnCompleted { param($job) Write-Host "Completed!" }
+  
+  .NOTES
+    This is a wrapper around New-GcJobContext and Start-GcJob from JobRunner.psm1.
+    Compatible with PowerShell 5.1 and 7+.
   #>
+  [CmdletBinding()]
   param(
+    [Parameter(Mandatory)]
     [string]$Name,
-    [string]$Type = 'General',
+    
+    [Parameter(Mandatory)]
     [scriptblock]$ScriptBlock,
+    
     [object[]]$ArgumentList = @(),
-    [scriptblock]$OnComplete
+    
+    [scriptblock]$OnCompleted,
+    
+    [string]$Type = 'General'
   )
-
+  
+  # Create job context using JobRunner
   $job = New-GcJobContext -Name $Name -Type $Type
+  
+  # Add to app state jobs collection
   $script:AppState.Jobs.Add($job) | Out-Null
   Add-GcJobLog -Job $job -Message "Queued."
-
-  Start-GcJob -Job $job -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -OnComplete $OnComplete
+  
+  # Start the job
+  Start-GcJob -Job $job -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -OnComplete $OnCompleted
+  
   return $job
 }
 
@@ -840,27 +787,38 @@ function New-ConversationTimelineView {
         [System.Windows.MessageBoxImage]::Warning
       )
       
-      # Fallback to mock export
-      Queue-Job -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -DurationMs 1400 -OnComplete {
-        $file = Join-Path -Path $script:ArtifactsDir -ChildPath "incident-packet-mock-$($conv)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+      # Fallback to mock export using Start-AppJob
+      Start-AppJob -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -ScriptBlock {
+        param($conversationId, $artifactsDir)
+        
+        Start-Sleep -Milliseconds 1400
+        
+        $file = Join-Path -Path $artifactsDir -ChildPath "incident-packet-mock-$($conversationId)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
         @(
           "Incident Packet (mock)",
-          "ConversationId: $conv",
+          "ConversationId: $conversationId",
           "Generated: $(Get-Date)",
           "",
           "NOTE: This is a mock packet. Log in to export real conversation data."
         ) | Set-Content -Path $file -Encoding UTF8
-
-        Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
-        Set-Status "Exported mock incident packet: $file"
+        
+        return $file
+      } -ArgumentList @($conv, $script:ArtifactsDir) -OnCompleted {
+        param($job)
+        
+        if ($job.Result) {
+          $file = $job.Result
+          Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
+          Set-Status "Exported mock incident packet: $file"
+        }
       } | Out-Null
       
       Refresh-HeaderStats
       return
     }
 
-    # Real export using ArtifactGenerator
-    Queue-RealJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
+    # Real export using ArtifactGenerator with Start-AppJob
+    Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
       
       try {
@@ -879,7 +837,7 @@ function New-ConversationTimelineView {
         return $null
       }
     } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
-    -OnComplete {
+    -OnCompleted {
       param($job)
       
       if ($job.Result) {
@@ -1099,11 +1057,16 @@ function New-SubscriptionsView {
   $h.BtnStart.Add_Click({
     if ($script:AppState.IsStreaming) { return }
 
-    Queue-Job -Name "Connect subscription (AudioHook / Agent Assist)" -Type 'Subscription' -DurationMs 1200 -OnComplete {
+    Start-AppJob -Name "Connect subscription (AudioHook / Agent Assist)" -Type 'Subscription' -ScriptBlock {
+      # Simulate subscription connection work
+      Start-Sleep -Milliseconds 1200
+      return @{ Success = $true; Message = "Subscription connected" }
+    } -OnCompleted {
+      param($job)
       $script:AppState.IsStreaming = $true
       $h.BtnStart.IsEnabled = $false
       $h.BtnStop.IsEnabled  = $true
-      Set-Status "Subscription started (mock)."
+      Set-Status "Subscription started."
       Refresh-HeaderStats
     } | Out-Null
 
@@ -1113,7 +1076,12 @@ function New-SubscriptionsView {
   $h.BtnStop.Add_Click({
     if (-not $script:AppState.IsStreaming) { return }
 
-    Queue-Job -Name "Disconnect subscription" -Type 'Subscription' -DurationMs 700 -OnComplete {
+    Start-AppJob -Name "Disconnect subscription" -Type 'Subscription' -ScriptBlock {
+      # Simulate subscription disconnection work
+      Start-Sleep -Milliseconds 700
+      return @{ Success = $true; Message = "Subscription disconnected" }
+    } -OnCompleted {
+      param($job)
       $script:AppState.IsStreaming = $false
       $h.BtnStart.IsEnabled = $true
       $h.BtnStop.IsEnabled  = $false
@@ -1158,28 +1126,39 @@ function New-SubscriptionsView {
         [System.Windows.MessageBoxImage]::Warning
       )
       
-      # Fallback to mock export
-      Queue-Job -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -DurationMs 1400 -OnComplete {
-        $file = Join-Path -Path $script:ArtifactsDir -ChildPath "incident-packet-mock-$($conv)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+      # Fallback to mock export using Start-AppJob
+      Start-AppJob -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -ScriptBlock {
+        param($conversationId, $artifactsDir)
+        
+        Start-Sleep -Milliseconds 1400
+        
+        $file = Join-Path -Path $artifactsDir -ChildPath "incident-packet-mock-$($conversationId)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
         @(
           "Incident Packet (mock) — Subscription Evidence",
-          "ConversationId: $conv",
+          "ConversationId: $conversationId",
           "Generated: $(Get-Date)",
           "",
           "NOTE: This is a mock packet. Log in to export real conversation data.",
           ""
         ) | Set-Content -Path $file -Encoding UTF8
-
-        Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
-        Set-Status "Exported mock incident packet: $file"
+        
+        return $file
+      } -ArgumentList @($conv, $script:ArtifactsDir) -OnCompleted {
+        param($job)
+        
+        if ($job.Result) {
+          $file = $job.Result
+          Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
+          Set-Status "Exported mock incident packet: $file"
+        }
       } | Out-Null
       
       Refresh-HeaderStats
       return
     }
 
-    # Real export using ArtifactGenerator
-    Queue-RealJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
+    # Real export using ArtifactGenerator with Start-AppJob
+    Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
       
       try {
@@ -1201,7 +1180,7 @@ function New-SubscriptionsView {
         return $null
       }
     } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
-    -OnComplete {
+    -OnCompleted {
       param($job)
       
       if ($job.Result) {
@@ -1351,7 +1330,7 @@ $BtnLogin.Add_Click({
   Set-Status "Starting OAuth flow..."
   
   # Run OAuth flow in background
-  Queue-RealJob -Name "OAuth Login" -Type "Auth" -ScriptBlock {
+  Start-AppJob -Name "OAuth Login" -Type "Auth" -ScriptBlock {
     try {
       $tokenResponse = Get-GcTokenAsync -TimeoutSeconds 300
       return $tokenResponse
@@ -1359,7 +1338,7 @@ $BtnLogin.Add_Click({
       Write-Error $_
       return $null
     }
-  } -OnComplete {
+  } -OnCompleted {
     param($job)
     
     if ($job.Result) {
@@ -1410,7 +1389,7 @@ $BtnTestToken.Add_Click({
   Set-Status "Testing token..."
   
   # Queue background job to test token via GET /api/v2/users/me
-  Queue-RealJob -Name "Test Token" -Type "Auth" -ScriptBlock {
+  Start-AppJob -Name "Test Token" -Type "Auth" -ScriptBlock {
     # Note: No parameters needed - Invoke-AppGcRequest reads from AppState
     try {
       # STEP 1: Call GET /api/v2/users/me using Invoke-AppGcRequest
@@ -1439,7 +1418,7 @@ $BtnTestToken.Add_Click({
         StatusCode = $statusCode
       }
     }
-  } -OnComplete {
+  } -OnCompleted {
     param($job)
     
     if ($job.Result -and $job.Result.Success) {
