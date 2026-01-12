@@ -248,6 +248,169 @@ function Start-AppJob {
 }
 
 # -----------------------------
+# Timeline Job Helper
+# -----------------------------
+# Shared scriptblock for timeline retrieval to avoid duplication
+$script:TimelineJobScriptBlock = {
+  param($conversationId, $region, $accessToken, $eventBuffer)
+  
+  # Import required modules in runspace
+  $scriptRoot = Split-Path -Parent $PSCommandPath
+  $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+  Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
+  Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
+  
+  try {
+    Write-Output "Querying analytics for conversation $conversationId..."
+    
+    # Build analytics query body
+    $queryBody = @{
+      conversationFilters = @(
+        @{
+          type = 'and'
+          predicates = @(
+            @{
+              dimension = 'conversationId'
+              value = $conversationId
+            }
+          )
+        }
+      )
+      order = 'asc'
+      orderBy = 'conversationStart'
+    }
+    
+    # Submit analytics job
+    Write-Output "Submitting analytics job..."
+    $jobResponse = Invoke-GcRequest `
+      -Method POST `
+      -Path '/api/v2/analytics/conversations/details/jobs' `
+      -Body $queryBody `
+      -InstanceName $region `
+      -AccessToken $accessToken
+    
+    $jobId = $jobResponse.id
+    if (-not $jobId) { throw "No job ID returned from analytics API." }
+    
+    Write-Output "Job submitted: $jobId. Waiting for completion..."
+    
+    # Poll for completion
+    $maxAttempts = 120  # 2 minutes max (120 * 1 second)
+    $attempt = 0
+    $completed = $false
+    
+    while ($attempt -lt $maxAttempts) {
+      Start-Sleep -Milliseconds 1000
+      $attempt++
+      
+      $status = Invoke-GcRequest `
+        -Method GET `
+        -Path "/api/v2/analytics/conversations/details/jobs/$jobId" `
+        -InstanceName $region `
+        -AccessToken $accessToken
+      
+      if ($status.state -match 'FULFILLED|COMPLETED|SUCCESS') {
+        $completed = $true
+        Write-Output "Job completed successfully."
+        break
+      }
+      
+      if ($status.state -match 'FAILED|ERROR') {
+        throw "Analytics job failed: $($status.state)"
+      }
+    }
+    
+    if (-not $completed) {
+      throw "Analytics job timed out after $maxAttempts seconds."
+    }
+    
+    # Fetch results
+    Write-Output "Fetching results..."
+    $results = Invoke-GcRequest `
+      -Method GET `
+      -Path "/api/v2/analytics/conversations/details/jobs/$jobId/results" `
+      -InstanceName $region `
+      -AccessToken $accessToken
+    
+    if (-not $results.conversations -or $results.conversations.Count -eq 0) {
+      throw "No conversation data found for ID: $conversationId"
+    }
+    
+    Write-Output "Retrieved conversation data. Building timeline..."
+    
+    $conversationData = $results.conversations[0]
+    
+    # Filter subscription events for this conversation
+    $relevantSubEvents = @()
+    if ($eventBuffer -and $eventBuffer.Count -gt 0) {
+      foreach ($evt in $eventBuffer) {
+        if ($evt.conversationId -eq $conversationId) {
+          $relevantSubEvents += $evt
+        }
+      }
+      Write-Output "Found $($relevantSubEvents.Count) subscription events for this conversation."
+    }
+    
+    # Convert to timeline events
+    $timeline = ConvertTo-GcTimeline `
+      -ConversationData $conversationData `
+      -AnalyticsData $conversationData `
+      -SubscriptionEvents $relevantSubEvents
+    
+    Write-Output "Timeline built with $($timeline.Count) events."
+    
+    # Add "Live Events" category for subscription events
+    if ($relevantSubEvents.Count -gt 0) {
+      $liveEventsAdded = 0
+      foreach ($subEvt in $relevantSubEvents) {
+        try {
+          # Parse event timestamp with error handling
+          $eventTime = $null
+          if ($subEvt.ts -is [datetime]) {
+            $eventTime = $subEvt.ts
+          } elseif ($subEvt.ts) {
+            $eventTime = [datetime]::Parse($subEvt.ts)
+          } else {
+            Write-Warning "Subscription event missing timestamp, skipping: $($subEvt.topic)"
+            continue
+          }
+          
+          # Create live event
+          $timeline += New-GcTimelineEvent `
+            -Time $eventTime `
+            -Category 'Live Events' `
+            -Label "$($subEvt.topic): $($subEvt.text)" `
+            -Details $subEvt `
+            -CorrelationKeys @{
+              conversationId = $conversationId
+              eventType = $subEvt.topic
+            }
+          
+          $liveEventsAdded++
+        } catch {
+          Write-Warning "Failed to parse subscription event timestamp: $_"
+          continue
+        }
+      }
+      
+      # Re-sort timeline
+      $timeline = $timeline | Sort-Object -Property Time
+      Write-Output "Added $liveEventsAdded live events to timeline."
+    }
+    
+    return @{
+      ConversationId = $conversationId
+      Timeline = $timeline
+      SubscriptionEvents = $relevantSubEvents
+    }
+    
+  } catch {
+    Write-Error "Failed to build timeline: $_"
+    throw
+  }
+}
+
+# -----------------------------
 # Workspaces + Modules
 # -----------------------------
 $script:WorkspaceModules = [ordered]@{
@@ -993,147 +1156,8 @@ function New-ConversationTimelineView {
 
     Set-Status "Retrieving timeline for conversation $conv..."
     
-    # Start background job to retrieve and build timeline
-    Start-AppJob -Name "Build Timeline — $conv" -Type 'Timeline' -ScriptBlock {
-      param($conversationId, $region, $accessToken, $eventBuffer)
-      
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
-      
-      try {
-        Write-Output "Querying analytics for conversation $conversationId..."
-        
-        # Build analytics query body
-        $queryBody = @{
-          conversationFilters = @(
-            @{
-              type = 'and'
-              predicates = @(
-                @{
-                  dimension = 'conversationId'
-                  value = $conversationId
-                }
-              )
-            }
-          )
-          order = 'asc'
-          orderBy = 'conversationStart'
-        }
-        
-        # Submit analytics job
-        Write-Output "Submitting analytics job..."
-        $jobResponse = Invoke-GcRequest `
-          -Method POST `
-          -Path '/api/v2/analytics/conversations/details/jobs' `
-          -Body $queryBody `
-          -InstanceName $region `
-          -AccessToken $accessToken
-        
-        $jobId = $jobResponse.id
-        if (-not $jobId) { throw "No job ID returned from analytics API." }
-        
-        Write-Output "Job submitted: $jobId. Waiting for completion..."
-        
-        # Poll for completion
-        $maxAttempts = 120  # 2 minutes max (120 * 1 second)
-        $attempt = 0
-        $completed = $false
-        
-        while ($attempt -lt $maxAttempts) {
-          Start-Sleep -Milliseconds 1000
-          $attempt++
-          
-          $status = Invoke-GcRequest `
-            -Method GET `
-            -Path "/api/v2/analytics/conversations/details/jobs/$jobId" `
-            -InstanceName $region `
-            -AccessToken $accessToken
-          
-          if ($status.state -match 'FULFILLED|COMPLETED|SUCCESS') {
-            $completed = $true
-            Write-Output "Job completed successfully."
-            break
-          }
-          
-          if ($status.state -match 'FAILED|ERROR') {
-            throw "Analytics job failed: $($status.state)"
-          }
-        }
-        
-        if (-not $completed) {
-          throw "Analytics job timed out after $maxAttempts seconds."
-        }
-        
-        # Fetch results
-        Write-Output "Fetching results..."
-        $results = Invoke-GcRequest `
-          -Method GET `
-          -Path "/api/v2/analytics/conversations/details/jobs/$jobId/results" `
-          -InstanceName $region `
-          -AccessToken $accessToken
-        
-        if (-not $results.conversations -or $results.conversations.Count -eq 0) {
-          throw "No conversation data found for ID: $conversationId"
-        }
-        
-        Write-Output "Retrieved conversation data. Building timeline..."
-        
-        $conversationData = $results.conversations[0]
-        
-        # Filter subscription events for this conversation
-        $relevantSubEvents = @()
-        if ($eventBuffer -and $eventBuffer.Count -gt 0) {
-          foreach ($evt in $eventBuffer) {
-            if ($evt.conversationId -eq $conversationId) {
-              $relevantSubEvents += $evt
-            }
-          }
-          Write-Output "Found $($relevantSubEvents.Count) subscription events for this conversation."
-        }
-        
-        # Convert to timeline events
-        $timeline = ConvertTo-GcTimeline `
-          -ConversationData $conversationData `
-          -AnalyticsData $conversationData `
-          -SubscriptionEvents $relevantSubEvents
-        
-        Write-Output "Timeline built with $($timeline.Count) events."
-        
-        # Add "Live Events" category for subscription events
-        if ($relevantSubEvents.Count -gt 0) {
-          foreach ($subEvt in $relevantSubEvents) {
-            $eventTime = if ($subEvt.ts -is [datetime]) { $subEvt.ts } else { [datetime]::Parse($subEvt.ts) }
-            
-            $timeline += New-GcTimelineEvent `
-              -Time $eventTime `
-              -Category 'Live Events' `
-              -Label "$($subEvt.topic): $($subEvt.text)" `
-              -Details $subEvt `
-              -CorrelationKeys @{
-                conversationId = $conversationId
-                eventType = $subEvt.topic
-              }
-          }
-          
-          # Re-sort timeline
-          $timeline = $timeline | Sort-Object -Property Time
-          Write-Output "Added $($relevantSubEvents.Count) live events to timeline."
-        }
-        
-        return @{
-          ConversationId = $conversationId
-          Timeline = $timeline
-          SubscriptionEvents = $relevantSubEvents
-        }
-        
-      } catch {
-        Write-Error "Failed to build timeline: $_"
-        throw
-      }
-    } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
+    # Start background job to retrieve and build timeline (using shared scriptblock)
+    Start-AppJob -Name "Build Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
     -OnCompleted {
       param($job)
       
@@ -1679,147 +1703,8 @@ function New-SubscriptionsView {
 
     Set-Status "Retrieving timeline for conversation $conv..."
     
-    # Start background job to retrieve and build timeline
-    Start-AppJob -Name "Open Timeline — $conv" -Type 'Timeline' -ScriptBlock {
-      param($conversationId, $region, $accessToken, $eventBuffer)
-      
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
-      
-      try {
-        Write-Output "Querying analytics for conversation $conversationId..."
-        
-        # Build analytics query body
-        $queryBody = @{
-          conversationFilters = @(
-            @{
-              type = 'and'
-              predicates = @(
-                @{
-                  dimension = 'conversationId'
-                  value = $conversationId
-                }
-              )
-            }
-          )
-          order = 'asc'
-          orderBy = 'conversationStart'
-        }
-        
-        # Submit analytics job
-        Write-Output "Submitting analytics job..."
-        $jobResponse = Invoke-GcRequest `
-          -Method POST `
-          -Path '/api/v2/analytics/conversations/details/jobs' `
-          -Body $queryBody `
-          -InstanceName $region `
-          -AccessToken $accessToken
-        
-        $jobId = $jobResponse.id
-        if (-not $jobId) { throw "No job ID returned from analytics API." }
-        
-        Write-Output "Job submitted: $jobId. Waiting for completion..."
-        
-        # Poll for completion
-        $maxAttempts = 120  # 2 minutes max (120 * 1 second)
-        $attempt = 0
-        $completed = $false
-        
-        while ($attempt -lt $maxAttempts) {
-          Start-Sleep -Milliseconds 1000
-          $attempt++
-          
-          $status = Invoke-GcRequest `
-            -Method GET `
-            -Path "/api/v2/analytics/conversations/details/jobs/$jobId" `
-            -InstanceName $region `
-            -AccessToken $accessToken
-          
-          if ($status.state -match 'FULFILLED|COMPLETED|SUCCESS') {
-            $completed = $true
-            Write-Output "Job completed successfully."
-            break
-          }
-          
-          if ($status.state -match 'FAILED|ERROR') {
-            throw "Analytics job failed: $($status.state)"
-          }
-        }
-        
-        if (-not $completed) {
-          throw "Analytics job timed out after $maxAttempts seconds."
-        }
-        
-        # Fetch results
-        Write-Output "Fetching results..."
-        $results = Invoke-GcRequest `
-          -Method GET `
-          -Path "/api/v2/analytics/conversations/details/jobs/$jobId/results" `
-          -InstanceName $region `
-          -AccessToken $accessToken
-        
-        if (-not $results.conversations -or $results.conversations.Count -eq 0) {
-          throw "No conversation data found for ID: $conversationId"
-        }
-        
-        Write-Output "Retrieved conversation data. Building timeline..."
-        
-        $conversationData = $results.conversations[0]
-        
-        # Filter subscription events for this conversation
-        $relevantSubEvents = @()
-        if ($eventBuffer -and $eventBuffer.Count -gt 0) {
-          foreach ($evt in $eventBuffer) {
-            if ($evt.conversationId -eq $conversationId) {
-              $relevantSubEvents += $evt
-            }
-          }
-          Write-Output "Found $($relevantSubEvents.Count) subscription events for this conversation."
-        }
-        
-        # Convert to timeline events
-        $timeline = ConvertTo-GcTimeline `
-          -ConversationData $conversationData `
-          -AnalyticsData $conversationData `
-          -SubscriptionEvents $relevantSubEvents
-        
-        Write-Output "Timeline built with $($timeline.Count) events."
-        
-        # Add "Live Events" category for subscription events
-        if ($relevantSubEvents.Count -gt 0) {
-          foreach ($subEvt in $relevantSubEvents) {
-            $eventTime = if ($subEvt.ts -is [datetime]) { $subEvt.ts } else { [datetime]::Parse($subEvt.ts) }
-            
-            $timeline += New-GcTimelineEvent `
-              -Time $eventTime `
-              -Category 'Live Events' `
-              -Label "$($subEvt.topic): $($subEvt.text)" `
-              -Details $subEvt `
-              -CorrelationKeys @{
-                conversationId = $conversationId
-                eventType = $subEvt.topic
-              }
-          }
-          
-          # Re-sort timeline
-          $timeline = $timeline | Sort-Object -Property Time
-          Write-Output "Added $($relevantSubEvents.Count) live events to timeline."
-        }
-        
-        return @{
-          ConversationId = $conversationId
-          Timeline = $timeline
-          SubscriptionEvents = $relevantSubEvents
-        }
-        
-      } catch {
-        Write-Error "Failed to build timeline: $_"
-        throw
-      }
-    } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
+    # Start background job to retrieve and build timeline (using shared scriptblock)
+    Start-AppJob -Name "Open Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
     -OnCompleted {
       param($job)
       
