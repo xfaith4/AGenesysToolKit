@@ -202,11 +202,11 @@ function New-GcIncidentPacket {
   $endTime = $null
   
   if ($ConversationData) {
-    if ($ConversationData.startTime) {
+    if ($ConversationData.PSObject.Properties['startTime'] -and $ConversationData.startTime) {
       $startTime = $ConversationData.startTime
       $summaryLines += "- **Started:** $startTime"
     }
-    if ($ConversationData.endTime) {
+    if ($ConversationData.PSObject.Properties['endTime'] -and $ConversationData.endTime) {
       $endTime = $ConversationData.endTime
       $summaryLines += "- **Ended:** $endTime"
       
@@ -222,7 +222,7 @@ function New-GcIncidentPacket {
         }
       }
     }
-    if ($ConversationData.participants) {
+    if ($ConversationData.PSObject.Properties['participants'] -and $ConversationData.participants) {
       $summaryLines += "- **Participants:** $($ConversationData.participants.Count)"
     }
   }
