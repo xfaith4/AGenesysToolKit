@@ -828,24 +828,67 @@ function New-ConversationTimelineView {
     $conv = $txtConv.Text.Trim()
     if (-not $conv) { $conv = "c-unknown" }
 
-    Queue-Job -Name "Export Incident Packet (Timeline) — $conv" -Type 'Export' -DurationMs 1400 -OnComplete {
-      $file = Join-Path -Path $script:ArtifactsDir -ChildPath "incident-packet-$($conv)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-      @(
-        "Incident Packet (mock)",
-        "ConversationId: $conv",
-        "Generated: $(Get-Date)",
-        "",
-        "Contents would include:",
-        "- conversation summary JSON",
-        "- timeline events",
-        "- media stats (MOS, jitter, packet loss)",
-        "- WebRTC error codes",
-        "- subscription event slice + transcript (if applicable)"
-      ) | Set-Content -Path $file -Encoding UTF8
+    if (-not $script:AppState.AccessToken) {
+      [System.Windows.MessageBox]::Show(
+        "Please log in first to export real conversation data.",
+        "Authentication Required",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      
+      # Fallback to mock export
+      Queue-Job -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -DurationMs 1400 -OnComplete {
+        $file = Join-Path -Path $script:ArtifactsDir -ChildPath "incident-packet-mock-$($conv)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+        @(
+          "Incident Packet (mock)",
+          "ConversationId: $conv",
+          "Generated: $(Get-Date)",
+          "",
+          "NOTE: This is a mock packet. Log in to export real conversation data."
+        ) | Set-Content -Path $file -Encoding UTF8
 
-      Add-ArtifactAndNotify -Name "Incident Packet — $conv" -Path $file -ToastTitle 'Export complete'
-      Set-Status "Exported incident packet (mock): $file"
-    } | Out-Null
+        Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
+        Set-Status "Exported mock incident packet: $file"
+      } | Out-Null
+      
+      Refresh-HeaderStats
+      return
+    }
+
+    # Real export using ArtifactGenerator
+    Queue-RealJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
+      param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
+      
+      try {
+        # Export packet
+        $packet = Export-GcConversationPacket `
+          -ConversationId $conversationId `
+          -Region $region `
+          -AccessToken $accessToken `
+          -OutputDirectory $artifactsDir `
+          -SubscriptionEvents $eventBuffer `
+          -CreateZip
+        
+        return $packet
+      } catch {
+        Write-Error "Failed to export packet: $_"
+        return $null
+      }
+    } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
+    -OnComplete {
+      param($job)
+      
+      if ($job.Result) {
+        $packet = $job.Result
+        $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
+        $artifactName = "Incident Packet — $($packet.ConversationId)"
+        
+        Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
+        Set-Status "Exported incident packet: $artifactPath"
+      } else {
+        Set-Status "Failed to export packet. See job logs for details."
+      }
+    }
 
     Refresh-HeaderStats
   })
@@ -1103,25 +1146,71 @@ function New-SubscriptionsView {
   $h.BtnExportPacket.Add_Click({
     $conv = if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') { $h.TxtConv.Text } else { "c-$(Get-Random -Minimum 100000 -Maximum 999999)" }
 
-    Queue-Job -Name "Export Incident Packet (Subscription) — $conv" -Type 'Export' -DurationMs 1400 -OnComplete {
-      $file = Join-Path -Path $script:ArtifactsDir -ChildPath "incident-packet-sub-$($conv)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-      @(
-        "Incident Packet (mock) — Subscription Evidence",
-        "ConversationId: $conv",
-        "Generated: $(Get-Date)",
-        "",
-        "Would include:",
-        "- subscription event slice (NDJSON)",
-        "- transcript.txt (stitched)",
-        "- agent_assist_cards.json",
-        "- summary.md / summary.html",
-        "- any pinned events",
-        "- correlation IDs for follow-up"
-      ) | Set-Content -Path $file -Encoding UTF8
+    if (-not $script:AppState.AccessToken) {
+      [System.Windows.MessageBox]::Show(
+        "Please log in first to export real conversation data.",
+        "Authentication Required",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      
+      # Fallback to mock export
+      Queue-Job -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -DurationMs 1400 -OnComplete {
+        $file = Join-Path -Path $script:ArtifactsDir -ChildPath "incident-packet-mock-$($conv)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+        @(
+          "Incident Packet (mock) — Subscription Evidence",
+          "ConversationId: $conv",
+          "Generated: $(Get-Date)",
+          "",
+          "NOTE: This is a mock packet. Log in to export real conversation data.",
+          ""
+        ) | Set-Content -Path $file -Encoding UTF8
 
-      Add-ArtifactAndNotify -Name "Incident Packet (Sub) — $conv" -Path $file -ToastTitle 'Export complete'
-      Set-Status "Exported incident packet (mock): $file"
-    } | Out-Null
+        Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
+        Set-Status "Exported mock incident packet: $file"
+      } | Out-Null
+      
+      Refresh-HeaderStats
+      return
+    }
+
+    # Real export using ArtifactGenerator
+    Queue-RealJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
+      param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
+      
+      try {
+        # Build subscription events from buffer
+        $subscriptionEvents = $eventBuffer
+        
+        # Export packet
+        $packet = Export-GcConversationPacket `
+          -ConversationId $conversationId `
+          -Region $region `
+          -AccessToken $accessToken `
+          -OutputDirectory $artifactsDir `
+          -SubscriptionEvents $subscriptionEvents `
+          -CreateZip
+        
+        return $packet
+      } catch {
+        Write-Error "Failed to export packet: $_"
+        return $null
+      }
+    } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
+    -OnComplete {
+      param($job)
+      
+      if ($job.Result) {
+        $packet = $job.Result
+        $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
+        $artifactName = "Incident Packet — $($packet.ConversationId)"
+        
+        Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
+        Set-Status "Exported incident packet: $artifactPath"
+      } else {
+        Set-Status "Failed to export packet. See job logs for details."
+      }
+    }
 
     Refresh-HeaderStats
   })
