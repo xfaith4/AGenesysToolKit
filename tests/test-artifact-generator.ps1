@@ -44,10 +44,14 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Test 2: Create mock packet" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-$tempDir = if ($env:TEMP) {
-  Join-Path -Path $env:TEMP -ChildPath "test-artifacts-$(Get-Date -Format 'yyyyMMddHHmmss')"
+$tempDir = if ($IsWindows -or $env:TEMP) {
+  if ($env:TEMP) {
+    Join-Path -Path $env:TEMP -ChildPath "test-artifacts-$(Get-Date -Format 'yyyyMMddHHmmss')"
+  } else {
+    Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "test-artifacts-$(Get-Date -Format 'yyyyMMddHHmmss')"
+  }
 } else {
-  Join-Path -Path '/tmp' -ChildPath "test-artifacts-$(Get-Date -Format 'yyyyMMddHHmmss')"
+  Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "test-artifacts-$(Get-Date -Format 'yyyyMMddHHmmss')"
 }
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 Write-Host "Test directory: $tempDir"

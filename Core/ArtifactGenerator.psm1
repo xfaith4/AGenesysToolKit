@@ -330,7 +330,7 @@ function New-GcIncidentPacket {
   
   foreach ($key in $files.Keys | Sort-Object) {
     $fileName = Split-Path -Leaf $files[$key]
-    $summaryLines += "- ``$fileName`` - $key data"
+    $summaryLines += "- `$fileName` - $key data"
   }
   
   $summaryLines | Set-Content -Path $summaryPath -Encoding UTF8
