@@ -490,9 +490,9 @@ function Invoke-AppGcRequest {
     [int] $RetryDelaySeconds = 2
   )
 
-  # Validate AppState is available
-  if (-not (Get-Variable -Name 'AppState' -Scope Script -ErrorAction SilentlyContinue)) {
-    throw "AppState not found. Invoke-AppGcRequest requires `$script:AppState to be initialized by the application."
+  # Validate AppState is available and properly set
+  if (-not $script:AppState) {
+    throw "AppState not found. Invoke-AppGcRequest requires AppState to be initialized via Set-GcAppState."
   }
 
   # Validate required AppState properties
@@ -530,14 +530,19 @@ function Invoke-AppGcRequest {
     # Enhanced error messages for common issues
     $errorMessage = $_.Exception.Message
     
-    # Check for region-related errors
-    if ($errorMessage -match 'Unable to connect|could not be resolved|404') {
+    # Check for DNS/connectivity errors (region misconfiguration)
+    if ($errorMessage -match 'Unable to connect|could not be resolved|Name or service not known') {
       throw "Failed to connect to region '$instanceName'. Please verify the region is correct. Original error: $errorMessage"
     }
     
     # Check for auth errors
     if ($errorMessage -match '401|Unauthorized') {
       throw "Authentication failed. Token may be invalid or expired. Original error: $errorMessage"
+    }
+    
+    # Check for endpoint not found (may indicate wrong API version or region)
+    if ($errorMessage -match '404|Not Found') {
+      throw "API endpoint not found. This may indicate an incorrect region or API path. Original error: $errorMessage"
     }
     
     # Re-throw with context

@@ -1391,8 +1391,7 @@ $BtnTestToken.Add_Click({
   
   # Queue background job to test token via GET /api/v2/users/me
   Queue-RealJob -Name "Test Token" -Type "Auth" -ScriptBlock {
-    param($accessToken, $region)
-    
+    # Note: No parameters needed - Invoke-AppGcRequest reads from AppState
     try {
       # STEP 1: Call GET /api/v2/users/me using Invoke-AppGcRequest
       # The wrapper automatically injects AccessToken and InstanceName from AppState
@@ -1420,8 +1419,7 @@ $BtnTestToken.Add_Click({
         StatusCode = $statusCode
       }
     }
-  } -ArgumentList @($script:AppState.AccessToken, $script:AppState.Region) `
-  -OnComplete {
+  } -OnComplete {
     param($job)
     
     if ($job.Result -and $job.Result.Success) {
@@ -1460,9 +1458,13 @@ $BtnTestToken.Add_Click({
         $userMessage = "Token Invalid or Expired"
         $detailMessage = "The access token is not valid or has expired. Please log in again."
       }
-      elseif ($errorMsg -match "Unable to connect|could not be resolved|404") {
-        $userMessage = "Wrong Region"
-        $detailMessage = "Cannot connect to region '$($script:AppState.Region)'. Please verify the region is correct.`n`nError: $errorMsg"
+      elseif ($errorMsg -match "Unable to connect|could not be resolved|Name or service not known") {
+        $userMessage = "Connection Failed"
+        $detailMessage = "Cannot connect to region '$($script:AppState.Region)'. Please verify:`n• Region is correct`n• Network connection is available`n`nError: $errorMsg"
+      }
+      elseif ($errorMsg -match "404|Not Found") {
+        $userMessage = "Endpoint Not Found"
+        $detailMessage = "API endpoint not found. This may indicate:`n• Wrong region configured`n• API version mismatch`n`nError: $errorMsg"
       }
       elseif ($errorMsg -match "403|Forbidden") {
         $userMessage = "Permission Denied"
