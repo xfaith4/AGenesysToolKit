@@ -1236,6 +1236,11 @@ function New-ConversationTimelineView {
     # Real export using ArtifactGenerator with Start-AppJob
     Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
+      
+      # Import required modules in runspace
+      $scriptRoot = Split-Path -Parent $PSCommandPath
+      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
 
       try {
         # Export packet
@@ -1776,6 +1781,11 @@ function New-SubscriptionsView {
     # Real export using ArtifactGenerator with Start-AppJob
     Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
+      
+      # Import required modules in runspace
+      $scriptRoot = Split-Path -Parent $PSCommandPath
+      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
 
       try {
         # Build subscription events from buffer
