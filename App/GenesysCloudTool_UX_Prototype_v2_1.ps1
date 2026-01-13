@@ -16,6 +16,7 @@ Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'RoutingPeople.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConfigExport.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'Analytics.psm1') -Force
 
 # -----------------------------
 # XAML Helpers
@@ -3624,6 +3625,267 @@ function New-IncidentPacketView {
   return $view
 }
 
+function New-AbandonExperienceView {
+  <#
+  .SYNOPSIS
+    Creates the Abandon & Experience module view with abandonment metrics and analysis.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <StackPanel>
+          <TextBlock Text="Abandonment &amp; Experience Analysis" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock Text="Analyze abandonment metrics and customer experience" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="Date Range:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+          <ComboBox x:Name="CmbAbandonDateRange" Width="150" Height="26" Margin="0,0,8,0" SelectedIndex="0">
+            <ComboBoxItem Content="Last 1 hour"/>
+            <ComboBoxItem Content="Last 6 hours"/>
+            <ComboBoxItem Content="Last 24 hours"/>
+            <ComboBoxItem Content="Last 7 days"/>
+          </ComboBox>
+          <Button x:Name="BtnAbandonQuery" Content="Query Metrics" Width="120" Height="32"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <StackPanel Margin="0,0,12,0">
+          <TextBlock Text="Abandonment Rate" FontSize="12" Foreground="#FF6B7280" Margin="0,0,0,4"/>
+          <TextBlock x:Name="TxtAbandonRate" Text="--" FontSize="24" FontWeight="Bold" Foreground="#FF111827"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Margin="0,0,12,0">
+          <TextBlock Text="Total Offered" FontSize="12" Foreground="#FF6B7280" Margin="0,0,0,4"/>
+          <TextBlock x:Name="TxtTotalOffered" Text="--" FontSize="24" FontWeight="Bold" Foreground="#FF111827"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="2" Margin="0,0,12,0">
+          <TextBlock Text="Avg Wait Time" FontSize="12" Foreground="#FF6B7280" Margin="0,0,0,4"/>
+          <TextBlock x:Name="TxtAvgWaitTime" Text="--" FontSize="24" FontWeight="Bold" Foreground="#FF111827"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="3">
+          <TextBlock Text="Avg Handle Time" FontSize="12" Foreground="#FF6B7280" Margin="0,0,0,4"/>
+          <TextBlock x:Name="TxtAvgHandleTime" Text="--" FontSize="24" FontWeight="Bold" Foreground="#FF111827"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="2" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Abandoned Conversations" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock x:Name="TxtAbandonCount" Text="(0 conversations)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+          <Button x:Name="BtnAbandonExport" Content="Export JSON" Width="100" Height="26" Margin="12,0,0,0" IsEnabled="False"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridAbandonedConversations" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Conversation ID" Binding="{Binding ConversationId}" Width="250"/>
+            <DataGridTextColumn Header="Start Time" Binding="{Binding StartTime}" Width="180"/>
+            <DataGridTextColumn Header="Queue" Binding="{Binding QueueName}" Width="180"/>
+            <DataGridTextColumn Header="Wait Time" Binding="{Binding WaitTime}" Width="120"/>
+            <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="100"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    CmbAbandonDateRange        = $view.FindName('CmbAbandonDateRange')
+    BtnAbandonQuery            = $view.FindName('BtnAbandonQuery')
+    TxtAbandonRate             = $view.FindName('TxtAbandonRate')
+    TxtTotalOffered            = $view.FindName('TxtTotalOffered')
+    TxtAvgWaitTime             = $view.FindName('TxtAvgWaitTime')
+    TxtAvgHandleTime           = $view.FindName('TxtAvgHandleTime')
+    TxtAbandonCount            = $view.FindName('TxtAbandonCount')
+    BtnAbandonExport           = $view.FindName('BtnAbandonExport')
+    GridAbandonedConversations = $view.FindName('GridAbandonedConversations')
+  }
+
+  $script:AbandonmentData = $null
+  $script:AbandonedConversations = @()
+
+  # Query button click handler
+  $h.BtnAbandonQuery.Add_Click({
+    Set-Status "Querying abandonment metrics..."
+    $h.BtnAbandonQuery.IsEnabled = $false
+    $h.BtnAbandonExport.IsEnabled = $false
+
+    # Get date range
+    $now = Get-Date
+    $startTime = switch ($h.CmbAbandonDateRange.SelectedIndex) {
+      0 { $now.AddHours(-1) }
+      1 { $now.AddHours(-6) }
+      2 { $now.AddHours(-24) }
+      3 { $now.AddDays(-7) }
+      default { $now.AddHours(-24) }
+    }
+    $endTime = $now
+
+    $coreAnalyticsPath = Join-Path -Path $coreRoot -ChildPath 'Analytics.psm1'
+    $coreHttpPath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
+
+    Start-AppJob -Name "Query Abandonment Metrics" -Type "Query" -ScriptBlock {
+      param($analyticsPath, $httpPath, $accessToken, $region, $start, $end)
+      
+      Import-Module $httpPath -Force
+      Import-Module $analyticsPath -Force
+      
+      $metrics = Get-GcAbandonmentMetrics -StartTime $start -EndTime $end `
+        -AccessToken $accessToken -InstanceName $region
+      
+      $conversations = Search-GcAbandonedConversations -StartTime $start -EndTime $end `
+        -AccessToken $accessToken -InstanceName $region -MaxItems 100
+      
+      return @{
+        metrics = $metrics
+        conversations = $conversations
+      }
+    } -ArgumentList @($coreAnalyticsPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region, $startTime, $endTime) -OnCompleted {
+      param($job)
+      $h.BtnAbandonQuery.IsEnabled = $true
+
+      if ($job.Result -and $job.Result.metrics) {
+        $metrics = $job.Result.metrics
+        $script:AbandonmentData = $metrics
+        
+        # Update metric cards
+        $h.TxtAbandonRate.Text = "$($metrics.abandonmentRate)%"
+        $h.TxtTotalOffered.Text = "$($metrics.totalOffered)"
+        $h.TxtAvgWaitTime.Text = "$($metrics.avgWaitTime)s"
+        $h.TxtAvgHandleTime.Text = "$($metrics.avgHandleTime)s"
+        
+        # Update abandoned conversations grid
+        if ($job.Result.conversations -and $job.Result.conversations.Count -gt 0) {
+          $script:AbandonedConversations = $job.Result.conversations
+          
+          $displayData = $job.Result.conversations | ForEach-Object {
+            $queueName = 'N/A'
+            $waitTime = 'N/A'
+            $direction = 'N/A'
+            
+            if ($_.participants) {
+              foreach ($participant in $_.participants) {
+                if ($participant.sessions) {
+                  foreach ($session in $participant.sessions) {
+                    if ($session.segments) {
+                      foreach ($segment in $session.segments) {
+                        if ($segment.queueName) { $queueName = $segment.queueName }
+                        if ($segment.segmentType -eq 'interact') {
+                          if ($segment.properties -and $segment.properties.direction) {
+                            $direction = $segment.properties.direction
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            
+            [PSCustomObject]@{
+              ConversationId = $_.conversationId
+              StartTime = if ($_.conversationStart) { $_.conversationStart } else { 'N/A' }
+              QueueName = $queueName
+              WaitTime = $waitTime
+              Direction = $direction
+            }
+          }
+          
+          $h.GridAbandonedConversations.ItemsSource = $displayData
+          $h.TxtAbandonCount.Text = "($($job.Result.conversations.Count) conversations)"
+          $h.BtnAbandonExport.IsEnabled = $true
+        } else {
+          $h.GridAbandonedConversations.ItemsSource = @()
+          $h.TxtAbandonCount.Text = "(0 conversations)"
+        }
+        
+        Set-Status "Abandonment metrics loaded successfully."
+      } else {
+        # Reset display
+        $h.TxtAbandonRate.Text = "--"
+        $h.TxtTotalOffered.Text = "--"
+        $h.TxtAvgWaitTime.Text = "--"
+        $h.TxtAvgHandleTime.Text = "--"
+        $h.GridAbandonedConversations.ItemsSource = @()
+        $h.TxtAbandonCount.Text = "(0 conversations)"
+        Set-Status "Failed to load abandonment metrics."
+      }
+    }
+  })
+
+  # Export button click handler
+  $h.BtnAbandonExport.Add_Click({
+    if (-not $script:AbandonmentData -and (-not $script:AbandonedConversations -or $script:AbandonedConversations.Count -eq 0)) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "abandonment_analysis_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $exportData = @{
+        metrics = $script:AbandonmentData
+        conversations = $script:AbandonedConversations
+        timestamp = (Get-Date).ToString('o')
+      }
+      
+      $exportData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported abandonment analysis to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  return $view
+}
+
 function New-FlowsView {
   <#
   .SYNOPSIS
@@ -5817,6 +6079,10 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Conversations::Incident Packet' {
       $TxtSubtitle.Text = 'Generate comprehensive incident packets'
       $MainHost.Content = (New-IncidentPacketView)
+    }
+    'Conversations::Abandon & Experience' {
+      $TxtSubtitle.Text = 'Analyze abandonment metrics and customer experience'
+      $MainHost.Content = (New-AbandonExperienceView)
     }
     'Orchestration::Flows' {
       $TxtSubtitle.Text = 'View and export Architect flows'
