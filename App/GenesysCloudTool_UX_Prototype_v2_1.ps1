@@ -2964,7 +2964,7 @@ function New-DataActionsView {
           [PSCustomObject]@{
             Name = if ($_.name) { $_.name } else { 'N/A' }
             Category = if ($_.category) { $_.category } else { 'N/A' }
-            Status = if ($_.secure -eq $false) { 'Active' } else { 'Active' }
+            Status = 'Enabled'
             Integration = if ($_.integrationId) { $_.integrationId } else { 'N/A' }
             Modified = if ($_.modifiedDate) { $_.modifiedDate } else { '' }
             ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
@@ -3028,7 +3028,7 @@ function New-DataActionsView {
 
     try {
       $script:DataActionsData | Select-Object name, category, 
-        @{N='status';E={if ($_.secure -eq $false) {'Active'} else {'Active'}}},
+        @{N='status';E={'Enabled'}},
         integrationId, modifiedDate, @{N='modifiedBy';E={if ($_.modifiedBy.name) {$_.modifiedBy.name} else {'N/A'}}} |
         Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
       Set-Status "Exported $($script:DataActionsData.Count) data actions to $filename"
@@ -3050,7 +3050,7 @@ function New-DataActionsView {
         [PSCustomObject]@{
           Name = if ($_.name) { $_.name } else { 'N/A' }
           Category = if ($_.category) { $_.category } else { 'N/A' }
-          Status = if ($_.secure -eq $false) { 'Active' } else { 'Active' }
+          Status = 'Enabled'
           Integration = if ($_.integrationId) { $_.integrationId } else { 'N/A' }
           Modified = if ($_.modifiedDate) { $_.modifiedDate } else { '' }
           ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
@@ -3070,7 +3070,7 @@ function New-DataActionsView {
       [PSCustomObject]@{
         Name = if ($_.name) { $_.name } else { 'N/A' }
         Category = if ($_.category) { $_.category } else { 'N/A' }
-        Status = if ($_.secure -eq $false) { 'Active' } else { 'Active' }
+        Status = 'Enabled'
         Integration = if ($_.integrationId) { $_.integrationId } else { 'N/A' }
         Modified = if ($_.modifiedDate) { $_.modifiedDate } else { '' }
         ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
@@ -3261,6 +3261,44 @@ function New-QueuesView {
     }
   })
 
+  $h.TxtQueueSearch.Add_TextChanged({
+    if (-not $script:QueuesData -or $script:QueuesData.Count -eq 0) { return }
+
+    $searchText = $h.TxtQueueSearch.Text.ToLower()
+    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search queues...") {
+      $displayData = $script:QueuesData | ForEach-Object {
+        [PSCustomObject]@{
+          Name = if ($_.name) { $_.name } else { 'N/A' }
+          Division = if ($_.division -and $_.division.name) { $_.division.name } else { 'N/A' }
+          Members = if ($_.memberCount) { $_.memberCount } else { 0 }
+          Active = if ($_.mediaSettings) { 'Yes' } else { 'No' }
+          Modified = if ($_.dateModified) { $_.dateModified } else { '' }
+        }
+      }
+      $h.GridQueues.ItemsSource = $displayData
+      $h.TxtQueueCount.Text = "($($script:QueuesData.Count) queues)"
+      return
+    }
+
+    $filtered = $script:QueuesData | Where-Object {
+      $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
+      $json -like "*$searchText*"
+    }
+
+    $displayData = $filtered | ForEach-Object {
+      [PSCustomObject]@{
+        Name = if ($_.name) { $_.name } else { 'N/A' }
+        Division = if ($_.division -and $_.division.name) { $_.division.name } else { 'N/A' }
+        Members = if ($_.memberCount) { $_.memberCount } else { 0 }
+        Active = if ($_.mediaSettings) { 'Yes' } else { 'No' }
+        Modified = if ($_.dateModified) { $_.dateModified } else { '' }
+      }
+    }
+
+    $h.GridQueues.ItemsSource = $displayData
+    $h.TxtQueueCount.Text = "($($filtered.Count) queues)"
+  })
+
   $h.TxtQueueSearch.Add_GotFocus({
     if ($h.TxtQueueSearch.Text -eq "Search queues...") {
       $h.TxtQueueSearch.Text = ""
@@ -3433,6 +3471,40 @@ function New-SkillsView {
     } catch {
       Set-Status "Failed to export: $_"
     }
+  })
+
+  $h.TxtSkillSearch.Add_TextChanged({
+    if (-not $script:SkillsData -or $script:SkillsData.Count -eq 0) { return }
+
+    $searchText = $h.TxtSkillSearch.Text.ToLower()
+    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search skills...") {
+      $displayData = $script:SkillsData | ForEach-Object {
+        [PSCustomObject]@{
+          Name = if ($_.name) { $_.name } else { 'N/A' }
+          State = if ($_.state) { $_.state } else { 'active' }
+          Modified = if ($_.dateModified) { $_.dateModified } else { '' }
+        }
+      }
+      $h.GridSkills.ItemsSource = $displayData
+      $h.TxtSkillCount.Text = "($($script:SkillsData.Count) skills)"
+      return
+    }
+
+    $filtered = $script:SkillsData | Where-Object {
+      $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
+      $json -like "*$searchText*"
+    }
+
+    $displayData = $filtered | ForEach-Object {
+      [PSCustomObject]@{
+        Name = if ($_.name) { $_.name } else { 'N/A' }
+        State = if ($_.state) { $_.state } else { 'active' }
+        Modified = if ($_.dateModified) { $_.dateModified } else { '' }
+      }
+    }
+
+    $h.GridSkills.ItemsSource = $displayData
+    $h.TxtSkillCount.Text = "($($filtered.Count) skills)"
   })
 
   $h.TxtSkillSearch.Add_GotFocus({
