@@ -15,6 +15,7 @@ Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -F
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'RoutingPeople.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConfigExport.psm1') -Force
 
 # -----------------------------
 # XAML Helpers
@@ -3870,6 +3871,231 @@ function New-DataActionsView {
   return $view
 }
 
+function New-ConfigExportView {
+  <#
+  .SYNOPSIS
+    Creates the Configuration Export module view for exporting Genesys Cloud configuration.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+
+          <StackPanel>
+            <TextBlock Text="Configuration Export" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+            <TextBlock Text="Export Genesys Cloud configuration to JSON for backup or migration" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+          </StackPanel>
+
+          <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+            <Button x:Name="BtnExportSelected" Content="Export Selected" Width="130" Height="32" Margin="0,0,8,0"/>
+            <Button x:Name="BtnExportAll" Content="Export All" Width="110" Height="32"/>
+          </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="1" Margin="0,12,0,0">
+          <TextBlock Text="Select configuration types to export:" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="200"/>
+              <ColumnDefinition Width="200"/>
+              <ColumnDefinition Width="200"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <CheckBox x:Name="ChkFlows" Grid.Column="0" Content="Flows" IsChecked="True" Margin="0,0,0,8"/>
+            <CheckBox x:Name="ChkQueues" Grid.Column="1" Content="Queues" IsChecked="True" Margin="0,0,0,8"/>
+            <CheckBox x:Name="ChkSkills" Grid.Column="2" Content="Skills" IsChecked="True" Margin="0,0,0,8"/>
+            <CheckBox x:Name="ChkDataActions" Grid.Column="3" Content="Data Actions" IsChecked="True" Margin="0,0,0,8"/>
+          </Grid>
+          <CheckBox x:Name="ChkCreateZip" Content="Create ZIP archive" IsChecked="True" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Export History" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock x:Name="TxtExportCount" Text="(0 exports)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+          <Button x:Name="BtnOpenFolder" Content="Open Folder" Width="110" Height="26" Margin="12,0,0,0"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridExports" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Export Time" Binding="{Binding ExportTime}" Width="160"/>
+            <DataGridTextColumn Header="Types Exported" Binding="{Binding Types}" Width="250"/>
+            <DataGridTextColumn Header="Total Items" Binding="{Binding TotalItems}" Width="100"/>
+            <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    BtnExportSelected = $view.FindName('BtnExportSelected')
+    BtnExportAll      = $view.FindName('BtnExportAll')
+    ChkFlows          = $view.FindName('ChkFlows')
+    ChkQueues         = $view.FindName('ChkQueues')
+    ChkSkills         = $view.FindName('ChkSkills')
+    ChkDataActions    = $view.FindName('ChkDataActions')
+    ChkCreateZip      = $view.FindName('ChkCreateZip')
+    TxtExportCount    = $view.FindName('TxtExportCount')
+    BtnOpenFolder     = $view.FindName('BtnOpenFolder')
+    GridExports       = $view.FindName('GridExports')
+  }
+
+  # Track export history
+  if (-not (Get-Variable -Name ConfigExportHistory -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:ConfigExportHistory = @()
+  }
+
+  function Refresh-ExportHistory {
+    if ($script:ConfigExportHistory.Count -eq 0) {
+      $h.GridExports.ItemsSource = @()
+      $h.TxtExportCount.Text = "(0 exports)"
+      return
+    }
+
+    $displayData = $script:ConfigExportHistory | ForEach-Object {
+      [PSCustomObject]@{
+        ExportTime = $_.ExportTime.ToString('yyyy-MM-dd HH:mm:ss')
+        Types = $_.Types -join ', '
+        TotalItems = $_.TotalItems
+        Path = $_.Path
+        ExportData = $_
+      }
+    }
+
+    $h.GridExports.ItemsSource = $displayData
+    $h.TxtExportCount.Text = "($($script:ConfigExportHistory.Count) exports)"
+  }
+
+  $h.BtnExportSelected.Add_Click({
+    # Check if any type is selected
+    if (-not ($h.ChkFlows.IsChecked -or $h.ChkQueues.IsChecked -or $h.ChkSkills.IsChecked -or $h.ChkDataActions.IsChecked)) {
+      [System.Windows.MessageBox]::Show(
+        "Please select at least one configuration type to export.",
+        "No Type Selected",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      return
+    }
+
+    Set-Status "Exporting configuration..."
+    $h.BtnExportSelected.IsEnabled = $false
+    $h.BtnExportAll.IsEnabled = $false
+
+    $includeFlows = $h.ChkFlows.IsChecked
+    $includeQueues = $h.ChkQueues.IsChecked
+    $includeSkills = $h.ChkSkills.IsChecked
+    $includeDataActions = $h.ChkDataActions.IsChecked
+    $createZip = $h.ChkCreateZip.IsChecked
+
+    Start-AppJob -Name "Export Configuration" -Type "Export" -ScriptBlock {
+      param($accessToken, $instanceName, $artifactsDir, $includeFlows, $includeQueues, $includeSkills, $includeDataActions, $createZip)
+      
+      # Import required modules in runspace
+      $scriptRoot = Split-Path -Parent $PSCommandPath
+      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConfigExport.psm1') -Force
+      Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
+      
+      Export-GcCompleteConfig `
+        -AccessToken $accessToken `
+        -InstanceName $instanceName `
+        -OutputDirectory $artifactsDir `
+        -IncludeFlows:$includeFlows `
+        -IncludeQueues:$includeQueues `
+        -IncludeSkills:$includeSkills `
+        -IncludeDataActions:$includeDataActions `
+        -CreateZip:$createZip
+    } -ArgumentList @($script:AppState.AccessToken, $script:AppState.Region, $script:ArtifactsDir, $includeFlows, $includeQueues, $includeSkills, $includeDataActions, $createZip) -OnCompleted {
+      param($job)
+      $h.BtnExportSelected.IsEnabled = $true
+      $h.BtnExportAll.IsEnabled = $true
+
+      if ($job.Result) {
+        $export = $job.Result
+        $totalItems = ($export.Results | ForEach-Object { $_.Count } | Measure-Object -Sum).Sum
+        $types = $export.Results | ForEach-Object { $_.Type }
+        
+        $exportRecord = @{
+          ExportTime = Get-Date
+          Types = $types
+          TotalItems = $totalItems
+          Path = if ($export.ZipPath) { $export.ZipPath } else { $export.ExportDirectory }
+          ExportData = $export
+        }
+        
+        $script:ConfigExportHistory += $exportRecord
+        Refresh-ExportHistory
+        
+        $displayPath = if ($export.ZipPath) { Split-Path $export.ZipPath -Leaf } else { Split-Path $export.ExportDirectory -Leaf }
+        Set-Status "Configuration exported: $displayPath ($totalItems items)"
+        Show-Snackbar "Export complete! Saved to artifacts/$displayPath" -Action "Open Folder" -ActionCallback {
+          Start-Process (Split-Path $exportRecord.Path -Parent)
+        }
+      } else {
+        Set-Status "Failed to export configuration. See job logs for details."
+      }
+    }
+  })
+
+  $h.BtnExportAll.Add_Click({
+    # Select all types
+    $h.ChkFlows.IsChecked = $true
+    $h.ChkQueues.IsChecked = $true
+    $h.ChkSkills.IsChecked = $true
+    $h.ChkDataActions.IsChecked = $true
+    
+    # Trigger export
+    $h.BtnExportSelected.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent))
+  })
+
+  $h.BtnOpenFolder.Add_Click({
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (Test-Path $artifactsDir) {
+      Start-Process $artifactsDir
+      Set-Status "Opened artifacts folder."
+    } else {
+      Set-Status "Artifacts folder not found."
+    }
+  })
+
+  Refresh-ExportHistory
+
+  return $view
+}
+
 function New-QueuesView {
   <#
   .SYNOPSIS
@@ -5113,6 +5339,10 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Orchestration::Data Actions' {
       $TxtSubtitle.Text = 'View and export data actions'
       $MainHost.Content = (New-DataActionsView)
+    }
+    'Orchestration::Config Export' {
+      $TxtSubtitle.Text = 'Export configuration to JSON for backup or migration'
+      $MainHost.Content = (New-ConfigExportView)
     }
     'Routing & People::Queues' {
       $TxtSubtitle.Text = 'View and export routing queues'
