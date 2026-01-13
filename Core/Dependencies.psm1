@@ -6,6 +6,15 @@ function Search-GcFlowReferences {
   .SYNOPSIS
     Search flows for references to a specific object (queue, data action, etc.).
   
+  .DESCRIPTION
+    This function performs a text-based search through flow configurations to find
+    references to a specific object. Note: This implementation makes individual API
+    calls for each flow's configuration. For large environments with many flows,
+    this may be slow and could approach API rate limits.
+    
+    Future enhancement: Implement batching, parallel processing with throttling,
+    or caching mechanisms to improve performance.
+  
   .PARAMETER ObjectId
     The ID of the object to search for.
   
@@ -35,6 +44,8 @@ function Search-GcFlowReferences {
     }
     
     # Search flow configurations for object ID
+    # NOTE: This makes individual API calls per flow. For orgs with many flows,
+    # this can be slow. Future enhancement: parallel processing with throttling.
     $references = @()
     
     foreach ($flow in $flows) {

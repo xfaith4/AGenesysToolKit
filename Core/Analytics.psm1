@@ -59,7 +59,8 @@ function Get-GcAbandonmentMetrics {
     $totalAbandoned = 0
     $totalWaitTime = 0
     $totalHandleTime = 0
-    $queueCount = 0
+    $waitTimeCount = 0
+    $handleTimeCount = 0
     
     foreach ($result in $results.results) {
       if ($result.data) {
@@ -70,22 +71,23 @@ function Get-GcAbandonmentMetrics {
             'tWait' { 
               if ($dataPoint.stats.sum -and $dataPoint.stats.count -gt 0) {
                 $totalWaitTime += $dataPoint.stats.sum
+                $waitTimeCount += $dataPoint.stats.count
               }
             }
             'tHandle' { 
               if ($dataPoint.stats.sum -and $dataPoint.stats.count -gt 0) {
                 $totalHandleTime += $dataPoint.stats.sum
+                $handleTimeCount += $dataPoint.stats.count
               }
             }
           }
         }
-        $queueCount++
       }
     }
     
     $abandonmentRate = if ($totalOffered -gt 0) { [Math]::Round(($totalAbandoned / $totalOffered) * 100, 2) } else { 0 }
-    $avgWaitTime = if ($totalOffered -gt 0) { [Math]::Round($totalWaitTime / $totalOffered / 1000, 1) } else { 0 }
-    $avgHandleTime = if ($totalOffered -gt 0) { [Math]::Round($totalHandleTime / $totalOffered / 1000, 1) } else { 0 }
+    $avgWaitTime = if ($waitTimeCount -gt 0) { [Math]::Round($totalWaitTime / $waitTimeCount / 1000, 1) } else { 0 }
+    $avgHandleTime = if ($handleTimeCount -gt 0) { [Math]::Round($totalHandleTime / $handleTimeCount / 1000, 1) } else { 0 }
     
     return @{
       abandonmentRate = $abandonmentRate
