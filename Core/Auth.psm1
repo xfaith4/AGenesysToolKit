@@ -309,11 +309,21 @@ function Get-GcAuthConfig {
   <#
   .SYNOPSIS
     Returns the current OAuth configuration.
+  
+  .DESCRIPTION
+    Returns a clone of the current OAuth configuration with guaranteed Scopes property.
+    This prevents null-valued expression errors when accessing Scopes in consuming code.
   #>
   [CmdletBinding()]
   param()
 
-  return $script:GcAuthConfig
+  # Ensure Scopes is always an array (never null)
+  $config = $script:GcAuthConfig.Clone()
+  if (-not $config.Scopes) {
+    $config.Scopes = @()
+  }
+  
+  return $config
 }
 
 function Get-GcPkceChallenge {
@@ -392,7 +402,27 @@ function Start-GcAuthCodeFlow {
   $region = $script:GcAuthConfig.Region
   $clientId = $script:GcAuthConfig.ClientId
   $redirectUri = $script:GcAuthConfig.RedirectUri
-  $scopes = ($script:GcAuthConfig.Scopes -join ' ')
+  
+  # Ensure Scopes is always an array to prevent null-valued expression errors
+  $scopesArray = if ($script:GcAuthConfig.Scopes) { $script:GcAuthConfig.Scopes } else { @() }
+  $scopes = ($scopesArray -join ' ')
+
+  # Validate required configuration
+  if ([string]::IsNullOrWhiteSpace($region)) {
+    $msg = "Auth configuration error: Region is not set."
+    Write-GcAuthDiag -Level ERROR -Message $msg
+    throw $msg
+  }
+  if ([string]::IsNullOrWhiteSpace($clientId)) {
+    $msg = "Auth configuration error: ClientId is not set."
+    Write-GcAuthDiag -Level ERROR -Message $msg
+    throw $msg
+  }
+  if ([string]::IsNullOrWhiteSpace($redirectUri)) {
+    $msg = "Auth configuration error: RedirectUri is not set."
+    Write-GcAuthDiag -Level ERROR -Message $msg
+    throw $msg
+  }
 
   $state = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes([Guid]::NewGuid().ToString())) -replace '=', ''
 

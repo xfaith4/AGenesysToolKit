@@ -698,6 +698,66 @@ $BtnSnackSecondary = Get-El 'BtnSnackSecondary'
 $BtnSnackClose     = Get-El 'BtnSnackClose'
 
 # -----------------------------
+# Control Helpers
+# -----------------------------
+
+function Set-ControlValue {
+  <#
+  .SYNOPSIS
+    Safely sets the value of a WPF control (Text, Content, or SelectedItem).
+  
+  .DESCRIPTION
+    Detects the control type and sets the appropriate property.
+    Handles TextBox, TextBlock, Label, ComboBox, and ContentControl types.
+    Silently skips if control is null or property doesn't exist.
+  
+  .PARAMETER Control
+    WPF control to update
+  
+  .PARAMETER Value
+    Value to set
+  
+  .EXAMPLE
+    Set-ControlValue -Control $TxtSearch -Value "Search text"
+  #>
+  param(
+    [object]$Control,
+    [object]$Value
+  )
+  
+  if ($null -eq $Control) {
+    Write-Verbose "Set-ControlValue: Control is null, skipping"
+    return
+  }
+  
+  $controlType = $Control.GetType().Name
+  
+  try {
+    # Try Text property first (TextBox, TextBlock)
+    if ($Control.PSObject.Properties['Text']) {
+      $Control.Text = $Value
+      return
+    }
+    
+    # Try Content property (Label, Button, ContentControl)
+    if ($Control.PSObject.Properties['Content']) {
+      $Control.Content = $Value
+      return
+    }
+    
+    # Try SelectedItem for ComboBox
+    if ($Control.PSObject.Properties['SelectedItem']) {
+      $Control.SelectedItem = $Value
+      return
+    }
+    
+    Write-Verbose "Set-ControlValue: Control type '$controlType' doesn't have Text, Content, or SelectedItem property"
+  } catch {
+    Write-Warning "Set-ControlValue: Failed to set value on control type '$controlType': $_"
+  }
+}
+
+# -----------------------------
 # UI helpers
 # -----------------------------
 function Set-TopContext {
@@ -6479,14 +6539,14 @@ function New-SubscriptionsView {
   # Clear search placeholder on focus
   $h.TxtSearch.Add_GotFocus({
     if ($h.TxtSearch.Text -eq 'search (conversationId, error, agent…)') {
-      $h.TxtSearch.Text = ''
+      Set-ControlValue -Control $h.TxtSearch -Value ''
     }
   })
 
   # Restore search placeholder on lost focus if empty
   $h.TxtSearch.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtSearch.Text)) {
-      $h.TxtSearch.Text = 'search (conversationId, error, agent…)'
+      Set-ControlValue -Control $h.TxtSearch -Value 'search (conversationId, error, agent…)'
     }
   })
 
