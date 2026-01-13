@@ -34,13 +34,14 @@ Edit the file `App/GenesysCloudTool_UX_Prototype_v2_1.ps1` and update the OAuth 
 ```powershell
 # Initialize Auth Configuration (user should customize these)
 Set-GcAuthConfig `
-  -Region 'mypurecloud.com' `
+  -Region 'usw2.pure.cloud' `
   -ClientId 'YOUR_CLIENT_ID_HERE' `
-  -RedirectUri 'http://localhost:8400/oauth/callback' `
+  -RedirectUri 'http://localhost:8085/oauth/callback' `
   -Scopes @('conversations', 'analytics', 'notifications', 'users')
 ```
 
 Replace:
+
 - `YOUR_CLIENT_ID_HERE` with your actual OAuth Client ID
 - `mypurecloud.com` with your Genesys Cloud region if different (e.g., 'mypurecloud.ie', 'mypurecloud.com.au', 'mypurecloud.jp')
 
@@ -48,9 +49,9 @@ Replace:
 
 ```powershell
 Set-GcAuthConfig `
-  -Region 'mypurecloud.com' `
+  -Region 'usw2.pure.cloud' `
   -ClientId 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' `
-  -RedirectUri 'http://localhost:8400/oauth/callback' `
+  -RedirectUri 'http://localhost:8085/oauth/callback' `
   -Scopes @('conversations', 'analytics', 'notifications', 'users', 'routing')
 ```
 
@@ -88,6 +89,7 @@ If you want to use a token obtained from another source (e.g., Developer Tools, 
 7. If successful, you'll see "Token test: OK. User: [Your Name]"
 
 **Tips for Manual Token Entry:**
+
 - Copy the token exactly as shown in your source (including any line breaks)
 - The dialog will clean up formatting automatically
 - Tokens should be at least 20 characters
@@ -131,7 +133,7 @@ If you see this error when clicking Login, ensure you've updated the `Set-GcAuth
 ### Authentication Fails
 
 - Verify your Client ID is correct
-- Ensure the redirect URI `http://localhost:8400/oauth/callback` is configured in your OAuth client
+- Ensure the redirect URI `http://localhost:8085/oauth/callback` is configured in your OAuth client
 - Check that port 8400 is not in use by another application
 - Verify you're using the correct region
 
@@ -140,18 +142,21 @@ If you see this error when clicking Login, ensure you've updated the `Set-GcAuth
 **Common causes and solutions:**
 
 #### 400 Bad Request
+
 - **Cause**: Token has invalid format or contains line breaks/whitespace
 - **Solution**: Use the Manual Token Entry dialog (click "Test Token" button)
   - The dialog will automatically clean up line breaks and extra whitespace
   - Paste the token as-is from your source; formatting will be handled automatically
 
 #### 401 Unauthorized
+
 - **Cause**: Token is invalid or expired (tokens typically expire after 24 hours)
-- **Solution**: 
+- **Solution**:
   - For OAuth: Click "Login…" again to get a new token
   - For manual tokens: Obtain a fresh token from your source
 
 #### 404 Not Found
+
 - **Cause**: Wrong region configured or API endpoint doesn't exist
 - **Solution**: Verify the region is correct:
   - US West: `usw2.pure.cloud`
@@ -162,6 +167,7 @@ If you see this error when clicking Login, ensure you've updated the `Set-GcAuth
   - Asia Pacific (Tokyo): `mypurecloud.jp`
 
 #### Connection Failed
+
 - **Cause**: Cannot reach the API endpoint
 - **Solution**:
   - Verify network connectivity
@@ -180,6 +186,7 @@ If you see this error when clicking Login, ensure you've updated the `Set-GcAuth
 ### Using Different Regions
 
 Supported regions:
+
 - `mypurecloud.com` - Americas (US East)
 - `mypurecloud.com.au` - Asia Pacific (Sydney)
 - `mypurecloud.ie` - EMEA (Dublin)
@@ -199,6 +206,7 @@ If port 8400 is unavailable, you can use a different port:
 2. Update `Set-GcAuthConfig -RedirectUri` to match
 
 Example:
+
 ```powershell
 Set-GcAuthConfig `
   -Region 'mypurecloud.com' `

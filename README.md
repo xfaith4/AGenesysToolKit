@@ -27,11 +27,13 @@ AGenesysToolKit provides decision-grade insights from Genesys Cloud APIs, logs, 
 Before running the application, you need to configure OAuth credentials. See [CONFIGURATION.md](docs/CONFIGURATION.md) for detailed setup instructions.
 
 Quick summary:
+
 1. Create an OAuth client in Genesys Cloud (Admin → Integrations → OAuth)
 2. Edit `App/GenesysCloudTool_UX_Prototype_v2_1.ps1` and update the `Set-GcAuthConfig` section with your Client ID
 3. Launch the application
 
-**Testing**: 
+**Testing**:
+
 - See [HOW_TO_TEST.md](docs/HOW_TO_TEST.md) for OAuth and general testing instructions.
 - See [HOW_TO_TEST_JOBRUNNER.md](docs/HOW_TO_TEST_JOBRUNNER.md) for JobRunner-specific testing scenarios.
 
@@ -183,6 +185,7 @@ Start-GcJob -Job $job -ScriptBlock {
 ```
 
 **Key Features:**
+
 - ✅ Real runspace-based execution (PowerShell 5.1 + 7 compatible)
 - ✅ Thread-safe log streaming via ObservableCollection
 - ✅ Cancellation support (CancellationRequested flag)

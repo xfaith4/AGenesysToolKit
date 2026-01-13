@@ -7,7 +7,6 @@ $script:GcAuthConfig = @{
   Region       = 'usw2.pure.cloud'
   ClientId     = ''
   RedirectUri  = 'http://localhost:8085/callback'
-  Scopes       = @()
   ClientSecret = ''  # Optional, for client credentials flow
 }
 
@@ -26,7 +25,6 @@ $script:GcTokenState = @{
   ExpiresIn    = $null
   ExpiresAt    = $null
   RefreshToken = $null
-  UserInfo     = $null
 }
 
 function Get-GcAuthDefaultLogDirectory {

@@ -13,9 +13,11 @@ The AGenesysToolKit delivers **decision-grade insight from APIs, logs, and telem
 The toolkit is organized into three primary workspaces, each serving a distinct purpose:
 
 ### 1. Orchestration
+
 **Purpose**: Administrative and configuration tasks, user/queue management, routing control.
 
 **Examples**:
+
 - User provisioning and role assignment
 - Queue configuration and management
 - Skills and language configuration
@@ -23,6 +25,7 @@ The toolkit is organized into three primary workspaces, each serving a distinct 
 - Integration management
 
 **Typical Modules**:
+
 - User Management
 - Queue Management
 - Skills & Languages
@@ -30,9 +33,11 @@ The toolkit is organized into three primary workspaces, each serving a distinct 
 - Integration Center
 
 ### 2. Conversations
+
 **Purpose**: Deep dive into conversation data, transcripts, metrics, and participant details.
 
 **Examples**:
+
 - Conversation search and filtering
 - Transcript retrieval and analysis
 - Recording downloads
@@ -40,6 +45,7 @@ The toolkit is organized into three primary workspaces, each serving a distinct 
 - Sentiment and analytics
 
 **Typical Modules**:
+
 - Conversation Search
 - Transcript Viewer
 - Recording Manager
@@ -47,9 +53,11 @@ The toolkit is organized into three primary workspaces, each serving a distinct 
 - Quality Management
 
 ### 3. Operations
+
 **Purpose**: Real-time monitoring, alerting, subscriptions, health checks, and diagnostics.
 
 **Examples**:
+
 - Topic subscriptions (real-time events)
 - Presence monitoring
 - Queue statistics live view
@@ -57,6 +65,7 @@ The toolkit is organized into three primary workspaces, each serving a distinct 
 - Event streaming and logging
 
 **Typical Modules**:
+
 - Topic Subscriptions
 - Presence Monitor
 - Queue Statistics
@@ -72,6 +81,7 @@ These contracts are the foundation of the toolkit. All modules MUST adhere to th
 **Purpose**: Single HTTP request to the Genesys Cloud API. No pagination loop.
 
 **Contract**:
+
 - **Input**: Path, Method, Query parameters, Body, Headers, AccessToken
 - **Output**: The raw API response (deserialized from JSON)
 - **Behavior**:
@@ -83,6 +93,7 @@ These contracts are the foundation of the toolkit. All modules MUST adhere to th
 - **Guarantee**: Predictable, synchronous, single-request behavior. If the endpoint returns paginated data, this function returns ONLY the first page.
 
 **Example**:
+
 ```powershell
 $user = Invoke-GcRequest -Path '/api/v2/users/me' -Method GET -AccessToken $token
 ```
@@ -92,6 +103,7 @@ $user = Invoke-GcRequest -Path '/api/v2/users/me' -Method GET -AccessToken $toke
 **Purpose**: Automatically paginate through API responses until completion.
 
 **Contract**:
+
 - **Input**: Same as `Invoke-GcRequest`, plus paging parameters (`-MaxPages`, `-MaxItems`, `-PageSize`)
 - **Output**: By default, returns merged item list (e.g., all `entities`, `results`, `conversations`). If no item list detected, returns last response object.
 - **Behavior**:
@@ -103,6 +115,7 @@ $user = Invoke-GcRequest -Path '/api/v2/users/me' -Method GET -AccessToken $toke
 - **Guarantee**: Unless explicitly capped, this function retrieves the complete dataset. No silent truncation.
 
 **Example**:
+
 ```powershell
 # Get ALL users (may be thousands)
 $allUsers = Invoke-GcPagedRequest -Path '/api/v2/users' -Method GET -AccessToken $token
@@ -116,6 +129,7 @@ $limitedUsers = Invoke-GcPagedRequest -Path '/api/v2/users' -Method GET -AccessT
 **Purpose**: All long-running operations follow the Submit → Poll → Fetch pattern.
 
 **Contract**:
+
 1. **Submit**: Call a `Start-Gc*Job` function (e.g., `Start-GcAnalyticsConversationDetailsJob`)
    - Returns a job object with `id` property
 2. **Poll**: Use `Wait-GcAsyncJob` to poll job status until completion
@@ -128,11 +142,13 @@ $limitedUsers = Invoke-GcPagedRequest -Path '/api/v2/users' -Method GET -AccessT
    - Default: return ALL results unless capped
 
 **Helper Functions**:
+
 - `Invoke-Gc*Query`: One-call helpers that combine Submit → Poll → Fetch (e.g., `Invoke-GcAnalyticsConversationDetailsQuery`)
 
 **Guarantee**: No blocking of the UI thread. All jobs run asynchronously with progress tracking in the Job Center.
 
 **Example**:
+
 ```powershell
 # Manual pattern
 $job = Start-GcAnalyticsConversationDetailsJob -Body $queryBody
@@ -148,6 +164,7 @@ $results = Invoke-GcAnalyticsConversationDetailsQuery -Body $queryBody -TimeoutS
 **Principle**: The UI thread must never be blocked by long-running operations.
 
 **Implementation**:
+
 - All potentially slow operations (>2 seconds) MUST use the Job pattern
 - Job Center displays all active/completed jobs with progress bars
 - Users can cancel jobs in progress
@@ -207,6 +224,7 @@ Invoke-GcPagedRequest -Path '/api/v2/users' -All:$false
 **Philosophy**: Exports are a "snackbar + open folder" experience, not a full designer.
 
 **Behavior**:
+
 1. User clicks "Export" button in any view
 2. Snackbar appears: "Exporting 1,234 items to JSON..."
 3. File is written to `artifacts/` directory (gitignored)
@@ -214,17 +232,20 @@ Invoke-GcPagedRequest -Path '/api/v2/users' -All:$false
 5. Clicking "Open Folder" opens Windows Explorer to the `artifacts/` directory
 
 **Supported Formats**:
+
 - **JSON** (always available): Pretty-printed, UTF-8, easy to parse
 - **TXT** (always available): Tab-delimited or custom format for plain text viewers
 - **XLSX** (optional): Only if `ImportExcel` module is available
   - Toolkit checks for module and disables XLSX export if not found
   - User can install with `Install-Module ImportExcel` to enable
 
-**No Configuration UI**: 
+**No Configuration UI**:
+
 - Exports use sensible defaults (timestamp in filename, auto-open folder)
 - Power users can customize by editing config files (future Phase 4+)
 
 **Example**:
+
 ```powershell
 # Export results to JSON
 Export-GcResults -Data $results -Format JSON -Name "conversation-details"
@@ -238,10 +259,12 @@ Export-GcResults -Data $results -Format JSON -Name "conversation-details"
 All modules reside in the `/Core` directory and are imported by the main application (`/App`).
 
 **Core Modules**:
+
 - `Core/HttpRequests.psm1`: HTTP primitives (`Invoke-GcRequest`, `Invoke-GcPagedRequest`)
 - `Core/Jobs.psm1`: Job management and async operation helpers
 
 **Future Modules** (Phase 2+):
+
 - `Core/Users.psm1`
 - `Core/Queues.psm1`
 - `Core/Conversations.psm1`
@@ -249,9 +272,11 @@ All modules reside in the `/Core` directory and are imported by the main applica
 - `Core/Subscriptions.psm1`
 
 **Application**:
+
 - `App/GenesysCloudTool_UX_Prototype_v2_1.ps1`: Main WPF UI application
 
 **Tests**:
+
 - `tests/smoke.ps1`: Smoke tests to validate core modules load and key commands exist
 - `tests/integration/*`: Integration tests (Phase 2+)
 - `tests/unit/*`: Unit tests (Phase 2+)
@@ -266,6 +291,7 @@ All public functions follow PowerShell verb-noun conventions with the `Gc` prefi
 - Use approved PowerShell verbs: `Get`, `Set`, `New`, `Remove`, `Invoke`, `Start`, `Stop`, `Wait`, etc.
 
 **Private/Helper Functions**:
+
 - May use any naming, but should be clearly internal (e.g., `Resolve-GcEndpoint`, `ConvertTo-GcQueryString`)
 - Not exported from modules
 
@@ -276,12 +302,14 @@ All public functions follow PowerShell verb-noun conventions with the `Gc` prefi
 **Principle**: Fail fast, fail loud, provide actionable context.
 
 **Implementation**:
+
 - HTTP errors: Retry transient failures (429, 503, connection timeouts), throw on persistent failures
 - Job failures: Detect `FAILED` / `ERROR` status and throw with full job details
 - Validation errors: Check inputs early and provide clear error messages
 - All errors include relevant context (job ID, request path, response body)
 
 **Example**:
+
 ```powershell
 try {
     $results = Invoke-GcAnalyticsConversationDetailsQuery -Body $queryBody

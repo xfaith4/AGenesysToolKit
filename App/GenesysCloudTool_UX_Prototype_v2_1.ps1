@@ -97,26 +97,84 @@ Set-GcAuthConfig `
   -RedirectUri 'http://localhost:8085/callback' `
 
 $script:AppState = [ordered]@{
-  Region       = 'usw2.pure.cloud'
-  Auth         = 'Not logged in'
-  TokenStatus  = 'No token'
-  AccessToken  = $null  # STEP 1: Set a token here for testing: $script:AppState.AccessToken = "YOUR_TOKEN_HERE"
+  Region               = 'usw2.pure.cloud'
+  Auth                 = 'Not logged in'
+  TokenStatus          = 'No token'
+  AccessToken          = $null  # STEP 1: Set a token here for testing: $script:AppState.AccessToken = "YOUR_TOKEN_HERE"
 
-  Workspace    = 'Operations'
-  Module       = 'Topic Subscriptions'
-  IsStreaming  = $false
+  Workspace            = 'Operations'
+  Module               = 'Topic Subscriptions'
+  IsStreaming          = $false
 
   SubscriptionProvider = $null
   EventBuffer          = New-Object System.Collections.ObjectModel.ObservableCollection[object]
   PinnedEvents         = New-Object System.Collections.ObjectModel.ObservableCollection[object]
 
-  Jobs         = New-Object System.Collections.ObjectModel.ObservableCollection[object]
-  Artifacts    = New-Object System.Collections.ObjectModel.ObservableCollection[object]
+  Jobs                 = New-Object System.Collections.ObjectModel.ObservableCollection[object]
+  Artifacts            = New-Object System.Collections.ObjectModel.ObservableCollection[object]
 
-  PinnedCount  = 0
-  StreamCount  = 0
-  FocusConversationId = ''
+  PinnedCount          = 0
+  StreamCount          = 0
+  FocusConversationId  = ''
 }
+
+### BEGIN: Core import + manual token plumbing
+
+# Add token to state (keep memory-only for now)
+if (-not $script:AppState.Contains('AccessToken')) {
+  $script:AppState.AccessToken = ''
+}
+
+# Import Core modules (App folder -> repo root -> Core)
+$script:RepoRoot = Split-Path -Parent $PSScriptRoot
+Import-Module (Join-Path $script:RepoRoot 'Core\HttpRequests.psm1') -Force
+Import-Module (Join-Path $script:RepoRoot 'Core\Jobs.psm1') -Force
+
+# Minimal wrapper so the UI never calls Invoke-GcRequest directly
+function Invoke-AppGcRequest {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [ValidateSet('GET', 'POST', 'PUT', 'PATCH', 'DELETE')][string]$Method = 'GET',
+    [hashtable]$Query,
+    [hashtable]$PathParams,
+    [object]$Body
+  )
+
+  if ([string]::IsNullOrWhiteSpace($script:AppState.AccessToken)) {
+    throw "No AccessToken is set in AppState. Use 'Test Token' to paste a token for now."
+  }
+
+  return Invoke-GcRequest -Method $Method -Path $Path `
+    -InstanceName $script:AppState.Region `
+    -AccessToken $script:AppState.AccessToken `
+    -Query $Query -PathParams $PathParams -Body $Body
+}
+
+# Quick-and-dirty token paste for testing
+Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction SilentlyContinue
+function Ensure-ManualToken {
+  if (-not [string]::IsNullOrWhiteSpace($script:AppState.AccessToken)) { return $true }
+
+  $t = [Microsoft.VisualBasic.Interaction]::InputBox(
+    "Paste a Genesys Cloud OAuth Access Token (Bearer token).`r`n`r`nThis is temporary for testing; you'll replace auth later.",
+    "Set Access Token",
+    ""
+  )
+
+  $t = ($t ?? '').Trim()
+  if ($t -match '^\s*Bearer\s+') { $t = ($t -replace '^\s*Bearer\s+', '').Trim() }
+
+  if ([string]::IsNullOrWhiteSpace($t)) { return $false }
+
+  $script:AppState.AccessToken = $t
+  $script:AppState.Auth = 'Manual token'
+  $script:AppState.TokenStatus = 'Token present (manual)'
+  if (Get-Command Set-TopContext -ErrorAction SilentlyContinue) { Set-TopContext }
+  return $true
+}
+
+### END: Core import + manual token plumbing
 
 # STEP 1 CHANGE: Make AppState available to HttpRequests module for Invoke-AppGcRequest
 # This allows the wrapper function to automatically inject AccessToken and Region
@@ -151,10 +209,12 @@ function Format-EventSummary {
   $ts = if ($Event.ts) {
     if ($Event.ts -is [DateTime]) {
       $Event.ts.ToString('HH:mm:ss.fff')
-    } else {
+    }
+    else {
       $Event.ts.ToString()
     }
-  } else {
+  }
+  else {
     (Get-Date).ToString('HH:mm:ss.fff')
   }
 
@@ -166,7 +226,8 @@ function Format-EventSummary {
   $text = ''
   if ($Event.text) {
     $text = $Event.text
-  } elseif ($Event.raw -and $Event.raw.eventBody -and $Event.raw.eventBody.text) {
+  }
+  elseif ($Event.raw -and $Event.raw.eventBody -and $Event.raw.eventBody.text) {
     $text = $Event.raw.eventBody.text
   }
 
@@ -245,6 +306,42 @@ function Start-AppJob {
   return $job
 }
 
+### BEGIN: SafeControlTextHelpers
+function Get-UiText {
+  param([Parameter(Mandatory)] $Control)
+
+  # Prefer real WPF TextBox
+  if ($Control -is [System.Windows.Controls.TextBox]) { return $Control.Text }
+
+  # Fallback: any object that actually exposes a "Text" property
+  $p = $Control.PSObject.Properties['Text']
+  if ($p) { return [string]$p.Value }
+
+  # Some controls use Content
+  $p2 = $Control.PSObject.Properties['Content']
+  if ($p2) { return [string]$p2.Value }
+
+  return ""
+}
+
+function Set-UiText {
+  param(
+    [Parameter(Mandatory)] $Control,
+    [Parameter(Mandatory)][string] $Text
+  )
+
+  if ($Control -is [System.Windows.Controls.TextBox]) { $Control.Text = $Text; return }
+
+  $p = $Control.PSObject.Properties['Text']
+  if ($p) { $Control.Text = $Text; return }
+
+  $p2 = $Control.PSObject.Properties['Content']
+  if ($p2) { $Control.Content = $Text; return }
+
+  # If neither exists, do nothing (better than crashing the whole app)
+}
+### END: SafeControlTextHelpers
+
 # -----------------------------
 # Timeline Job Helper
 # -----------------------------
@@ -265,17 +362,17 @@ $script:TimelineJobScriptBlock = {
     $queryBody = @{
       conversationFilters = @(
         @{
-          type = 'and'
+          type       = 'and'
           predicates = @(
             @{
               dimension = 'conversationId'
-              value = $conversationId
+              value     = $conversationId
             }
           )
         }
       )
-      order = 'asc'
-      orderBy = 'conversationStart'
+      order               = 'asc'
+      orderBy             = 'conversationStart'
     }
 
     # Submit analytics job
@@ -366,9 +463,11 @@ $script:TimelineJobScriptBlock = {
           $eventTime = $null
           if ($subEvt.ts -is [datetime]) {
             $eventTime = $subEvt.ts
-          } elseif ($subEvt.ts) {
+          }
+          elseif ($subEvt.ts) {
             $eventTime = [datetime]::Parse($subEvt.ts)
-          } else {
+          }
+          else {
             Write-Warning "Subscription event missing timestamp, skipping: $($subEvt.topic)"
             continue
           }
@@ -380,12 +479,13 @@ $script:TimelineJobScriptBlock = {
             -Label "$($subEvt.topic): $($subEvt.text)" `
             -Details $subEvt `
             -CorrelationKeys @{
-              conversationId = $conversationId
-              eventType = $subEvt.topic
-            }
+            conversationId = $conversationId
+            eventType      = $subEvt.topic
+          }
 
           $liveEventsAdded++
-        } catch {
+        }
+        catch {
           Write-Warning "Failed to parse subscription event timestamp: $_"
           continue
         }
@@ -397,12 +497,13 @@ $script:TimelineJobScriptBlock = {
     }
 
     return @{
-      ConversationId = $conversationId
-      Timeline = $timeline
+      ConversationId     = $conversationId
+      Timeline           = $timeline
       SubscriptionEvents = $relevantSubEvents
     }
 
-  } catch {
+  }
+  catch {
     Write-Error "Failed to build timeline: $_"
     throw
   }
@@ -412,7 +513,7 @@ $script:TimelineJobScriptBlock = {
 # Workspaces + Modules
 # -----------------------------
 $script:WorkspaceModules = [ordered]@{
-  'Orchestration' = @(
+  'Orchestration'    = @(
     'Flows',
     'Data Actions',
     'Dependency / Impact Map',
@@ -424,7 +525,7 @@ $script:WorkspaceModules = [ordered]@{
     'Users & Presence',
     'Routing Snapshot'
   )
-  'Conversations' = @(
+  'Conversations'    = @(
     'Conversation Lookup',
     'Conversation Timeline',
     'Media & Quality',
@@ -432,7 +533,7 @@ $script:WorkspaceModules = [ordered]@{
     'Analytics Jobs',
     'Incident Packet'
   )
-  'Operations' = @(
+  'Operations'       = @(
     'Topic Subscriptions',
     'Operational Event Logs',
     'Audit Logs',
@@ -651,60 +752,60 @@ $Window = ConvertFrom-GcXaml -XamlString $xamlString
 function Get-El([string]$name) { $Window.FindName($name) }
 
 # Top bar
-$TxtContext   = Get-El 'TxtContext'
-$BtnLogin     = Get-El 'BtnLogin'
+$TxtContext = Get-El 'TxtContext'
+$BtnLogin = Get-El 'BtnLogin'
 $BtnTestToken = Get-El 'BtnTestToken'
-$BtnJobs      = Get-El 'BtnJobs'
+$BtnJobs = Get-El 'BtnJobs'
 $BtnArtifacts = Get-El 'BtnArtifacts'
-$TxtCommand   = Get-El 'TxtCommand'
+$TxtCommand = Get-El 'TxtCommand'
 
 # Nav
-$NavWorkspaces   = Get-El 'NavWorkspaces'
-$NavModules      = Get-El 'NavModules'
+$NavWorkspaces = Get-El 'NavWorkspaces'
+$NavModules = Get-El 'NavModules'
 $TxtModuleHeader = Get-El 'TxtModuleHeader'
-$TxtModuleHint   = Get-El 'TxtModuleHint'
+$TxtModuleHint = Get-El 'TxtModuleHint'
 
 # Header + content
-$TxtTitle    = Get-El 'TxtTitle'
+$TxtTitle = Get-El 'TxtTitle'
 $TxtSubtitle = Get-El 'TxtSubtitle'
-$MainHost    = Get-El 'MainHost'
-$TxtStatus   = Get-El 'TxtStatus'
-$TxtStats    = Get-El 'TxtStats'
+$MainHost = Get-El 'MainHost'
+$TxtStatus = Get-El 'TxtStatus'
+$TxtStats = Get-El 'TxtStats'
 
 # Backstage
 $BackstageOverlay = Get-El 'BackstageOverlay'
-$BackstageTabs    = Get-El 'BackstageTabs'
-$BtnCloseBackstage= Get-El 'BtnCloseBackstage'
-$LstJobs          = Get-El 'LstJobs'
-$TxtJobMeta       = Get-El 'TxtJobMeta'
-$BtnCancelJob     = Get-El 'BtnCancelJob'
-$LstJobLogs       = Get-El 'LstJobLogs'
+$BackstageTabs = Get-El 'BackstageTabs'
+$BtnCloseBackstage = Get-El 'BtnCloseBackstage'
+$LstJobs = Get-El 'LstJobs'
+$TxtJobMeta = Get-El 'TxtJobMeta'
+$BtnCancelJob = Get-El 'BtnCancelJob'
+$LstJobLogs = Get-El 'LstJobLogs'
 
-$LstArtifacts            = Get-El 'LstArtifacts'
-$BtnOpenArtifactsFolder  = Get-El 'BtnOpenArtifactsFolder'
+$LstArtifacts = Get-El 'LstArtifacts'
+$BtnOpenArtifactsFolder = Get-El 'BtnOpenArtifactsFolder'
 $BtnOpenSelectedArtifact = Get-El 'BtnOpenSelectedArtifact'
 
 # Snackbar
-$SnackbarHost      = Get-El 'SnackbarHost'
-$SnackbarTitle     = Get-El 'SnackbarTitle'
-$SnackbarBody      = Get-El 'SnackbarBody'
-$BtnSnackPrimary   = Get-El 'BtnSnackPrimary'
+$SnackbarHost = Get-El 'SnackbarHost'
+$SnackbarTitle = Get-El 'SnackbarTitle'
+$SnackbarBody = Get-El 'SnackbarBody'
+$BtnSnackPrimary = Get-El 'BtnSnackPrimary'
 $BtnSnackSecondary = Get-El 'BtnSnackSecondary'
-$BtnSnackClose     = Get-El 'BtnSnackClose'
+$BtnSnackClose = Get-El 'BtnSnackClose'
 
 # -----------------------------
 # UI helpers
 # -----------------------------
 function Set-TopContext {
-  $TxtContext.Text = "Region: $($script:AppState.Region)  |  Org: $($script:AppState.Org)  |  Auth: $($script:AppState.Auth)  |  Token: $($script:AppState.TokenStatus)"
+  $TxtContext.Text = "Region: $($script:AppState.Region)  | if (-not $script:AppState.Contains('Org')) { $script:AppState.Org = '' }  |  Auth: $($script:AppState.Auth)  |  Token: $($script:AppState.TokenStatus)"
 }
 
 function Set-Status([string]$msg) { $TxtStatus.Text = $msg }
 
 function Refresh-HeaderStats {
-  $BtnJobs.Content      = "Jobs ($($script:AppState.Jobs.Count))"
+  $BtnJobs.Content = "Jobs ($($script:AppState.Jobs.Count))"
   $BtnArtifacts.Content = "Artifacts ($($script:AppState.Artifacts.Count))"
-  $TxtStats.Text        = "Pinned: $($script:AppState.PinnedCount) | Stream: $($script:AppState.StreamCount)"
+  $TxtStats.Text = "Pinned: $($script:AppState.PinnedCount) | Stream: $($script:AppState.StreamCount)"
 }
 
 function Refresh-ArtifactsList {
@@ -734,7 +835,8 @@ try {
   if ($env:GC_TOOLKIT_REVEAL_SECRETS -and ($env:GC_TOOLKIT_REVEAL_SECRETS -match '^(1|true|yes|on)$')) {
     $script:GcConsoleDiagnosticsRevealSecrets = $true
   }
-} catch { }
+}
+catch { }
 
 function Format-GcDiagSecret {
   param(
@@ -760,27 +862,8 @@ function Write-GcDiag {
   Write-Host ("[{0}] [DIAG] {1}" -f $ts, $Message)
 }
 
+### BEGIN: FIX Start-TokenTest (diag scope + consistent result shape)
 function Start-TokenTest {
-  <#
-  .SYNOPSIS
-    Tests the current access token by calling GET /api/v2/users/me.
-
-  .DESCRIPTION
-    Validates the token in AppState.AccessToken by making a test API call.
-    Updates UI with test results including user info and organization.
-    Can be called from button handler or programmatically after setting a token.
-
-    This function depends on:
-    - $script:AppState (global AppState with AccessToken and Region)
-    - $BtnTestToken (UI button element for state management)
-    - Invoke-AppGcRequest (from HttpRequests module)
-    - Set-Status, Set-TopContext (UI helper functions)
-    - Start-AppJob (job runner function)
-
-  .EXAMPLE
-    Start-TokenTest
-  #>
-
   if (-not $script:AppState.AccessToken) {
     Write-GcDiag "Start-TokenTest: no token in AppState.AccessToken"
     Set-Status "No token available to test."
@@ -789,68 +872,63 @@ function Start-TokenTest {
 
   Write-GcDiag ("Start-TokenTest: begin (Region='{0}', Token={1})" -f $script:AppState.Region, (Format-GcDiagSecret -Value $script:AppState.AccessToken))
 
-  # Disable button during test
   $BtnTestToken.IsEnabled = $false
   $BtnTestToken.Content = "Testing..."
   Set-Status "Testing token..."
 
-  # Queue background job to test token via GET /api/v2/users/me
   Start-AppJob -Name "Test Token" -Type "Auth" -ScriptBlock {
     param($region, $token, $coreModulePath)
 
-    # Import required modules in runspace
     Import-Module (Join-Path -Path $coreModulePath -ChildPath 'HttpRequests.psm1') -Force
 
+    # IMPORTANT: define diag OUTSIDE try so catch can always return it
+    $diag = New-Object 'System.Collections.Generic.List[string]'
+
+    $baseUri = "https://api.$region/"
+    $path = '/api/v2/users/me'
+    $resolvedPath = $path.TrimStart('/')
+    $requestUri = ($baseUri.TrimEnd('/') + '/' + $resolvedPath)
+
+    $reveal = $false
     try {
-      $diag = New-Object 'System.Collections.Generic.List[string]'
+      if ($env:GC_TOOLKIT_REVEAL_SECRETS -and ($env:GC_TOOLKIT_REVEAL_SECRETS -match '^(1|true|yes|on)$')) { $reveal = $true }
+    }
+    catch { }
 
-      $baseUri = "https://api.$region/"
-      $path = '/api/v2/users/me'
-      $resolvedPath = $path.TrimStart('/')
-      $requestUri = ($baseUri.TrimEnd('/') + '/' + $resolvedPath)
+    $tokenShown = "<empty>"
+    if ($token) {
+      if ($reveal) { $tokenShown = $token }
+      else { $tokenShown = ("{0}...<{1} chars>" -f $token.Substring(0, [Math]::Min(12, $token.Length)), $token.Length) }
+    }
 
-      $reveal = $false
-      try {
-        if ($env:GC_TOOLKIT_REVEAL_SECRETS -and ($env:GC_TOOLKIT_REVEAL_SECRETS -match '^(1|true|yes|on)$')) { $reveal = $true }
-      } catch { }
+    $diag.Add("Start: region='$region'") | Out-Null
+    $diag.Add(("BaseUri: {0}" -f $baseUri)) | Out-Null
+    $diag.Add(("Request: GET {0}" -f $requestUri)) | Out-Null
+    $diag.Add(("Authorization: Bearer {0}" -f $tokenShown)) | Out-Null
+    $diag.Add("Content-Type: application/json; charset=utf-8") | Out-Null
 
-      $tokenShown = "<empty>"
-      if ($token) {
-        if ($reveal) {
-          $tokenShown = $token
-        } else {
-          $tokenShown = ("{0}...<{1} chars>" -f $token.Substring(0, [Math]::Min(12, $token.Length)), $token.Length)
-        }
-      }
-
-      $diag.Add("Start: region='$region'") | Out-Null
-      $diag.Add(("BaseUri: {0}" -f $baseUri)) | Out-Null
-      $diag.Add(("Request: GET {0}" -f $requestUri)) | Out-Null
-      $diag.Add(("Authorization: Bearer {0}" -f $tokenShown)) | Out-Null
-      $diag.Add("Content-Type: application/json; charset=utf-8") | Out-Null
-
-      # Call GET /api/v2/users/me using Invoke-GcRequest with explicit parameters
+    try {
       $userInfo = Invoke-GcRequest -Path '/api/v2/users/me' -Method GET `
         -InstanceName $region -AccessToken $token -RetryCount 0
 
       return [PSCustomObject]@{
-        Success = $true
-        UserInfo = $userInfo
-        Error = $null
-        Diagnostics = @($diag)
-        RequestUri = $requestUri
+        Success      = $true
+        UserInfo     = $userInfo
+        Error        = $null
+        StatusCode   = $null
+        ResponseBody = $null
+        Diagnostics  = @($diag)
+        RequestUri   = $requestUri
       }
-    } catch {
-      # Capture detailed error information for better diagnostics
+    }
+    catch {
       $errorMessage = $_.Exception.Message
       $statusCode = $null
       $responseBody = $null
 
-      # Try to extract HTTP status code if available
       if ($_.Exception.Response) {
         try { $statusCode = [int]$_.Exception.Response.StatusCode } catch { }
         try {
-          # Windows PowerShell (HttpWebResponse)
           if ($_.Exception.Response -is [System.Net.HttpWebResponse]) {
             $stream = $_.Exception.Response.GetResponseStream()
             if ($stream) {
@@ -858,35 +936,35 @@ function Start-TokenTest {
               $responseBody = $reader.ReadToEnd()
             }
           }
-
-          # PowerShell 7+ (HttpResponseMessage)
           if (-not $responseBody -and $_.Exception.Response -is [System.Net.Http.HttpResponseMessage]) {
             $responseBody = $_.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
           }
-        } catch { }
+        }
+        catch { }
       }
 
-      # PowerShell 7 often places response content into ErrorDetails
       try {
         if (-not $responseBody -and $_.ErrorDetails -and $_.ErrorDetails.Message) {
           $responseBody = $_.ErrorDetails.Message
         }
-      } catch { }
+      }
+      catch { }
 
       return [PSCustomObject]@{
-        Success = $false
-        UserInfo = $null
-        Error = $errorMessage
-        StatusCode = $statusCode
+        Success      = $false
+        UserInfo     = $null
+        Error        = $errorMessage
+        StatusCode   = $statusCode
         ResponseBody = $responseBody
-        Diagnostics = @($diag)
-        RequestUri = $requestUri
+        Diagnostics  = @($diag)
+        RequestUri   = $requestUri
       }
     }
   } -ArgumentList @($script:AppState.Region, $script:AppState.AccessToken, $coreRoot) -OnCompleted {
     param($job)
 
-    # Dump diagnostics to console + job logs (UI thread safe)
+    # your existing OnCompleted body is fine; no changes required here
+    # (it will now ALWAYS receive Diagnostics safely)
     try {
       if ($job.Result -and $job.Result.Diagnostics) {
         Write-GcDiag ("Token test diagnostics ({0} lines):" -f @($job.Result.Diagnostics).Count)
@@ -908,40 +986,28 @@ function Start-TokenTest {
           try { Add-GcJobLog -Job $job -Message ("DIAG: errorBody={0}" -f $body) } catch { }
         }
       }
-    } catch { }
+    }
+    catch { }
 
     if ($job.Result -and $job.Result.Success) {
-      # SUCCESS: Token is valid
       $userInfo = $job.Result.UserInfo
-
-      # Update AppState with success status and user information
       $script:AppState.Auth = "Logged in"
-      if ($userInfo.name) {
-        $script:AppState.Auth = "Logged in as $($userInfo.name)"
-      }
+      if ($userInfo.name) { $script:AppState.Auth = "Logged in as $($userInfo.name)" }
       $script:AppState.TokenStatus = "Token valid"
-
-      # Update header display
+      if ($userInfo.organization -and $userInfo.organization.name) { $script:AppState.Org = $userInfo.organization.name }
       Set-TopContext
 
-      # Show success status with username if available
       $statusMsg = "Token test: OK"
       if ($userInfo.name) { $statusMsg += ". User: $($userInfo.name)" }
-      if ($userInfo.organization -and $userInfo.organization.name) {
-        $statusMsg += " | Org: $($userInfo.organization.name)"
-        $script:AppState.Org = $userInfo.organization.name
-      }
+      if ($script:AppState.Org) { $statusMsg += " | Org: $($script:AppState.Org)" }
       Set-Status $statusMsg
-
-    } else {
-      # FAILURE: Token test failed
+    }
+    else {
       $errorMsg = if ($job.Result) { $job.Result.Error } else { "Unknown error" }
 
-      # Analyze error and provide user-friendly message
       $userMessage = "Token test failed."
       $detailMessage = $errorMsg
 
-      # Check for common error scenarios
       if ($errorMsg -match "400|Bad Request") {
         $userMessage = "Bad Request"
         $detailMessage = "The API request was malformed. This usually indicates:`n• Token has invalid format or characters`n• Token contains line breaks or extra whitespace`n• Region format is incorrect`n`nRegion: $($script:AppState.Region)`nPlease verify the token was copied correctly without any line breaks.`n`nError: $errorMsg"
@@ -963,12 +1029,10 @@ function Start-TokenTest {
         $detailMessage = "Token is valid but lacks permission to access user information.`n`nError: $errorMsg"
       }
 
-      # Update AppState to reflect failure
       $script:AppState.Auth = "Not logged in"
       $script:AppState.TokenStatus = "Token invalid"
       Set-TopContext
 
-      # Show error dialog with details
       [System.Windows.MessageBox]::Show(
         $detailMessage,
         $userMessage,
@@ -979,11 +1043,12 @@ function Start-TokenTest {
       Set-Status "Token test failed: $userMessage"
     }
 
-    # Re-enable button
     $BtnTestToken.Content = "Test Token"
     $BtnTestToken.IsEnabled = $true
   }
 }
+### END: FIX Start-TokenTest
+
 
 function Show-SetTokenDialog {
   <#
@@ -1096,114 +1161,115 @@ function Show-SetTokenDialog {
 
     # Set + Test button handler
     $btnSetTest.Add_Click({
-      Write-GcDiag "Manual token entry: 'Set + Test' clicked"
+        Write-GcDiag "Manual token entry: 'Set + Test' clicked"
 
-      # Get and clean region input
-      $region = $txtRegion.Text.Trim()
-      Write-GcDiag ("Manual token entry: region(raw)='{0}'" -f $region)
+        # Get and clean region input
+        $region = $txtRegion.Text.Trim()
+        Write-GcDiag ("Manual token entry: region(raw)='{0}'" -f $region)
 
-      # Get token and perform comprehensive sanitization
-      # Remove all line breaks, carriage returns, and extra whitespace
-      $token = $txtToken.Text -replace '[\r\n]+', ''  # Remove line breaks
-      $token = $token.Trim()  # Remove leading/trailing whitespace
-      Write-GcDiag ("Manual token entry: token(raw/sanitized)={0}" -f (Format-GcDiagSecret -Value $token))
+        # Get token and perform comprehensive sanitization
+        # Remove all line breaks, carriage returns, and extra whitespace
+        $token = $txtToken.Text -replace '[\r\n]+', ''  # Remove line breaks
+        $token = $token.Trim()  # Remove leading/trailing whitespace
+        Write-GcDiag ("Manual token entry: token(raw/sanitized)={0}" -f (Format-GcDiagSecret -Value $token))
 
-      # Validate region input
-      if ([string]::IsNullOrWhiteSpace($region)) {
-        [System.Windows.MessageBox]::Show(
-          "Please enter a region (e.g., mypurecloud.com, usw2.pure.cloud)",
-          "Region Required",
-          [System.Windows.MessageBoxButton]::OK,
-          [System.Windows.MessageBoxImage]::Warning
-        )
-        return
-      }
+        # Validate region input
+        if ([string]::IsNullOrWhiteSpace($region)) {
+          [System.Windows.MessageBox]::Show(
+            "Please enter a region (e.g., mypurecloud.com, usw2.pure.cloud)",
+            "Region Required",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning
+          )
+          return
+        }
 
-      # Validate token input
-      if ([string]::IsNullOrWhiteSpace($token)) {
-        [System.Windows.MessageBox]::Show(
-          "Please enter an access token",
-          "Token Required",
-          [System.Windows.MessageBoxButton]::OK,
-          [System.Windows.MessageBoxImage]::Warning
-        )
-        return
-      }
+        # Validate token input
+        if ([string]::IsNullOrWhiteSpace($token)) {
+          [System.Windows.MessageBox]::Show(
+            "Please enter an access token",
+            "Token Required",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning
+          )
+          return
+        }
 
-      # Remove "Bearer " prefix if present (case-insensitive)
-      if ($token -imatch '^Bearer\s+(.+)$') {
-        $token = $matches[1].Trim()
-      }
-      Write-GcDiag ("Manual token entry: token(after Bearer strip)={0}" -f (Format-GcDiagSecret -Value $token))
+        # Remove "Bearer " prefix if present (case-insensitive)
+        if ($token -imatch '^Bearer\s+(.+)$') {
+          $token = $matches[1].Trim()
+        }
+        Write-GcDiag ("Manual token entry: token(after Bearer strip)={0}" -f (Format-GcDiagSecret -Value $token))
 
-      # Basic token format validation (should look like a JWT or similar)
-      # JWT tokens have format: xxxxx.yyyyy.zzzzz (base64 parts separated by dots)
-      # Minimum length of 20 characters catches obviously invalid tokens while
-      # allowing various token formats (JWT typically 100+ chars, OAuth2 tokens vary)
-      if ($token.Length -lt 20) {
-        [System.Windows.MessageBox]::Show(
-          "The token appears too short to be valid. Please verify you've copied the complete token.",
-          "Token Format Warning",
-          [System.Windows.MessageBoxButton]::OK,
-          [System.Windows.MessageBoxImage]::Warning
-        )
-        return
-      }
+        # Basic token format validation (should look like a JWT or similar)
+        # JWT tokens have format: xxxxx.yyyyy.zzzzz (base64 parts separated by dots)
+        # Minimum length of 20 characters catches obviously invalid tokens while
+        # allowing various token formats (JWT typically 100+ chars, OAuth2 tokens vary)
+        if ($token.Length -lt 20) {
+          [System.Windows.MessageBox]::Show(
+            "The token appears too short to be valid. Please verify you've copied the complete token.",
+            "Token Format Warning",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning
+          )
+          return
+        }
 
-      # Update AppState with sanitized values
-      $script:AppState.Region = $region
-      $script:AppState.AccessToken = $token
-      $script:AppState.TokenStatus = "Token set (manual)"
-      $script:AppState.Auth = "Manual token"
-      Write-GcDiag ("Manual token entry: AppState updated (Region='{0}', AccessToken={1})" -f $script:AppState.Region, (Format-GcDiagSecret -Value $script:AppState.AccessToken))
+        # Update AppState with sanitized values
+        $script:AppState.Region = $region
+        $script:AppState.AccessToken = $token
+        $script:AppState.TokenStatus = "Token set (manual)"
+        $script:AppState.Auth = "Manual token"
+        Write-GcDiag ("Manual token entry: AppState updated (Region='{0}', AccessToken={1})" -f $script:AppState.Region, (Format-GcDiagSecret -Value $script:AppState.AccessToken))
 
-      # Update UI context
-      Set-TopContext
+        # Update UI context
+        Set-TopContext
 
-      # Close dialog
-      $dialog.DialogResult = $true
-      $dialog.Close()
+        # Close dialog
+        $dialog.DialogResult = $true
+        $dialog.Close()
 
-      # Trigger token test using the dedicated helper function
-      Write-GcDiag "Manual token entry: launching Start-TokenTest"
-      Start-TokenTest
-    })
+        # Trigger token test using the dedicated helper function
+        Write-GcDiag "Manual token entry: launching Start-TokenTest"
+        Start-TokenTest
+      })
 
     # Cancel button handler
     $btnCancel.Add_Click({
-      Write-GcDiag "Manual token entry: Cancel clicked"
-      $dialog.DialogResult = $false
-      $dialog.Close()
-    })
+        Write-GcDiag "Manual token entry: Cancel clicked"
+        $dialog.DialogResult = $false
+        $dialog.Close()
+      })
 
     # Clear Token button handler
     $btnClearToken.Add_Click({
-      Write-GcDiag "Manual token entry: Clear Token clicked"
-      $result = [System.Windows.MessageBox]::Show(
-        "This will clear the current access token. Continue?",
-        "Clear Token",
-        [System.Windows.MessageBoxButton]::YesNo,
-        [System.Windows.MessageBoxImage]::Question
-      )
+        Write-GcDiag "Manual token entry: Clear Token clicked"
+        $result = [System.Windows.MessageBox]::Show(
+          "This will clear the current access token. Continue?",
+          "Clear Token",
+          [System.Windows.MessageBoxButton]::YesNo,
+          [System.Windows.MessageBoxImage]::Question
+        )
 
-      if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
-        Write-GcDiag "Manual token entry: Clear Token confirmed (Yes)"
-        $script:AppState.AccessToken = $null
-        $script:AppState.Auth = "Not logged in"
-        $script:AppState.TokenStatus = "No token"
-        Set-TopContext
-        Set-Status "Token cleared."
+        if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
+          Write-GcDiag "Manual token entry: Clear Token confirmed (Yes)"
+          $script:AppState.AccessToken = $null
+          $script:AppState.Auth = "Not logged in"
+          $script:AppState.TokenStatus = "No token"
+          Set-TopContext
+          Set-Status "Token cleared."
 
-        $dialog.DialogResult = $false
-        $dialog.Close()
-      }
-    })
+          $dialog.DialogResult = $false
+          $dialog.Close()
+        }
+      })
 
     # Show dialog
     $dialog.ShowDialog() | Out-Null
     Write-GcDiag "Show-SetTokenDialog: closed"
 
-  } catch {
+  }
+  catch {
     Write-Error "Failed to show token dialog: $_"
     [System.Windows.MessageBox]::Show(
       "Failed to show token dialog: $_",
@@ -1243,12 +1309,12 @@ function Show-Snackbar {
   )
 
   $SnackbarTitle.Text = $Title
-  $SnackbarBody.Text  = $Body
+  $SnackbarBody.Text = $Body
 
-  $BtnSnackPrimary.Content   = $PrimaryText
+  $BtnSnackPrimary.Content = $PrimaryText
   $BtnSnackSecondary.Content = $SecondaryText
 
-  $script:SnackbarPrimaryAction   = $OnPrimary
+  $script:SnackbarPrimaryAction = $OnPrimary
   $script:SnackbarSecondaryAction = $OnSecondary
 
   $SnackbarHost.Visibility = 'Visible'
@@ -1260,13 +1326,13 @@ function Show-Snackbar {
 $script:SnackbarTimer.Add_Tick({ Close-Snackbar })
 $BtnSnackClose.Add_Click({ Close-Snackbar })
 $BtnSnackPrimary.Add_Click({
-  try { if ($script:SnackbarPrimaryAction) { & $script:SnackbarPrimaryAction } }
-  finally { Close-Snackbar }
-})
+    try { if ($script:SnackbarPrimaryAction) { & $script:SnackbarPrimaryAction } }
+    finally { Close-Snackbar }
+  })
 $BtnSnackSecondary.Add_Click({
-  try { if ($script:SnackbarSecondaryAction) { & $script:SnackbarSecondaryAction } }
-  finally { Close-Snackbar }
-})
+    try { if ($script:SnackbarSecondaryAction) { & $script:SnackbarSecondaryAction } }
+    finally { Close-Snackbar }
+  })
 
 function Add-ArtifactAndNotify {
   param([string]$Name, [string]$Path, [string]$ToastTitle = 'Export complete')
@@ -1276,7 +1342,7 @@ function Add-ArtifactAndNotify {
   Refresh-ArtifactsList
 
   Show-Snackbar -Title $ToastTitle -Body ("$Name`n$Path") `
-    -OnPrimary   { if (Test-Path $Path) { Start-Process -FilePath $Path | Out-Null } } `
+    -OnPrimary { if (Test-Path $Path) { Start-Process -FilePath $Path | Out-Null } } `
     -OnSecondary { Start-Process -FilePath $script:ArtifactsDir | Out-Null }
 }
 
@@ -1291,7 +1357,7 @@ function Refresh-JobsList {
   Refresh-HeaderStats
 }
 
-function Open-Backstage([ValidateSet('Jobs','Artifacts')]$Tab = 'Jobs') {
+function Open-Backstage([ValidateSet('Jobs', 'Artifacts')]$Tab = 'Jobs') {
   if ($Tab -eq 'Jobs') { $BackstageTabs.SelectedIndex = 0 } else { $BackstageTabs.SelectedIndex = 1 }
   Refresh-JobsList
   Refresh-ArtifactsList
@@ -1305,47 +1371,48 @@ $BtnCloseBackstage.Add_Click({ Close-Backstage })
 # Jobs selection
 # -----------------------------
 $LstJobs.Add_SelectionChanged({
-  $idx = $LstJobs.SelectedIndex
-  if ($idx -lt 0 -or $idx -ge $script:AppState.Jobs.Count) {
-    $TxtJobMeta.Text = "Select a job…"
-    $LstJobLogs.Items.Clear()
-    $BtnCancelJob.IsEnabled = $false
-    return
-  }
+    $idx = $LstJobs.SelectedIndex
+    if ($idx -lt 0 -or $idx -ge $script:AppState.Jobs.Count) {
+      $TxtJobMeta.Text = "Select a job…"
+      $LstJobLogs.Items.Clear()
+      $BtnCancelJob.IsEnabled = $false
+      return
+    }
 
-  $job = $script:AppState.Jobs[$idx]
-  $TxtJobMeta.Text = "Name: $($job.Name)`r`nType: $($job.Type)`r`nStatus: $($job.Status)`r`nProgress: $($job.Progress)%"
-  $LstJobLogs.Items.Clear()
-  foreach ($l in $job.Logs) { $LstJobLogs.Items.Add($l) | Out-Null }
-  $BtnCancelJob.IsEnabled = [bool]$job.CanCancel
-})
+    $job = $script:AppState.Jobs[$idx]
+    $TxtJobMeta.Text = "Name: $($job.Name)`r`nType: $($job.Type)`r`nStatus: $($job.Status)`r`nProgress: $($job.Progress)%"
+    $LstJobLogs.Items.Clear()
+    foreach ($l in $job.Logs) { $LstJobLogs.Items.Add($l) | Out-Null }
+    $BtnCancelJob.IsEnabled = [bool]$job.CanCancel
+  })
 
 $BtnCancelJob.Add_Click({
-  $idx = $LstJobs.SelectedIndex
-  if ($idx -ge 0 -and $idx -lt $script:AppState.Jobs.Count) {
-    $job = $script:AppState.Jobs[$idx]
-    if ($job.CanCancel -and $job.Status -eq 'Running') {
-      # Try real job runner cancellation first
-      if (Get-Command -Name Stop-GcJob -ErrorAction SilentlyContinue) {
-        try {
-          Stop-GcJob -Job $job
-          Set-Status "Cancellation requested for: $($job.Name)"
-          Refresh-JobsList
-          return
-        } catch {
-          # Fallback to mock cancellation
+    $idx = $LstJobs.SelectedIndex
+    if ($idx -ge 0 -and $idx -lt $script:AppState.Jobs.Count) {
+      $job = $script:AppState.Jobs[$idx]
+      if ($job.CanCancel -and $job.Status -eq 'Running') {
+        # Try real job runner cancellation first
+        if (Get-Command -Name Stop-GcJob -ErrorAction SilentlyContinue) {
+          try {
+            Stop-GcJob -Job $job
+            Set-Status "Cancellation requested for: $($job.Name)"
+            Refresh-JobsList
+            return
+          }
+          catch {
+            # Fallback to mock cancellation
+          }
         }
-      }
 
-      # Fallback: mock cancellation
-      $job.Status = 'Canceled'
-      $job.CanCancel = $false
-      Add-JobLog -Job $job -Message "Cancel requested by user."
-      Set-Status "Canceled job: $($job.Name)"
-      Refresh-JobsList
+        # Fallback: mock cancellation
+        $job.Status = 'Canceled'
+        $job.CanCancel = $false
+        try { Add-GcJobLog -Job $job -Message "Cancel requested by user." } catch { }
+        Set-Status "Canceled job: $($job.Name)"
+        Refresh-JobsList
+      }
     }
-  }
-})
+  })
 
 # -----------------------------
 # Artifacts actions
@@ -1353,20 +1420,20 @@ $BtnCancelJob.Add_Click({
 $BtnOpenArtifactsFolder.Add_Click({ Start-Process -FilePath $script:ArtifactsDir | Out-Null })
 
 $BtnOpenSelectedArtifact.Add_Click({
-  $idx = $LstArtifacts.SelectedIndex
-  if ($idx -ge 0 -and $idx -lt $script:AppState.Artifacts.Count) {
-    $a = $script:AppState.Artifacts[$idx]
-    if (Test-Path $a.Path) { Start-Process -FilePath $a.Path | Out-Null }
-  }
-})
+    $idx = $LstArtifacts.SelectedIndex
+    if ($idx -ge 0 -and $idx -lt $script:AppState.Artifacts.Count) {
+      $a = $script:AppState.Artifacts[$idx]
+      if (Test-Path $a.Path) { Start-Process -FilePath $a.Path | Out-Null }
+    }
+  })
 
 $LstArtifacts.Add_MouseDoubleClick({
-  $idx = $LstArtifacts.SelectedIndex
-  if ($idx -ge 0 -and $idx -lt $script:AppState.Artifacts.Count) {
-    $a = $script:AppState.Artifacts[$idx]
-    if (Test-Path $a.Path) { Start-Process -FilePath $a.Path | Out-Null }
-  }
-})
+    $idx = $LstArtifacts.SelectedIndex
+    if ($idx -ge 0 -and $idx -lt $script:AppState.Artifacts.Count) {
+      $a = $script:AppState.Artifacts[$idx]
+      if (Test-Path $a.Path) { Start-Process -FilePath $a.Path | Out-Null }
+    }
+  })
 
 # -----------------------------
 # Views
@@ -1497,13 +1564,13 @@ function Show-TimelineWindow {
     $displayEvents = @()
     foreach ($evt in $TimelineEvents) {
       $displayEvent = [PSCustomObject]@{
-        Time = $evt.Time
-        TimeFormatted = $evt.Time.ToString('yyyy-MM-dd HH:mm:ss.fff')
-        Category = $evt.Category
-        Label = $evt.Label
-        Details = $evt.Details
+        Time            = $evt.Time
+        TimeFormatted   = $evt.Time.ToString('yyyy-MM-dd HH:mm:ss.fff')
+        Category        = $evt.Category
+        Label           = $evt.Label
+        Details         = $evt.Details
         CorrelationKeys = $evt.CorrelationKeys
-        OriginalEvent = $evt
+        OriginalEvent   = $evt
       }
       $displayEvents += $displayEvent
     }
@@ -1513,23 +1580,24 @@ function Show-TimelineWindow {
 
     # Handle selection change to show details
     $dgTimeline.Add_SelectionChanged({
-      if ($dgTimeline.SelectedItem) {
-        $selected = $dgTimeline.SelectedItem
-        $detailObj = [ordered]@{
-          Time = $selected.Time.ToString('o')
-          Category = $selected.Category
-          Label = $selected.Label
-          CorrelationKeys = $selected.CorrelationKeys
-          Details = $selected.Details
+        if ($dgTimeline.SelectedItem) {
+          $selected = $dgTimeline.SelectedItem
+          $detailObj = [ordered]@{
+            Time            = $selected.Time.ToString('o')
+            Category        = $selected.Category
+            Label           = $selected.Label
+            CorrelationKeys = $selected.CorrelationKeys
+            Details         = $selected.Details
+          }
+          $txtDetail.Text = ($detailObj | ConvertTo-Json -Depth 10)
         }
-        $txtDetail.Text = ($detailObj | ConvertTo-Json -Depth 10)
-      }
-    })
+      })
 
     # Show window
     $window.ShowDialog() | Out-Null
 
-  } catch {
+  }
+  catch {
     Write-Error "Failed to show timeline window: $_"
     [System.Windows.MessageBox]::Show(
       "Failed to show timeline window: $_",
@@ -1653,15 +1721,15 @@ function New-OperationalEventLogsView {
   $view = ConvertFrom-GcXaml -XamlString $xamlString
 
   $h = @{
-    CmbOpTimeRange   = $view.FindName('CmbOpTimeRange')
-    CmbOpService     = $view.FindName('CmbOpService')
-    CmbOpLevel       = $view.FindName('CmbOpLevel')
-    BtnOpQuery       = $view.FindName('BtnOpQuery')
-    BtnOpExportJson  = $view.FindName('BtnOpExportJson')
-    BtnOpExportCsv   = $view.FindName('BtnOpExportCsv')
-    TxtOpSearch      = $view.FindName('TxtOpSearch')
-    TxtOpCount       = $view.FindName('TxtOpCount')
-    GridOpEvents     = $view.FindName('GridOpEvents')
+    CmbOpTimeRange  = $view.FindName('CmbOpTimeRange')
+    CmbOpService    = $view.FindName('CmbOpService')
+    CmbOpLevel      = $view.FindName('CmbOpLevel')
+    BtnOpQuery      = $view.FindName('BtnOpQuery')
+    BtnOpExportJson = $view.FindName('BtnOpExportJson')
+    BtnOpExportCsv  = $view.FindName('BtnOpExportCsv')
+    TxtOpSearch     = $view.FindName('TxtOpSearch')
+    TxtOpCount      = $view.FindName('TxtOpCount')
+    GridOpEvents    = $view.FindName('GridOpEvents')
   }
 
   # Store events data for export
@@ -1669,171 +1737,173 @@ function New-OperationalEventLogsView {
 
   # Query button handler
   $h.BtnOpQuery.Add_Click({
-    Set-Status "Querying operational events..."
-    $h.BtnOpQuery.IsEnabled = $false
-    $h.BtnOpExportJson.IsEnabled = $false
-    $h.BtnOpExportCsv.IsEnabled = $false
+      Set-Status "Querying operational events..."
+      $h.BtnOpQuery.IsEnabled = $false
+      $h.BtnOpExportJson.IsEnabled = $false
+      $h.BtnOpExportCsv.IsEnabled = $false
 
-    # Determine time range
-    $hours = switch ($h.CmbOpTimeRange.SelectedIndex) {
-      0 { 1 }
-      1 { 6 }
-      2 { 24 }
-      3 { 168 }
-      default { 24 }
-    }
-
-    $endTime = Get-Date
-    $startTime = $endTime.AddHours(-$hours)
-
-    Start-AppJob -Name "Query Operational Events" -Type "Query" -ScriptBlock {
-      param($startTime, $endTime)
-
-      # Build query body for audit logs
-      $queryBody = @{
-        interval = "$($startTime.ToString('o'))/$($endTime.ToString('o'))"
-        pageSize = 100
-        pageNumber = 1
+      # Determine time range
+      $hours = switch ($h.CmbOpTimeRange.SelectedIndex) {
+        0 { 1 }
+        1 { 6 }
+        2 { 24 }
+        3 { 168 }
+        default { 24 }
       }
 
-      # Use Invoke-GcPagedRequest to query audit logs
-      $maxItems = 500  # Limit to prevent excessive API calls
-      try {
-        $results = Invoke-GcPagedRequest -Path '/api/v2/audits/query' -Method POST -Body $queryBody `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
+      $endTime = Get-Date
+      $startTime = $endTime.AddHours(-$hours)
 
-        return $results
-      } catch {
-        Write-Error "Failed to query operational events: $_"
-        return @()
-      }
-    } -ArgumentList @($startTime, $endTime) -OnCompleted {
-      param($job)
+      Start-AppJob -Name "Query Audit Logs" -Type "Query" -ScriptBlock {
+        param($startTime, $endTime, $region, $accessToken, $coreRoot)
 
-      $h.BtnOpQuery.IsEnabled = $true
+        Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
 
-      if ($job.Result) {
-        $events = $job.Result
-        $script:OpEventsData = $events
-
-        # Transform to display format
-        $displayData = $events | ForEach-Object {
-          [PSCustomObject]@{
-            Timestamp = if ($_.Timestamp) { $_.Timestamp } else { '' }
-            Service = if ($_.ServiceName) { $_.ServiceName } elseif ($_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
-            Level = if ($_.Level) { $_.Level } else { 'Info' }
-            Message = if ($_.Action) { $_.Action } else { 'N/A' }
-            User = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
-          }
+        $queryBody = @{
+          interval   = "$($startTime.ToString('o'))/$($endTime.ToString('o'))"
+          pageSize   = 100
+          pageNumber = 1
         }
 
-        $h.GridOpEvents.ItemsSource = $displayData
-        $h.TxtOpCount.Text = "($($events.Count) events)"
-        $h.BtnOpExportJson.IsEnabled = $true
-        $h.BtnOpExportCsv.IsEnabled = $true
+        $maxItems = 500
+        try {
+          Invoke-GcPagedRequest -Path '/api/v2/audits/query' -Method POST -Body $queryBody `
+            -InstanceName $region -AccessToken $accessToken -MaxItems $maxItems
+        }
+        catch {
+          Write-Error "Failed to query audit logs: $_"
+          @()
+        }
+      } -ArgumentList @($startTime, $endTime, $script:AppState.Region, $script:AppState.AccessToken, $coreRoot) -OnCompleted {
+        param($job)
 
-        Set-Status "Loaded $($events.Count) operational events."
-      } else {
-        Set-Status "Failed to query operational events. Check job logs."
-        $h.GridOpEvents.ItemsSource = @()
-        $h.TxtOpCount.Text = "(0 events)"
+        $h.BtnOpQuery.IsEnabled = $true
+
+        if ($job.Result) {
+          $events = $job.Result
+          $script:OpEventsData = $events
+
+          # Transform to display format
+          $displayData = $events | ForEach-Object {
+            [PSCustomObject]@{
+              Timestamp = if ($_.Timestamp) { $_.Timestamp } else { '' }
+              Service   = if ($_.ServiceName) { $_.ServiceName } elseif ($_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
+              Level     = if ($_.Level) { $_.Level } else { 'Info' }
+              Message   = if ($_.Action) { $_.Action } else { 'N/A' }
+              User      = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
+            }
+          }
+
+          $h.GridOpEvents.ItemsSource = $displayData
+          $h.TxtOpCount.Text = "($($events.Count) events)"
+          $h.BtnOpExportJson.IsEnabled = $true
+          $h.BtnOpExportCsv.IsEnabled = $true
+
+          Set-Status "Loaded $($events.Count) operational events."
+        }
+        else {
+          Set-Status "Failed to query operational events. Check job logs."
+          $h.GridOpEvents.ItemsSource = @()
+          $h.TxtOpCount.Text = "(0 events)"
+        }
       }
-    }
-  })
+    })
 
   # Search text changed handler
   $h.TxtOpSearch.Add_TextChanged({
-    if (-not $script:OpEventsData -or $script:OpEventsData.Count -eq 0) { return }
+      if (-not $script:OpEventsData -or $script:OpEventsData.Count -eq 0) { return }
 
-    $searchText = $h.TxtOpSearch.Text.ToLower()
-    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search events...") {
-      $displayData = $script:OpEventsData | ForEach-Object {
+      $searchText = $h.TxtOpSearch.Text.ToLower()
+      if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search events...") {
+        $displayData = $script:OpEventsData | ForEach-Object {
+          [PSCustomObject]@{
+            Timestamp = if ($_.Timestamp) { $_.Timestamp } else { '' }
+            Service   = if ($_.ServiceName) { $_.ServiceName } elseif ($_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
+            Level     = if ($_.Level) { $_.Level } else { 'Info' }
+            Message   = if ($_.Action) { $_.Action } else { 'N/A' }
+            User      = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
+          }
+        }
+        $h.GridOpEvents.ItemsSource = $displayData
+        $h.TxtOpCount.Text = "($($script:OpEventsData.Count) events)"
+        return
+      }
+
+      $filtered = $script:OpEventsData | Where-Object {
+        $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
+        $json -like "*$searchText*"
+      }
+
+      $displayData = $filtered | ForEach-Object {
         [PSCustomObject]@{
           Timestamp = if ($_.Timestamp) { $_.Timestamp } else { '' }
-          Service = if ($_.ServiceName) { $_.ServiceName } elseif ($_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
-          Level = if ($_.Level) { $_.Level } else { 'Info' }
-          Message = if ($_.Action) { $_.Action } else { 'N/A' }
-          User = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
+          Service   = if ($_.ServiceName) { $_.ServiceName } elseif ($_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
+          Level     = if ($_.Level) { $_.Level } else { 'Info' }
+          Message   = if ($_.Action) { $_.Action } else { 'N/A' }
+          User      = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
         }
       }
+
       $h.GridOpEvents.ItemsSource = $displayData
-      $h.TxtOpCount.Text = "($($script:OpEventsData.Count) events)"
-      return
-    }
-
-    $filtered = $script:OpEventsData | Where-Object {
-      $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
-      $json -like "*$searchText*"
-    }
-
-    $displayData = $filtered | ForEach-Object {
-      [PSCustomObject]@{
-        Timestamp = if ($_.Timestamp) { $_.Timestamp } else { '' }
-        Service = if ($_.ServiceName) { $_.ServiceName } elseif ($_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
-        Level = if ($_.Level) { $_.Level } else { 'Info' }
-        Message = if ($_.Action) { $_.Action } else { 'N/A' }
-        User = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
-      }
-    }
-
-    $h.GridOpEvents.ItemsSource = $displayData
-    $h.TxtOpCount.Text = "($($filtered.Count) events)"
-  })
+      $h.TxtOpCount.Text = "($($filtered.Count) events)"
+    })
 
   # Export JSON handler
   $h.BtnOpExportJson.Add_Click({
-    if (-not $script:OpEventsData -or $script:OpEventsData.Count -eq 0) {
-      [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
-      return
-    }
+      if (-not $script:OpEventsData -or $script:OpEventsData.Count -eq 0) {
+        [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
+      }
 
-    $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $filename = "operational_events_$timestamp.json"
-    $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
+      $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+      $filename = "operational_events_$timestamp.json"
+      $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
 
-    try {
-      $script:OpEventsData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
-      $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
-      Set-Status "Exported to $filename"
-      [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-    } catch {
-      Set-Status "Export failed: $_"
-      [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
-    }
-  })
+      try {
+        $script:OpEventsData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+        $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
+        Set-Status "Exported to $filename"
+        [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+      }
+      catch {
+        Set-Status "Export failed: $_"
+        [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+      }
+    })
 
   # Export CSV handler
   $h.BtnOpExportCsv.Add_Click({
-    if (-not $script:OpEventsData -or $script:OpEventsData.Count -eq 0) {
-      [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
-      return
-    }
-
-    $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $filename = "operational_events_$timestamp.csv"
-    $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
-
-    try {
-      $csvData = $script:OpEventsData | ForEach-Object {
-        [PSCustomObject]@{
-          Timestamp = if ($_.Timestamp) { $_.Timestamp } else { '' }
-          Service = if ($_.ServiceName) { $_.ServiceName } elseif ($_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
-          Level = if ($_.Level) { $_.Level } else { 'Info' }
-          Action = if ($_.Action) { $_.Action } else { 'N/A' }
-          User = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
-          EntityType = if ($_.Entity -and $_.Entity.Type) { $_.Entity.Type } else { '' }
-          EntityId = if ($_.Entity -and $_.Entity.Id) { $_.Entity.Id } else { '' }
-        }
+      if (-not $script:OpEventsData -or $script:OpEventsData.Count -eq 0) {
+        [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
       }
-      $csvData | Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
-      $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
-      Set-Status "Exported to $filename"
-      [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-    } catch {
-      Set-Status "Export failed: $_"
-      [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
-    }
-  })
+
+      $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+      $filename = "operational_events_$timestamp.csv"
+      $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
+
+      try {
+        $csvData = $script:OpEventsData | ForEach-Object {
+          [PSCustomObject]@{
+            Timestamp  = if ($_.Timestamp) { $_.Timestamp } else { '' }
+            Service    = if ($_.ServiceName) { $_.ServiceName } elseif ($_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
+            Level      = if ($_.Level) { $_.Level } else { 'Info' }
+            Action     = if ($_.Action) { $_.Action } else { 'N/A' }
+            User       = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
+            EntityType = if ($_.Entity -and $_.Entity.Type) { $_.Entity.Type } else { '' }
+            EntityId   = if ($_.Entity -and $_.Entity.Id) { $_.Entity.Id } else { '' }
+          }
+        }
+        $csvData | Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
+        $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
+        Set-Status "Exported to $filename"
+        [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+      }
+      catch {
+        Set-Status "Export failed: $_"
+        [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+      }
+    })
 
   return $view
 }
@@ -1928,15 +1998,15 @@ function New-AuditLogsView {
   $view = ConvertFrom-GcXaml -XamlString $xamlString
 
   $h = @{
-    CmbAuditTimeRange   = $view.FindName('CmbAuditTimeRange')
-    CmbAuditEntity      = $view.FindName('CmbAuditEntity')
-    CmbAuditAction      = $view.FindName('CmbAuditAction')
-    BtnAuditQuery       = $view.FindName('BtnAuditQuery')
-    BtnAuditExportJson  = $view.FindName('BtnAuditExportJson')
-    BtnAuditExportCsv   = $view.FindName('BtnAuditExportCsv')
-    TxtAuditSearch      = $view.FindName('TxtAuditSearch')
-    TxtAuditCount       = $view.FindName('TxtAuditCount')
-    GridAuditLogs       = $view.FindName('GridAuditLogs')
+    CmbAuditTimeRange  = $view.FindName('CmbAuditTimeRange')
+    CmbAuditEntity     = $view.FindName('CmbAuditEntity')
+    CmbAuditAction     = $view.FindName('CmbAuditAction')
+    BtnAuditQuery      = $view.FindName('BtnAuditQuery')
+    BtnAuditExportJson = $view.FindName('BtnAuditExportJson')
+    BtnAuditExportCsv  = $view.FindName('BtnAuditExportCsv')
+    TxtAuditSearch     = $view.FindName('TxtAuditSearch')
+    TxtAuditCount      = $view.FindName('TxtAuditCount')
+    GridAuditLogs      = $view.FindName('GridAuditLogs')
   }
 
   # Store audit data for export
@@ -1944,180 +2014,186 @@ function New-AuditLogsView {
 
   # Query button handler
   $h.BtnAuditQuery.Add_Click({
-    Set-Status "Querying audit logs..."
-    $h.BtnAuditQuery.IsEnabled = $false
-    $h.BtnAuditExportJson.IsEnabled = $false
-    $h.BtnAuditExportCsv.IsEnabled = $false
+      Set-Status "Querying audit logs..."
+      $h.BtnAuditQuery.IsEnabled = $false
+      $h.BtnAuditExportJson.IsEnabled = $false
+      $h.BtnAuditExportCsv.IsEnabled = $false
 
-    # Determine time range
-    $hours = switch ($h.CmbAuditTimeRange.SelectedIndex) {
-      0 { 1 }
-      1 { 6 }
-      2 { 24 }
-      3 { 168 }
-      default { 24 }
-    }
-
-    $endTime = Get-Date
-    $startTime = $endTime.AddHours(-$hours)
-
-    Start-AppJob -Name "Query Audit Logs" -Type "Query" -ScriptBlock {
-      param($startTime, $endTime)
-
-      # Build query body for audit logs
-      $queryBody = @{
-        interval = "$($startTime.ToString('o'))/$($endTime.ToString('o'))"
-        pageSize = 100
-        pageNumber = 1
+      # Determine time range
+      $hours = switch ($h.CmbAuditTimeRange.SelectedIndex) {
+        0 { 1 }
+        1 { 6 }
+        2 { 24 }
+        3 { 168 }
+        default { 24 }
       }
 
-      # Use Invoke-GcPagedRequest to query audit logs
-      $maxItems = 500  # Limit to prevent excessive API calls
-      try {
-        $results = Invoke-GcPagedRequest -Path '/api/v2/audits/query' -Method POST -Body $queryBody `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
+      $endTime = Get-Date
+      $startTime = $endTime.AddHours(-$hours)
 
-        return $results
-      } catch {
-        Write-Error "Failed to query audit logs: $_"
-        return @()
-      }
-    } -ArgumentList @($startTime, $endTime) -OnCompleted {
-      param($job)
+      Start-AppJob -Name "Query Audit Logs" -Type "Query" -ScriptBlock {
+        param($startTime, $endTime)
 
-      $h.BtnAuditQuery.IsEnabled = $true
-
-      if ($job.Result) {
-        $audits = $job.Result
-        $script:AuditLogsData = $audits
-
-        # Transform to display format
-        $displayData = $audits | ForEach-Object {
-          [PSCustomObject]@{
-            Timestamp = if ($_.Timestamp) { $_.Timestamp } else { '' }
-            Action = if ($_.Action) { $_.Action } else { 'N/A' }
-            EntityType = if ($_.Entity -and $_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
-            EntityName = if ($_.Entity -and $_.Entity.Name) { $_.Entity.Name } else { 'N/A' }
-            User = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
-            Status = if ($_.Status) { $_.Status } else { 'Success' }
-          }
+        # Build query body for audit logs
+        $queryBody = @{
+          interval   = "$($startTime.ToString('o'))/$($endTime.ToString('o'))"
+          pageSize   = 100
+          pageNumber = 1
         }
 
-        $h.GridAuditLogs.ItemsSource = $displayData
-        $h.TxtAuditCount.Text = "($($audits.Count) audits)"
-        $h.BtnAuditExportJson.IsEnabled = $true
-        $h.BtnAuditExportCsv.IsEnabled = $true
+        # Use Invoke-GcPagedRequest to query audit logs
+        $maxItems = 500  # Limit to prevent excessive API calls
+        try {
+          $results = Invoke-GcPagedRequest -Path '/api/v2/audits/query' -Method POST -Body $queryBody `
+            -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
 
-        Set-Status "Loaded $($audits.Count) audit entries."
-      } else {
-        Set-Status "Failed to query audit logs. Check job logs."
-        $h.GridAuditLogs.ItemsSource = @()
-        $h.TxtAuditCount.Text = "(0 audits)"
+          return $results
+        }
+        catch {
+          Write-Error "Failed to query audit logs: $_"
+          return @()
+        }
+      } -ArgumentList @($startTime, $endTime) -OnCompleted {
+        param($job)
+
+        $h.BtnAuditQuery.IsEnabled = $true
+
+        if ($job.Result) {
+          $audits = $job.Result
+          $script:AuditLogsData = $audits
+
+          # Transform to display format
+          $displayData = $audits | ForEach-Object {
+            [PSCustomObject]@{
+              Timestamp  = if ($_.Timestamp) { $_.Timestamp } else { '' }
+              Action     = if ($_.Action) { $_.Action } else { 'N/A' }
+              EntityType = if ($_.Entity -and $_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
+              EntityName = if ($_.Entity -and $_.Entity.Name) { $_.Entity.Name } else { 'N/A' }
+              User       = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
+              Status     = if ($_.Status) { $_.Status } else { 'Success' }
+            }
+          }
+
+          $h.GridAuditLogs.ItemsSource = $displayData
+          $h.TxtAuditCount.Text = "($($audits.Count) audits)"
+          $h.BtnAuditExportJson.IsEnabled = $true
+          $h.BtnAuditExportCsv.IsEnabled = $true
+
+          Set-Status "Loaded $($audits.Count) audit entries."
+        }
+        else {
+          Set-Status "Failed to query audit logs. Check job logs."
+          $h.GridAuditLogs.ItemsSource = @()
+          $h.TxtAuditCount.Text = "(0 audits)"
+        }
       }
-    }
-  })
+    })
 
   # Search text changed handler
   $h.TxtAuditSearch.Add_TextChanged({
-    if (-not $script:AuditLogsData -or $script:AuditLogsData.Count -eq 0) { return }
+      if (-not $script:AuditLogsData -or $script:AuditLogsData.Count -eq 0) { return }
 
-    $searchText = $h.TxtAuditSearch.Text.ToLower()
-    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search audits...") {
-      $displayData = $script:AuditLogsData | ForEach-Object {
+      $searchText = $h.TxtAuditSearch.Text.ToLower()
+      if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search audits...") {
+        $displayData = $script:AuditLogsData | ForEach-Object {
+          [PSCustomObject]@{
+            Timestamp  = if ($_.Timestamp) { $_.Timestamp } else { '' }
+            Action     = if ($_.Action) { $_.Action } else { 'N/A' }
+            EntityType = if ($_.Entity -and $_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
+            EntityName = if ($_.Entity -and $_.Entity.Name) { $_.Entity.Name } else { 'N/A' }
+            User       = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
+            Status     = if ($_.Status) { $_.Status } else { 'Success' }
+          }
+        }
+        $h.GridAuditLogs.ItemsSource = $displayData
+        $h.TxtAuditCount.Text = "($($script:AuditLogsData.Count) audits)"
+        return
+      }
+
+      $filtered = $script:AuditLogsData | Where-Object {
+        $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
+        $json -like "*$searchText*"
+      }
+
+      $displayData = $filtered | ForEach-Object {
         [PSCustomObject]@{
-          Timestamp = if ($_.Timestamp) { $_.Timestamp } else { '' }
-          Action = if ($_.Action) { $_.Action } else { 'N/A' }
+          Timestamp  = if ($_.Timestamp) { $_.Timestamp } else { '' }
+          Action     = if ($_.Action) { $_.Action } else { 'N/A' }
           EntityType = if ($_.Entity -and $_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
           EntityName = if ($_.Entity -and $_.Entity.Name) { $_.Entity.Name } else { 'N/A' }
-          User = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
-          Status = if ($_.Status) { $_.Status } else { 'Success' }
+          User       = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
+          Status     = if ($_.Status) { $_.Status } else { 'Success' }
         }
       }
+
       $h.GridAuditLogs.ItemsSource = $displayData
-      $h.TxtAuditCount.Text = "($($script:AuditLogsData.Count) audits)"
-      return
-    }
-
-    $filtered = $script:AuditLogsData | Where-Object {
-      $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
-      $json -like "*$searchText*"
-    }
-
-    $displayData = $filtered | ForEach-Object {
-      [PSCustomObject]@{
-        Timestamp = if ($_.Timestamp) { $_.Timestamp } else { '' }
-        Action = if ($_.Action) { $_.Action } else { 'N/A' }
-        EntityType = if ($_.Entity -and $_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
-        EntityName = if ($_.Entity -and $_.Entity.Name) { $_.Entity.Name } else { 'N/A' }
-        User = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
-        Status = if ($_.Status) { $_.Status } else { 'Success' }
-      }
-    }
-
-    $h.GridAuditLogs.ItemsSource = $displayData
-    $h.TxtAuditCount.Text = "($($filtered.Count) audits)"
-  })
+      $h.TxtAuditCount.Text = "($($filtered.Count) audits)"
+    })
 
   # Export JSON handler
   $h.BtnAuditExportJson.Add_Click({
-    if (-not $script:AuditLogsData -or $script:AuditLogsData.Count -eq 0) {
-      [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
-      return
-    }
+      if (-not $script:AuditLogsData -or $script:AuditLogsData.Count -eq 0) {
+        [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
+      }
 
-    $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $filename = "audit_logs_$timestamp.json"
-    $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
+      $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+      $filename = "audit_logs_$timestamp.json"
+      $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
 
-    try {
-      $script:AuditLogsData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
-      $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
-      Set-Status "Exported to $filename"
-      [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-    } catch {
-      Set-Status "Export failed: $_"
-      [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
-    }
-  })
+      try {
+        $script:AuditLogsData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+        $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
+        Set-Status "Exported to $filename"
+        [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+      }
+      catch {
+        Set-Status "Export failed: $_"
+        [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+      }
+    })
 
   # Export CSV handler
   $h.BtnAuditExportCsv.Add_Click({
-    if (-not $script:AuditLogsData -or $script:AuditLogsData.Count -eq 0) {
-      [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
-      return
-    }
-
-    $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $filename = "audit_logs_$timestamp.csv"
-    $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
-
-    try {
-      $csvData = $script:AuditLogsData | ForEach-Object {
-        [PSCustomObject]@{
-          Timestamp = if ($_.Timestamp) { $_.Timestamp } else { '' }
-          Action = if ($_.Action) { $_.Action } else { 'N/A' }
-          EntityType = if ($_.Entity -and $_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
-          EntityName = if ($_.Entity -and $_.Entity.Name) { $_.Entity.Name } else { 'N/A' }
-          EntityId = if ($_.Entity -and $_.Entity.Id) { $_.Entity.Id } else { '' }
-          User = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
-          UserId = if ($_.User -and $_.User.Id) { $_.User.Id } else { '' }
-          Status = if ($_.Status) { $_.Status } else { 'Success' }
-        }
+      if (-not $script:AuditLogsData -or $script:AuditLogsData.Count -eq 0) {
+        [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
       }
-      $csvData | Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
-      $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
-      Set-Status "Exported to $filename"
-      [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-    } catch {
-      Set-Status "Export failed: $_"
-      [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
-    }
-  })
+
+      $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+      $filename = "audit_logs_$timestamp.csv"
+      $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
+
+      try {
+        $csvData = $script:AuditLogsData | ForEach-Object {
+          [PSCustomObject]@{
+            Timestamp  = if ($_.Timestamp) { $_.Timestamp } else { '' }
+            Action     = if ($_.Action) { $_.Action } else { 'N/A' }
+            EntityType = if ($_.Entity -and $_.Entity.Type) { $_.Entity.Type } else { 'N/A' }
+            EntityName = if ($_.Entity -and $_.Entity.Name) { $_.Entity.Name } else { 'N/A' }
+            EntityId   = if ($_.Entity -and $_.Entity.Id) { $_.Entity.Id } else { '' }
+            User       = if ($_.User -and $_.User.Name) { $_.User.Name } else { 'System' }
+            UserId     = if ($_.User -and $_.User.Id) { $_.User.Id } else { '' }
+            Status     = if ($_.Status) { $_.Status } else { 'Success' }
+          }
+        }
+        $csvData | Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
+        $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
+        Set-Status "Exported to $filename"
+        [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+      }
+      catch {
+        Set-Status "Export failed: $_"
+        [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+      }
+    })
 
   return $view
 }
 
 function New-OAuthTokenUsageView {
+  [CmdletBinding(SupportsShouldProcess)]
+  param()
   <#
   .SYNOPSIS
     Creates the OAuth / Token Usage module view with query, grid, and export capabilities.
@@ -2195,14 +2271,14 @@ function New-OAuthTokenUsageView {
   $view = ConvertFrom-GcXaml -XamlString $xamlString
 
   $h = @{
-    CmbTokenView        = $view.FindName('CmbTokenView')
-    CmbTokenFilter      = $view.FindName('CmbTokenFilter')
-    BtnTokenQuery       = $view.FindName('BtnTokenQuery')
-    BtnTokenExportJson  = $view.FindName('BtnTokenExportJson')
-    BtnTokenExportCsv   = $view.FindName('BtnTokenExportCsv')
-    TxtTokenSearch      = $view.FindName('TxtTokenSearch')
-    TxtTokenCount       = $view.FindName('TxtTokenCount')
-    GridTokenUsage      = $view.FindName('GridTokenUsage')
+    CmbTokenView       = $view.FindName('CmbTokenView')
+    CmbTokenFilter     = $view.FindName('CmbTokenFilter')
+    BtnTokenQuery      = $view.FindName('BtnTokenQuery')
+    BtnTokenExportJson = $view.FindName('BtnTokenExportJson')
+    BtnTokenExportCsv  = $view.FindName('BtnTokenExportCsv')
+    TxtTokenSearch     = $view.FindName('TxtTokenSearch')
+    TxtTokenCount      = $view.FindName('TxtTokenCount')
+    GridTokenUsage     = $view.FindName('GridTokenUsage')
   }
 
   # Store token data for export
@@ -2210,154 +2286,160 @@ function New-OAuthTokenUsageView {
 
   # Query button handler
   $h.BtnTokenQuery.Add_Click({
-    Set-Status "Querying OAuth clients..."
-    $h.BtnTokenQuery.IsEnabled = $false
-    $h.BtnTokenExportJson.IsEnabled = $false
-    $h.BtnTokenExportCsv.IsEnabled = $false
+      Set-Status "Querying OAuth clients..."
+      $h.BtnTokenQuery.IsEnabled = $false
+      $h.BtnTokenExportJson.IsEnabled = $false
+      $h.BtnTokenExportCsv.IsEnabled = $false
 
-    Start-AppJob -Name "Query OAuth Clients" -Type "Query" -ScriptBlock {
-      # Use Invoke-GcPagedRequest to query OAuth clients
-      $maxItems = 500  # Limit to prevent excessive API calls
-      try {
-        $results = Invoke-GcPagedRequest -Path '/api/v2/oauth/clients' -Method GET `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
+      Start-AppJob -Name "Query OAuth Clients" -Type "Query" -ScriptBlock {
+        # Use Invoke-GcPagedRequest to query OAuth clients
+        $maxItems = 500  # Limit to prevent excessive API calls
+        try {
+          $results = Invoke-GcPagedRequest -Path '/api/v2/oauth/clients' -Method GET `
+            -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
 
-        return $results
-      } catch {
-        Write-Error "Failed to query OAuth clients: $_"
-        return @()
-      }
-    } -OnCompleted {
-      param($job)
-
-      $h.BtnTokenQuery.IsEnabled = $true
-
-      if ($job.Result) {
-        $clients = $job.Result
-        $script:TokenUsageData = $clients
-
-        # Transform to display format
-        $displayData = $clients | ForEach-Object {
-          [PSCustomObject]@{
-            Name = if ($_.Name) { $_.Name } else { 'N/A' }
-            ClientId = if ($_.Id) { $_.Id } else { 'N/A' }
-            GrantType = if ($_.AuthorizedGrantType) { $_.AuthorizedGrantType } else { 'N/A' }
-            State = if ($_.State) { $_.State } else { 'Active' }
-            Created = if ($_.DateCreated) { $_.DateCreated } else { '' }
-          }
+          return $results
         }
+        catch {
+          Write-Error "Failed to query OAuth clients: $_"
+          return @()
+        }
+      } -OnCompleted {
+        param($job)
 
-        $h.GridTokenUsage.ItemsSource = $displayData
-        $h.TxtTokenCount.Text = "($($clients.Count) clients)"
-        $h.BtnTokenExportJson.IsEnabled = $true
-        $h.BtnTokenExportCsv.IsEnabled = $true
+        $h.BtnTokenQuery.IsEnabled = $true
 
-        Set-Status "Loaded $($clients.Count) OAuth clients."
-      } else {
-        Set-Status "Failed to query OAuth clients. Check job logs."
-        $h.GridTokenUsage.ItemsSource = @()
-        $h.TxtTokenCount.Text = "(0 clients)"
+        if ($job.Result) {
+          $clients = $job.Result
+          $script:TokenUsageData = $clients
+
+          # Transform to display format
+          $displayData = $clients | ForEach-Object {
+            [PSCustomObject]@{
+              Name      = if ($_.Name) { $_.Name } else { 'N/A' }
+              ClientId  = if ($_.Id) { $_.Id } else { 'N/A' }
+              GrantType = if ($_.AuthorizedGrantType) { $_.AuthorizedGrantType } else { 'N/A' }
+              State     = if ($_.State) { $_.State } else { 'Active' }
+              Created   = if ($_.DateCreated) { $_.DateCreated } else { '' }
+            }
+          }
+
+          $h.GridTokenUsage.ItemsSource = $displayData
+          $h.TxtTokenCount.Text = "($($clients.Count) clients)"
+          $h.BtnTokenExportJson.IsEnabled = $true
+          $h.BtnTokenExportCsv.IsEnabled = $true
+
+          Set-Status "Loaded $($clients.Count) OAuth clients."
+        }
+        else {
+          Set-Status "Failed to query OAuth clients. Check job logs."
+          $h.GridTokenUsage.ItemsSource = @()
+          $h.TxtTokenCount.Text = "(0 clients)"
+        }
       }
-    }
-  })
+    })
 
   # Search text changed handler
   $h.TxtTokenSearch.Add_TextChanged({
-    if (-not $script:TokenUsageData -or $script:TokenUsageData.Count -eq 0) { return }
+      if (-not $script:TokenUsageData -or $script:TokenUsageData.Count -eq 0) { return }
 
-    $searchText = $h.TxtTokenSearch.Text.ToLower()
-    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search clients...") {
-      $displayData = $script:TokenUsageData | ForEach-Object {
+      $searchText = $h.TxtTokenSearch.Text.ToLower()
+      if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search clients...") {
+        $displayData = $script:TokenUsageData | ForEach-Object {
+          [PSCustomObject]@{
+            Name      = if ($_.Name) { $_.Name } else { 'N/A' }
+            ClientId  = if ($_.Id) { $_.Id } else { 'N/A' }
+            GrantType = if ($_.AuthorizedGrantType) { $_.AuthorizedGrantType } else { 'N/A' }
+            State     = if ($_.State) { $_.State } else { 'Active' }
+            Created   = if ($_.DateCreated) { $_.DateCreated } else { '' }
+          }
+        }
+        $h.GridTokenUsage.ItemsSource = $displayData
+        $h.TxtTokenCount.Text = "($($script:TokenUsageData.Count) clients)"
+        return
+      }
+
+      $filtered = $script:TokenUsageData | Where-Object {
+        $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
+        $json -like "*$searchText*"
+      }
+
+      $displayData = $filtered | ForEach-Object {
         [PSCustomObject]@{
-          Name = if ($_.Name) { $_.Name } else { 'N/A' }
-          ClientId = if ($_.Id) { $_.Id } else { 'N/A' }
+          Name      = if ($_.Name) { $_.Name } else { 'N/A' }
+          ClientId  = if ($_.Id) { $_.Id } else { 'N/A' }
           GrantType = if ($_.AuthorizedGrantType) { $_.AuthorizedGrantType } else { 'N/A' }
-          State = if ($_.State) { $_.State } else { 'Active' }
-          Created = if ($_.DateCreated) { $_.DateCreated } else { '' }
+          State     = if ($_.State) { $_.State } else { 'Active' }
+          Created   = if ($_.DateCreated) { $_.DateCreated } else { '' }
         }
       }
+
       $h.GridTokenUsage.ItemsSource = $displayData
-      $h.TxtTokenCount.Text = "($($script:TokenUsageData.Count) clients)"
-      return
-    }
-
-    $filtered = $script:TokenUsageData | Where-Object {
-      $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
-      $json -like "*$searchText*"
-    }
-
-    $displayData = $filtered | ForEach-Object {
-      [PSCustomObject]@{
-        Name = if ($_.Name) { $_.Name } else { 'N/A' }
-        ClientId = if ($_.Id) { $_.Id } else { 'N/A' }
-        GrantType = if ($_.AuthorizedGrantType) { $_.AuthorizedGrantType } else { 'N/A' }
-        State = if ($_.State) { $_.State } else { 'Active' }
-        Created = if ($_.DateCreated) { $_.DateCreated } else { '' }
-      }
-    }
-
-    $h.GridTokenUsage.ItemsSource = $displayData
-    $h.TxtTokenCount.Text = "($($filtered.Count) clients)"
-  })
+      $h.TxtTokenCount.Text = "($($filtered.Count) clients)"
+    })
 
   # Export JSON handler
   $h.BtnTokenExportJson.Add_Click({
-    if (-not $script:TokenUsageData -or $script:TokenUsageData.Count -eq 0) {
-      [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
-      return
-    }
+      if (-not $script:TokenUsageData -or $script:TokenUsageData.Count -eq 0) {
+        [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
+      }
 
-    $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $filename = "oauth_clients_$timestamp.json"
-    $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
+      $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+      $filename = "oauth_clients_$timestamp.json"
+      $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
 
-    try {
-      $script:TokenUsageData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
-      $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
-      Set-Status "Exported to $filename"
-      [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-    } catch {
-      Set-Status "Export failed: $_"
-      [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
-    }
-  })
+      try {
+        $script:TokenUsageData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+        $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
+        Set-Status "Exported to $filename"
+        [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+      }
+      catch {
+        Set-Status "Export failed: $_"
+        [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+      }
+    })
 
   # Export CSV handler
   $h.BtnTokenExportCsv.Add_Click({
-    if (-not $script:TokenUsageData -or $script:TokenUsageData.Count -eq 0) {
-      [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
-      return
-    }
-
-    $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $filename = "oauth_clients_$timestamp.csv"
-    $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
-
-    try {
-      $csvData = $script:TokenUsageData | ForEach-Object {
-        [PSCustomObject]@{
-          Name = if ($_.Name) { $_.Name } else { 'N/A' }
-          ClientId = if ($_.Id) { $_.Id } else { 'N/A' }
-          GrantType = if ($_.AuthorizedGrantType) { $_.AuthorizedGrantType } else { 'N/A' }
-          State = if ($_.State) { $_.State } else { 'Active' }
-          Created = if ($_.DateCreated) { $_.DateCreated } else { '' }
-          Description = if ($_.Description) { $_.Description } else { '' }
-        }
+      if (-not $script:TokenUsageData -or $script:TokenUsageData.Count -eq 0) {
+        [System.Windows.MessageBox]::Show("No data to export.", "Export", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
       }
-      $csvData | Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
-      $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
-      Set-Status "Exported to $filename"
-      [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-    } catch {
-      Set-Status "Export failed: $_"
-      [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
-    }
-  })
+
+      $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+      $filename = "oauth_clients_$timestamp.csv"
+      $filepath = Join-Path -Path $script:ArtifactsDir -ChildPath $filename
+
+      try {
+        $csvData = $script:TokenUsageData | ForEach-Object {
+          [PSCustomObject]@{
+            Name        = if ($_.Name) { $_.Name } else { 'N/A' }
+            ClientId    = if ($_.Id) { $_.Id } else { 'N/A' }
+            GrantType   = if ($_.AuthorizedGrantType) { $_.AuthorizedGrantType } else { 'N/A' }
+            State       = if ($_.State) { $_.State } else { 'Active' }
+            Created     = if ($_.DateCreated) { $_.DateCreated } else { '' }
+            Description = if ($_.Description) { $_.Description } else { '' }
+          }
+        }
+        $csvData | Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
+        $script:AppState.Artifacts.Add((New-Artifact -Name $filename -Path $filepath))
+        Set-Status "Exported to $filename"
+        [System.Windows.MessageBox]::Show("Exported to:`n$filepath", "Export Successful", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+      }
+      catch {
+        Set-Status "Export failed: $_"
+        [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+      }
+    })
 
   return $view
 }
 
 function New-ConversationTimelineView {
+  [CmdletBinding(SupportsShouldProcess)]
+  param()
   $xamlString = @"
 <UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
@@ -2410,167 +2492,217 @@ function New-ConversationTimelineView {
 
   $view = ConvertFrom-GcXaml -XamlString $xamlString
 
-  $txtConv  = $view.FindName('TxtConvId')
+  $txtConv = $view.FindName('TxtConvId')
   $btnBuild = $view.FindName('BtnBuild')
-  $btnExport= $view.FindName('BtnExport')
-  $lst      = $view.FindName('LstTimeline')
-  $detail   = $view.FindName('TxtDetail')
+  $btnExport = $view.FindName('BtnExport')
+  $lst = $view.FindName('LstTimeline')
+  $detail = $view.FindName('TxtDetail')
 
   if ($script:AppState.FocusConversationId) {
     $txtConv.Text = $script:AppState.FocusConversationId
   }
 
+  ### BEGIN: Build Timeline from Conversation Details (MVP)
   $btnBuild.Add_Click({
-    $conv = $txtConv.Text.Trim()
-
-    # Validate conversation ID
-    if (-not $conv) {
-      [System.Windows.MessageBox]::Show(
-        "Please enter a conversation ID.",
-        "No Conversation ID",
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Warning
-      )
-      return
-    }
-
-    # Check if authenticated
-    if (-not $script:AppState.AccessToken) {
-      [System.Windows.MessageBox]::Show(
-        "Please log in first to retrieve conversation details.",
-        "Authentication Required",
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Warning
-      )
-      return
-    }
-
-    Set-Status "Retrieving timeline for conversation $conv..."
-
-    # Start background job to retrieve and build timeline (using shared scriptblock)
-    Start-AppJob -Name "Build Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
-    -OnCompleted {
-      param($job)
-
-      if ($job.Result -and $job.Result.Timeline) {
-        $result = $job.Result
-        Set-Status "Timeline ready for conversation $($result.ConversationId) with $($result.Timeline.Count) events."
-
-        # Show timeline window
-        Show-TimelineWindow `
-          -ConversationId $result.ConversationId `
-          -TimelineEvents $result.Timeline `
-          -SubscriptionEvents $result.SubscriptionEvents
-      } else {
-        Set-Status "Failed to build timeline. See job logs for details."
-        [System.Windows.MessageBox]::Show(
-          "Failed to retrieve conversation timeline. Check job logs for details.",
-          "Timeline Error",
-          [System.Windows.MessageBoxButton]::OK,
-          [System.Windows.MessageBoxImage]::Error
-        )
+      $conv = $txtConv.Text.Trim()
+      if (-not $conv) {
+        [System.Windows.MessageBox]::Show("Enter a Conversation ID.", "Missing Conversation ID", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning) | Out-Null
+        return
       }
-    }
 
-    Refresh-HeaderStats
-  })
+      if (-not (Ensure-ManualToken)) {
+        Set-Status "Build timeline canceled (no token)."
+        return
+      }
 
+      $lst.Items.Clear()
+      $detail.Text = "{`r`n  `"status`": `"Fetching conversation details...`"`r`n}"
+
+      Start-AppJob -Name "Fetch Conversation Details — $conv" -Type 'Analytics' -ScriptBlock {
+        param($conversationId, $region, $accessToken, $coreRoot)
+
+        Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
+
+        # Prefer analytics details job if you have it; otherwise just pull /conversations/{id}
+        try {
+          Invoke-GcRequest -Method GET -Path '/api/v2/conversations/{conversationId}' `
+            -InstanceName $region -AccessToken $accessToken `
+            -PathParams @{ conversationId = $conversationId }
+        }
+        catch {
+          throw
+        }
+      } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $coreRoot) -OnCompleted {
+        param($job)
+
+        try {
+          if (-not $job.Result) { throw "No result returned." }
+
+          $entity = $job.Result
+          $timeline = New-Object System.Collections.Generic.List[object]
+
+          # Best-effort: segments if present; otherwise deterministic summary event
+          $segments = @()
+          if ($entity.participants) {
+            foreach ($p in $entity.participants) {
+              foreach ($s in @($p.sessions)) {
+                foreach ($seg in @($s.segments)) { $segments += $seg }
+              }
+            }
+          }
+
+          if ($segments.Count -gt 0) {
+            foreach ($seg in ($segments | Sort-Object startTime)) {
+              $t = $seg.startTime
+              $cat = ($seg.segmentType ?? 'Segment')
+              $lbl = $null -ne @(
+                ($seg.queueId ? "queueId=$($seg.queueId)" : $null),
+                ($seg.disconnectType ? "disconnect=$($seg.disconnectType)" : $null),
+                ($seg.wrapUpCode ? "wrapUp=$($seg.wrapUpCode)" : $null)
+              ) -join ' '
+
+              $timeline.Add([pscustomobject]@{
+                  Time     = $t
+                  Category = $cat
+                  Label    = $lbl
+                  Raw      = $seg
+                }) | Out-Null
+            }
+          }
+          else {
+            $timeline.Add([pscustomobject]@{
+                Time     = (Get-Date).ToString('o')
+                Category = 'Conversation'
+                Label    = 'Details retrieved (no segments parsed)'
+                Raw      = $entity
+              }) | Out-Null
+          }
+
+          foreach ($e in $timeline) {
+            $lst.Items.Add("{0}  [{1}]  {2}" -f $e.Time, $e.Category, $e.Label) | Out-Null
+          }
+
+          $lst.Tag = $timeline
+          Set-Status "Conversation details loaded for $conv."
+        }
+        catch {
+          $detail.Text = ($_ | Out-String)
+          [System.Windows.MessageBox]::Show($_.Exception.Message, 'Conversation Fetch Failed', [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error) | Out-Null
+          Set-Status "Conversation fetch failed for $conv."
+        }
+
+        Refresh-HeaderStats
+      } | Out-Null
+    })
+
+  # Update selection handler to show raw JSON (uses $lst.Tag timeline list)
   $lst.Add_SelectionChanged({
-    if ($lst.SelectedItem) {
-      $sel = [string]$lst.SelectedItem
-      $detail.Text = "{`r`n  `"event`": `"$sel`",`r`n  `"note`": `"Mock payload would include segments, media stats, participant/session IDs.`"`r`n}"
-    }
-  })
+      try {
+        if ($lst.SelectedIndex -lt 0) { return }
+        $timeline = $lst.Tag
+        if (-not $timeline) { return }
+        $obj = $timeline[$lst.SelectedIndex]
+        $detail.Text = ($obj.Raw | ConvertTo-Json -Depth 25)
+      }
+      catch {
+        $detail.Text = ($_ | Out-String)
+      }
+    })
+  ### END: Build Timeline from Conversation Details (MVP)
 
   $btnExport.Add_Click({
-    $conv = $txtConv.Text.Trim()
-    if (-not $conv) { $conv = "c-unknown" }
+      $conv = $txtConv.Text.Trim()
+      if (-not $conv) { $conv = "c-unknown" }
 
-    if (-not $script:AppState.AccessToken) {
-      [System.Windows.MessageBox]::Show(
-        "Please log in first to export real conversation data.",
-        "Authentication Required",
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Warning
-      )
+      if (-not $script:AppState.AccessToken) {
+        [System.Windows.MessageBox]::Show(
+          "Please log in first to export real conversation data.",
+          "Authentication Required",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
 
-      # Fallback to mock export using Start-AppJob
-      Start-AppJob -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -ScriptBlock {
-        param($conversationId, $artifactsDir)
+        # Fallback to mock export using Start-AppJob
+        Start-AppJob -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -ScriptBlock {
+          param($conversationId, $artifactsDir)
 
-        Start-Sleep -Milliseconds 1400
+          Start-Sleep -Milliseconds 1400
 
-        $file = Join-Path -Path $artifactsDir -ChildPath "incident-packet-mock-$($conversationId)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-        @(
-          "Incident Packet (mock)",
-          "ConversationId: $conversationId",
-          "Generated: $(Get-Date)",
-          "",
-          "NOTE: This is a mock packet. Log in to export real conversation data."
-        ) | Set-Content -Path $file -Encoding UTF8
+          $file = Join-Path -Path $artifactsDir -ChildPath "incident-packet-mock-$($conversationId)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+          @(
+            "Incident Packet (mock)",
+            "ConversationId: $conversationId",
+            "Generated: $(Get-Date)",
+            "",
+            "NOTE: This is a mock packet. Log in to export real conversation data."
+          ) | Set-Content -Path $file -Encoding UTF8
 
-        return $file
-      } -ArgumentList @($conv, $script:ArtifactsDir) -OnCompleted {
+          return $file
+        } -ArgumentList @($conv, $script:ArtifactsDir) -OnCompleted {
+          param($job)
+
+          if ($job.Result) {
+            $file = $job.Result
+            Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
+            Set-Status "Exported mock incident packet: $file"
+          }
+        } | Out-Null
+
+        Refresh-HeaderStats
+        return
+      }
+
+      # Real export using ArtifactGenerator with Start-AppJob
+      Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
+        param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
+
+        # Import required modules in runspace
+        $scriptRoot = Split-Path -Parent $PSCommandPath
+        $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+        Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
+
+        try {
+          # Export packet
+          $packet = Export-GcConversationPacket `
+            -ConversationId $conversationId `
+            -Region $region `
+            -AccessToken $accessToken `
+            -OutputDirectory $artifactsDir `
+            -SubscriptionEvents $eventBuffer `
+            -CreateZip
+
+          return $packet
+        }
+        catch {
+          Write-Error "Failed to export packet: $_"
+          return $null
+        }
+      } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
+        -OnCompleted {
         param($job)
 
         if ($job.Result) {
-          $file = $job.Result
-          Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
-          Set-Status "Exported mock incident packet: $file"
+          $packet = $job.Result
+          $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
+          $artifactName = "Incident Packet — $($packet.ConversationId)"
+
+          Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
+          Set-Status "Exported incident packet: $artifactPath"
         }
-      } | Out-Null
+        else {
+          Set-Status "Failed to export packet. See job logs for details."
+        }
+      }
 
       Refresh-HeaderStats
-      return
-    }
-
-    # Real export using ArtifactGenerator with Start-AppJob
-    Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
-      param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
-
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
-
-      try {
-        # Export packet
-        $packet = Export-GcConversationPacket `
-          -ConversationId $conversationId `
-          -Region $region `
-          -AccessToken $accessToken `
-          -OutputDirectory $artifactsDir `
-          -SubscriptionEvents $eventBuffer `
-          -CreateZip
-
-        return $packet
-      } catch {
-        Write-Error "Failed to export packet: $_"
-        return $null
-      }
-    } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
-    -OnCompleted {
-      param($job)
-
-      if ($job.Result) {
-        $packet = $job.Result
-        $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
-        $artifactName = "Incident Packet — $($packet.ConversationId)"
-
-        Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
-        Set-Status "Exported incident packet: $artifactPath"
-      } else {
-        Set-Status "Failed to export packet. See job logs for details."
-      }
-    }
-
-    Refresh-HeaderStats
-  })
+    })
 
   return $view
 }
 
 function New-SubscriptionsView {
+  [CmdletBinding(SupportsShouldProcess)]
+  param()
   $xamlString = @"
 <UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
@@ -2700,13 +2832,16 @@ function New-SubscriptionsView {
   $script:StreamTimer = New-Object Windows.Threading.DispatcherTimer
   $script:StreamTimer.Interval = [TimeSpan]::FromMilliseconds(650)
 
-  function Append-TranscriptLine([string]$line) {
+  function Add-TranscriptLine([string]$line) {
     $h.TxtTranscript.AppendText("$line`r`n")
     $h.TxtTranscript.ScrollToEnd()
   }
 
   function New-MockEvent {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
     $conv = if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') { $h.TxtConv.Text } else { "c-$(Get-Random -Minimum 100000 -Maximum 999999)" }
+    $null = $PSCmdlet.ShouldProcess($conv, 'Generate mock event')
 
     $types = @(
       'audiohook.transcription.partial',
@@ -2717,8 +2852,8 @@ function New-SubscriptionsView {
 
     $allowed = @()
     if ($h.ChkTranscription.IsChecked) { $allowed += $types | Where-Object { $_ -like 'audiohook.transcription*' } }
-    if ($h.ChkAgentAssist.IsChecked)   { $allowed += $types | Where-Object { $_ -like 'audiohook.agentassist*' } }
-    if ($h.ChkErrors.IsChecked)        { $allowed += $types | Where-Object { $_ -eq 'audiohook.error' } }
+    if ($h.ChkAgentAssist.IsChecked) { $allowed += $types | Where-Object { $_ -like 'audiohook.agentassist*' } }
+    if ($h.ChkErrors.IsChecked) { $allowed += $types | Where-Object { $_ -eq 'audiohook.error' } }
     if (-not $allowed) { $allowed = $types }
 
     $etype = $allowed | Get-Random
@@ -2744,14 +2879,14 @@ function New-SubscriptionsView {
 
     # Create raw data object (simulates original parsed JSON)
     $raw = @{
-      eventId = [guid]::NewGuid().ToString()
+      eventId   = [guid]::NewGuid().ToString()
       timestamp = $ts.ToString('o')
       topicName = $etype
       eventBody = @{
         conversationId = $conv
-        text = $text
-        severity = $sev
-        queueName = $queueName
+        text           = $text
+        severity       = $sev
+        queueName      = $queueName
       }
     }
 
@@ -2759,361 +2894,384 @@ function New-SubscriptionsView {
     $cachedJson = ''
     try {
       $cachedJson = ($raw | ConvertTo-Json -Compress -Depth 10).ToLower()
-    } catch {
-      # If JSON conversion fails, use empty string
+    }
+    catch {
+      Write-GcDiag ("Mock event: failed to cache JSON (will be empty). Error='{0}'" -f $_.Exception.Message)
+      $cachedJson = ''
     }
 
     # Return structured event object with consistent schema
     [pscustomobject]@{
-      ts = $ts
-      severity = $sev
-      topic = $etype
+      ts             = $ts
+      severity       = $sev
+      topic          = $etype
       conversationId = $conv
-      queueId = $null
-      queueName = $queueName
-      text = $text
-      raw = $raw
+      queueId        = $null
+      queueName      = $queueName
+      text           = $text
+      raw            = $raw
       _cachedRawJson = $cachedJson
     }
   }
 
   $script:StreamTimer.Add_Tick({
-    if (-not $script:AppState.IsStreaming) { return }
+      if (-not $script:AppState.IsStreaming) { return }
 
-    $evt = New-MockEvent
+      $evt = New-MockEvent
 
-    # Store in EventBuffer for export
-    $script:AppState.EventBuffer.Insert(0, $evt)
+      # Store in EventBuffer for export
+      $script:AppState.EventBuffer.Insert(0, $evt)
 
-    # Format for display and add to ListBox with object as Tag
-    $listItem = New-Object System.Windows.Controls.ListBoxItem
-    $listItem.Content = Format-EventSummary -Event $evt
-    $listItem.Tag = $evt
-    $h.LstEvents.Items.Insert(0, $listItem) | Out-Null
+      # Format for display and add to ListBox with object as Tag
+      $listItem = New-Object System.Windows.Controls.ListBoxItem
+      $listItem.Content = Format-EventSummary -Event $evt
+      $listItem.Tag = $evt
+      $h.LstEvents.Items.Insert(0, $listItem) | Out-Null
 
-    # Update transcript panel
-    $tsStr = $evt.ts.ToString('HH:mm:ss.fff')
-    if ($evt.topic -like 'audiohook.transcription*') { Append-TranscriptLine "$tsStr  $($evt.text)" }
-    if ($evt.topic -like 'audiohook.agentassist*')   { Append-TranscriptLine "$tsStr  [Agent Assist] $($evt.text)" }
-    if ($evt.topic -eq 'audiohook.error')            { Append-TranscriptLine "$tsStr  [ERROR] $($evt.text)" }
+      # Update transcript panel
+      $tsStr = $evt.ts.ToString('HH:mm:ss.fff')
+      if ($evt.topic -like 'audiohook.transcription*') { Add-TranscriptLine "$tsStr  $($evt.text)" }
+      if ($evt.topic -like 'audiohook.agentassist*') { Add-TranscriptLine "$tsStr  [Agent Assist] $($evt.text)" }
+      if ($evt.topic -eq 'audiohook.error') { Add-TranscriptLine "$tsStr  [ERROR] $($evt.text)" }
 
-    $script:AppState.StreamCount++
-    Refresh-HeaderStats
+      $script:AppState.StreamCount++
+      Refresh-HeaderStats
 
-    # Limit list size (keep most recent 250 events)
-    if ($h.LstEvents.Items.Count -gt 250) {
-      $h.LstEvents.Items.RemoveAt($h.LstEvents.Items.Count - 1)
-    }
+      # Limit list size (keep most recent 250 events)
+      if ($h.LstEvents.Items.Count -gt 250) {
+        $h.LstEvents.Items.RemoveAt($h.LstEvents.Items.Count - 1)
+      }
 
-    # Limit EventBuffer size
-    if ($script:AppState.EventBuffer.Count -gt 1000) {
-      $script:AppState.EventBuffer.RemoveAt($script:AppState.EventBuffer.Count - 1)
-    }
-  })
+      # Limit EventBuffer size
+      if ($script:AppState.EventBuffer.Count -gt 1000) {
+        $script:AppState.EventBuffer.RemoveAt($script:AppState.EventBuffer.Count - 1)
+      }
+    })
   $script:StreamTimer.Start()
 
   # Actions
   $h.BtnStart.Add_Click({
-    if ($script:AppState.IsStreaming) { return }
+      if ($script:AppState.IsStreaming) { return }
 
-    Start-AppJob -Name "Connect subscription (AudioHook / Agent Assist)" -Type 'Subscription' -ScriptBlock {
-      # Simulate subscription connection work
-      Start-Sleep -Milliseconds 1200
-      return @{ Success = $true; Message = "Subscription connected" }
-    } -OnCompleted {
-      param($job)
-      $script:AppState.IsStreaming = $true
-      $h.BtnStart.IsEnabled = $false
-      $h.BtnStop.IsEnabled  = $true
-      Set-Status "Subscription started."
-      Refresh-HeaderStats
-    } | Out-Null
-
-    Refresh-HeaderStats
-  })
-
-  $h.BtnStop.Add_Click({
-    if (-not $script:AppState.IsStreaming) { return }
-
-    Start-AppJob -Name "Disconnect subscription" -Type 'Subscription' -ScriptBlock {
-      # Simulate subscription disconnection work
-      Start-Sleep -Milliseconds 700
-      return @{ Success = $true; Message = "Subscription disconnected" }
-    } -OnCompleted {
-      param($job)
-      $script:AppState.IsStreaming = $false
-      $h.BtnStart.IsEnabled = $true
-      $h.BtnStop.IsEnabled  = $false
-      Set-Status "Subscription stopped."
-      Refresh-HeaderStats
-    } | Out-Null
-
-    Refresh-HeaderStats
-  })
-
-  $h.BtnPin.Add_Click({
-    if ($h.LstEvents.SelectedItem) {
-      $selectedItem = $h.LstEvents.SelectedItem
-
-      # Get the event object from the ListBoxItem's Tag
-      if ($selectedItem -is [System.Windows.Controls.ListBoxItem] -and $selectedItem.Tag) {
-        $evt = $selectedItem.Tag
-
-        # Check if already pinned (avoid duplicates)
-        $alreadyPinned = $false
-        foreach ($pinnedEvt in $script:AppState.PinnedEvents) {
-          if ($pinnedEvt.raw.eventId -eq $evt.raw.eventId) {
-            $alreadyPinned = $true
-            break
-          }
-        }
-
-        if (-not $alreadyPinned) {
-          $script:AppState.PinnedEvents.Add($evt)
-          $script:AppState.PinnedCount++
-          Refresh-HeaderStats
-          Set-Status "Pinned event: $($evt.topic) for conversation $($evt.conversationId)"
-        } else {
-          Set-Status "Event already pinned."
-        }
-      } else {
-        Set-Status "Cannot pin event: invalid selection."
-      }
-    }
-  })
-
-  # Search box filtering
-  $h.TxtSearch.Add_TextChanged({
-    $searchText = $h.TxtSearch.Text
-
-    # Skip filtering if placeholder text
-    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq 'search (conversationId, error, agent…)') {
-      # Show all events
-      foreach ($item in $h.LstEvents.Items) {
-        if ($item -is [System.Windows.Controls.ListBoxItem]) {
-          $item.Visibility = 'Visible'
-        }
-      }
-      return
-    }
-
-    $searchLower = $searchText.ToLower()
-
-    # Filter events
-    foreach ($item in $h.LstEvents.Items) {
-      if ($item -is [System.Windows.Controls.ListBoxItem] -and $item.Tag) {
-        $evt = $item.Tag
-        $shouldShow = $false
-
-        # Search in conversationId
-        if ($evt.conversationId -and $evt.conversationId.ToLower().Contains($searchLower)) {
-          $shouldShow = $true
-        }
-
-        # Search in topic/type
-        if (-not $shouldShow -and $evt.topic -and $evt.topic.ToLower().Contains($searchLower)) {
-          $shouldShow = $true
-        }
-
-        # Search in severity
-        if (-not $shouldShow -and $evt.severity -and $evt.severity.ToLower().Contains($searchLower)) {
-          $shouldShow = $true
-        }
-
-        # Search in text
-        if (-not $shouldShow -and $evt.text -and $evt.text.ToLower().Contains($searchLower)) {
-          $shouldShow = $true
-        }
-
-        # Search in queueName
-        if (-not $shouldShow -and $evt.queueName -and $evt.queueName.ToLower().Contains($searchLower)) {
-          $shouldShow = $true
-        }
-
-        # Search in raw JSON (pre-cached during event creation for performance)
-        if (-not $shouldShow -and $evt._cachedRawJson -and $evt._cachedRawJson.Contains($searchLower)) {
-          $shouldShow = $true
-        }
-
-        $item.Visibility = if ($shouldShow) { 'Visible' } else { 'Collapsed' }
-      }
-    }
-  })
-
-  # Clear search placeholder on focus
-  $h.TxtSearch.Add_GotFocus({
-    if ($h.TxtSearch.Text -eq 'search (conversationId, error, agent…)') {
-      $h.TxtSearch.Text = ''
-    }
-  })
-
-  # Restore search placeholder on lost focus if empty
-  $h.TxtSearch.Add_LostFocus({
-    if ([string]::IsNullOrWhiteSpace($h.TxtSearch.Text)) {
-      $h.TxtSearch.Text = 'search (conversationId, error, agent…)'
-    }
-  })
-
-  $h.BtnOpenTimeline.Add_Click({
-    # Derive conversation ID from textbox first, then from selected event
-    $conv = ''
-
-    # Priority 1: Check conversationId textbox
-    if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') {
-      $conv = $h.TxtConv.Text.Trim()
-    }
-
-    # Priority 2: Infer from selected event
-    if (-not $conv -and $h.LstEvents.SelectedItem) {
-      if ($h.LstEvents.SelectedItem -is [System.Windows.Controls.ListBoxItem] -and $h.LstEvents.SelectedItem.Tag) {
-        $evt = $h.LstEvents.SelectedItem.Tag
-        $conv = $evt.conversationId
-      } else {
-        # Fallback: parse from string (for backward compatibility)
-        $s = [string]$h.LstEvents.SelectedItem
-        if ($s -match 'conv=(?<cid>c-\d+)\s') { $conv = $matches['cid'] }
-      }
-    }
-
-    # Validate we have a conversation ID
-    if (-not $conv) {
-      [System.Windows.MessageBox]::Show(
-        "Please enter a conversation ID or select an event from the stream.",
-        "No Conversation ID",
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Warning
-      )
-      return
-    }
-
-    # Check if authenticated
-    if (-not $script:AppState.AccessToken) {
-      [System.Windows.MessageBox]::Show(
-        "Please log in first to retrieve conversation details.",
-        "Authentication Required",
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Warning
-      )
-      return
-    }
-
-    Set-Status "Retrieving timeline for conversation $conv..."
-
-    # Start background job to retrieve and build timeline (using shared scriptblock)
-    Start-AppJob -Name "Open Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
-    -OnCompleted {
-      param($job)
-
-      if ($job.Result -and $job.Result.Timeline) {
-        $result = $job.Result
-        Set-Status "Timeline ready for conversation $($result.ConversationId) with $($result.Timeline.Count) events."
-
-        # Show timeline window
-        Show-TimelineWindow `
-          -ConversationId $result.ConversationId `
-          -TimelineEvents $result.Timeline `
-          -SubscriptionEvents $result.SubscriptionEvents
-      } else {
-        Set-Status "Failed to build timeline. See job logs for details."
-        [System.Windows.MessageBox]::Show(
-          "Failed to retrieve conversation timeline. Check job logs for details.",
-          "Timeline Error",
-          [System.Windows.MessageBoxButton]::OK,
-          [System.Windows.MessageBoxImage]::Error
-        )
-      }
-    }
-
-    Refresh-HeaderStats
-  })
-
-  $h.BtnExportPacket.Add_Click({
-    $conv = if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') { $h.TxtConv.Text } else { "c-$(Get-Random -Minimum 100000 -Maximum 999999)" }
-
-    if (-not $script:AppState.AccessToken) {
-      [System.Windows.MessageBox]::Show(
-        "Please log in first to export real conversation data.",
-        "Authentication Required",
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Warning
-      )
-
-      # Fallback to mock export using Start-AppJob
-      Start-AppJob -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -ScriptBlock {
-        param($conversationId, $artifactsDir)
-
-        Start-Sleep -Milliseconds 1400
-
-        $file = Join-Path -Path $artifactsDir -ChildPath "incident-packet-mock-$($conversationId)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-        @(
-          "Incident Packet (mock) — Subscription Evidence",
-          "ConversationId: $conversationId",
-          "Generated: $(Get-Date)",
-          "",
-          "NOTE: This is a mock packet. Log in to export real conversation data.",
-          ""
-        ) | Set-Content -Path $file -Encoding UTF8
-
-        return $file
-      } -ArgumentList @($conv, $script:ArtifactsDir) -OnCompleted {
+      Start-AppJob -Name "Connect subscription (AudioHook / Agent Assist)" -Type 'Subscription' -ScriptBlock {
+        # Simulate subscription connection work
+        Start-Sleep -Milliseconds 1200
+        return @{ Success = $true; Message = "Subscription connected" }
+      } -OnCompleted {
         param($job)
-
-        if ($job.Result) {
-          $file = $job.Result
-          Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
-          Set-Status "Exported mock incident packet: $file"
-        }
+        try { Add-GcJobLog -Job $job -Message "Subscription connected." } catch { $null = $_ }
+        $script:AppState.IsStreaming = $true
+        $h.BtnStart.IsEnabled = $false
+        $h.BtnStop.IsEnabled = $true
+        Set-Status "Subscription started."
+        Refresh-HeaderStats
       } | Out-Null
 
       Refresh-HeaderStats
-      return
-    }
+    })
 
-    # Real export using ArtifactGenerator with Start-AppJob
-    Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
-      param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
+  $h.BtnStop.Add_Click({
+      if (-not $script:AppState.IsStreaming) { return }
 
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
+      Start-AppJob -Name "Disconnect subscription" -Type 'Subscription' -ScriptBlock {
+        # Simulate subscription disconnection work
+        Start-Sleep -Milliseconds 700
+        return @{ Success = $true; Message = "Subscription disconnected" }
+      } -OnCompleted {
+        param($job)
+        try { Add-GcJobLog -Job $job -Message "Subscription disconnected." } catch { $null = $_ }
+        $script:AppState.IsStreaming = $false
+        $h.BtnStart.IsEnabled = $true
+        $h.BtnStop.IsEnabled = $false
+        Set-Status "Subscription stopped."
+        Refresh-HeaderStats
+      } | Out-Null
 
+      Refresh-HeaderStats
+    })
+
+  $h.BtnPin.Add_Click({
+      if ($h.LstEvents.SelectedItem) {
+        $selectedItem = $h.LstEvents.SelectedItem
+
+        # Get the event object from the ListBoxItem's Tag
+        if ($selectedItem -is [System.Windows.Controls.ListBoxItem] -and $selectedItem.Tag) {
+          $evt = $selectedItem.Tag
+
+          # Check if already pinned (avoid duplicates)
+          $alreadyPinned = $false
+          foreach ($pinnedEvt in $script:AppState.PinnedEvents) {
+            if ($pinnedEvt.raw.eventId -eq $evt.raw.eventId) {
+              $alreadyPinned = $true
+              break
+            }
+          }
+
+          if (-not $alreadyPinned) {
+            $script:AppState.PinnedEvents.Add($evt)
+            $script:AppState.PinnedCount++
+            Refresh-HeaderStats
+            Set-Status "Pinned event: $($evt.topic) for conversation $($evt.conversationId)"
+          }
+          else {
+            Set-Status "Event already pinned."
+          }
+        }
+        else {
+          Set-Status "Cannot pin event: invalid selection."
+        }
+      }
+    })
+
+  # Search box filtering
+  $h.TxtSearch.Add_TextChanged({
+      $searchText = $h.TxtSearch.Text
+
+      # Skip filtering if placeholder text
+      if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq 'search (conversationId, error, agent…)') {
+        # Show all events
+        foreach ($item in $h.LstEvents.Items) {
+          if ($item -is [System.Windows.Controls.ListBoxItem]) {
+            $item.Visibility = 'Visible'
+          }
+        }
+        return
+      }
+
+      $searchLower = $searchText.ToLower()
+      $script:SearchPlaceholder = 'search (conversationId, error, agent…)'
+
+      # Initial placeholder
+      Set-UiText -Control $h.TxtSearch -Text $script:SearchPlaceholder
+      # Filter events
+      foreach ($item in $h.LstEvents.Items) {
+        if ($item -is [System.Windows.Controls.ListBoxItem] -and $item.Tag) {
+          $evt = $item.Tag
+          $shouldShow = $false
+
+          # Search in conversationId
+          if ($evt.conversationId -and $evt.conversationId.ToLower().Contains($searchLower)) {
+            $shouldShow = $true
+          }
+
+          # Search in topic/type
+          if (-not $shouldShow -and $evt.topic -and $evt.topic.ToLower().Contains($searchLower)) {
+            $shouldShow = $true
+          }
+
+          # Search in severity
+          if (-not $shouldShow -and $evt.severity -and $evt.severity.ToLower().Contains($searchLower)) {
+            $shouldShow = $true
+          }
+
+          # Search in text
+          if (-not $shouldShow -and $evt.text -and $evt.text.ToLower().Contains($searchLower)) {
+            $shouldShow = $true
+          }
+
+          # Search in queueName
+          if (-not $shouldShow -and $evt.queueName -and $evt.queueName.ToLower().Contains($searchLower)) {
+            $shouldShow = $true
+          }
+
+          # Search in raw JSON (pre-cached during event creation for performance)
+          if (-not $shouldShow -and $evt._cachedRawJson -and $evt._cachedRawJson.Contains($searchLower)) {
+            $shouldShow = $true
+          }
+
+          $item.Visibility = if ($shouldShow) { 'Visible' } else { 'Collapsed' }
+        }
+      }
+    })
+
+  # Clear search placeholder on focus
+  $h.TxtSearch.Add_GotFocus({
       try {
-        # Build subscription events from buffer
-        $subscriptionEvents = $eventBuffer
-
-        # Export packet
-        $packet = Export-GcConversationPacket `
-          -ConversationId $conversationId `
-          -Region $region `
-          -AccessToken $accessToken `
-          -OutputDirectory $artifactsDir `
-          -SubscriptionEvents $subscriptionEvents `
-          -CreateZip
-
-        return $packet
-      } catch {
-        Write-Error "Failed to export packet: $_"
-        return $null
+        if ((Get-UiText -Control $h.TxtSearch) -eq $script:SearchPlaceholder) {
+          Set-UiText -Control $h.TxtSearch -Text ''
+        }
       }
-    } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
-    -OnCompleted {
-      param($job)
-
-      if ($job.Result) {
-        $packet = $job.Result
-        $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
-        $artifactName = "Incident Packet — $($packet.ConversationId)"
-
-        Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
-        Set-Status "Exported incident packet: $artifactPath"
-      } else {
-        Set-Status "Failed to export packet. See job logs for details."
+      catch {
+        # swallow to avoid UI death-spirals
       }
-    }
+    })
 
-    Refresh-HeaderStats
-  })
+  # Restore search placeholder on lost focus if empty
+  $h.TxtSearch.Add_LostFocus({
+      try {
+        if ([string]::IsNullOrWhiteSpace((Get-UiText -Control $h.TxtSearch))) {
+          Set-UiText -Control $h.TxtSearch -Text $script:SearchPlaceholder
+        }
+      }
+      catch {
+        # swallow to avoid UI death-spirals
+      }
+    })
+
+  $h.BtnOpenTimeline.Add_Click({
+      # Derive conversation ID from textbox first, then from selected event
+      $conv = ''
+
+      # Priority 1: Check conversationId textbox
+      if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') {
+        $conv = $h.TxtConv.Text.Trim()
+      }
+
+      # Priority 2: Infer from selected event
+      if (-not $conv -and $h.LstEvents.SelectedItem) {
+        if ($h.LstEvents.SelectedItem -is [System.Windows.Controls.ListBoxItem] -and $h.LstEvents.SelectedItem.Tag) {
+          $evt = $h.LstEvents.SelectedItem.Tag
+          $conv = $evt.conversationId
+        }
+        else {
+          # Fallback: parse from string (for backward compatibility)
+          $s = [string]$h.LstEvents.SelectedItem
+          if ($s -match 'conv=(?<cid>c-\d+)\s') { $conv = $matches['cid'] }
+        }
+      }
+
+      # Validate we have a conversation ID
+      if (-not $conv) {
+        [System.Windows.MessageBox]::Show(
+          "Please enter a conversation ID or select an event from the stream.",
+          "No Conversation ID",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
+        return
+      }
+
+      # Check if authenticated
+      if (-not $script:AppState.AccessToken) {
+        [System.Windows.MessageBox]::Show(
+          "Please log in first to retrieve conversation details.",
+          "Authentication Required",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
+        return
+      }
+
+      Set-Status "Retrieving timeline for conversation $conv..."
+
+      # Start background job to retrieve and build timeline (using shared scriptblock)
+      Start-AppJob -Name "Open Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
+        -OnCompleted {
+        param($job)
+
+        if ($job.Result -and $job.Result.Timeline) {
+          $result = $job.Result
+          Set-Status "Timeline ready for conversation $($result.ConversationId) with $($result.Timeline.Count) events."
+
+          # Show timeline window
+          Show-TimelineWindow `
+            -ConversationId $result.ConversationId `
+            -TimelineEvents $result.Timeline `
+            -SubscriptionEvents $result.SubscriptionEvents
+        }
+        else {
+          Set-Status "Failed to build timeline. See job logs for details."
+          [System.Windows.MessageBox]::Show(
+            "Failed to retrieve conversation timeline. Check job logs for details.",
+            "Timeline Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error
+          )
+        }
+      }
+
+      Refresh-HeaderStats
+    })
+
+  $h.BtnExportPacket.Add_Click({
+      $conv = if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') { $h.TxtConv.Text } else { "c-$(Get-Random -Minimum 100000 -Maximum 999999)" }
+
+      if (-not $script:AppState.AccessToken) {
+        [System.Windows.MessageBox]::Show(
+          "Please log in first to export real conversation data.",
+          "Authentication Required",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
+
+        # Fallback to mock export using Start-AppJob
+        Start-AppJob -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -ScriptBlock {
+          param($conversationId, $artifactsDir)
+
+          Start-Sleep -Milliseconds 1400
+
+          $file = Join-Path -Path $artifactsDir -ChildPath "incident-packet-mock-$($conversationId)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+          @(
+            "Incident Packet (mock) — Subscription Evidence",
+            "ConversationId: $conversationId",
+            "Generated: $(Get-Date)",
+            "",
+            "NOTE: This is a mock packet. Log in to export real conversation data.",
+            ""
+          ) | Set-Content -Path $file -Encoding UTF8
+
+          return $file
+        } -ArgumentList @($conv, $script:ArtifactsDir) -OnCompleted {
+          param($job)
+
+          if ($job.Result) {
+            $file = $job.Result
+            Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
+            Set-Status "Exported mock incident packet: $file"
+          }
+        } | Out-Null
+
+        Refresh-HeaderStats
+        return
+      }
+
+      # Real export using ArtifactGenerator with Start-AppJob
+      Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
+        param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
+
+        # Import required modules in runspace
+        $scriptRoot = Split-Path -Parent $PSCommandPath
+        $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+        Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
+
+        try {
+          # Build subscription events from buffer
+          $subscriptionEvents = $eventBuffer
+
+          # Export packet
+          $packet = Export-GcConversationPacket `
+            -ConversationId $conversationId `
+            -Region $region `
+            -AccessToken $accessToken `
+            -OutputDirectory $artifactsDir `
+            -SubscriptionEvents $subscriptionEvents `
+            -CreateZip
+
+          return $packet
+        }
+        catch {
+          Write-Error "Failed to export packet: $_"
+          return $null
+        }
+      } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
+        -OnCompleted {
+        param($job)
+
+        if ($job.Result) {
+          $packet = $job.Result
+          $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
+          $artifactName = "Incident Packet — $($packet.ConversationId)"
+
+          Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
+          Set-Status "Exported incident packet: $artifactPath"
+        }
+        else {
+          Set-Status "Failed to export packet. See job logs for details."
+        }
+      }
+
+      Refresh-HeaderStats
+    })
 
   return $view
 }
@@ -3121,20 +3279,34 @@ function New-SubscriptionsView {
 # -----------------------------
 # Routing (workspace + module)
 # -----------------------------
-function Populate-Modules([string]$workspace) {
+function Update-ModuleList {
+  [CmdletBinding(SupportsShouldProcess)]
+  param(
+    [Parameter(Mandatory)]
+    [string]$workspace
+  )
+  $null = $PSCmdlet.ShouldProcess($workspace, 'Update module list')
   $NavModules.Items.Clear()
   foreach ($m in $script:WorkspaceModules[$workspace]) {
     $NavModules.Items.Add($m) | Out-Null
   }
-  $TxtModuleHeader.Text = "Modules — $workspace"
-  $TxtModuleHint.Text   = "Select a module"
+  $TxtModuleHeader.Text = "Modules - $workspace"
+  $TxtModuleHint.Text = "Select a module"
 }
 
-function Set-ContentForModule([string]$workspace, [string]$module) {
-  $script:AppState.Workspace = $workspace
-  $script:AppState.Module    = $module
+function Set-ContentForModule {
+  [CmdletBinding(SupportsShouldProcess)]
+  param(
+    [Parameter(Mandatory)]
+    [string]$workspace,
 
-  $TxtTitle.Text    = $workspace
+    [Parameter(Mandatory)]
+    [string]$module
+  )
+  $script:AppState.Workspace = $workspace
+  $script:AppState.Module = $module
+
+  $TxtTitle.Text = $workspace
   $TxtSubtitle.Text = $module
 
   switch ("$workspace::$module") {
@@ -3168,20 +3340,20 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
 
 function Show-WorkspaceAndModule {
   param([Parameter(Mandatory)][string]$Workspace,
-        [Parameter(Mandatory)][string]$Module)
+    [Parameter(Mandatory)][string]$Module)
 
   # Select workspace
-  for ($i=0; $i -lt $NavWorkspaces.Items.Count; $i++) {
+  for ($i = 0; $i -lt $NavWorkspaces.Items.Count; $i++) {
     if ([string]$NavWorkspaces.Items[$i].Content -eq $Workspace) {
       $NavWorkspaces.SelectedIndex = $i
       break
     }
   }
 
-  Populate-Modules -workspace $Workspace
+  Update-ModuleList -workspace $Workspace
 
   # Select module
-  for ($i=0; $i -lt $NavModules.Items.Count; $i++) {
+  for ($i = 0; $i -lt $NavModules.Items.Count; $i++) {
     if ([string]$NavModules.Items[$i] -eq $Module) {
       $NavModules.SelectedIndex = $i
       break
@@ -3195,27 +3367,27 @@ function Show-WorkspaceAndModule {
 # Nav events
 # -----------------------------
 $NavWorkspaces.Add_SelectionChanged({
-  $item = $NavWorkspaces.SelectedItem
-  if (-not $item) { return }
+    $item = $NavWorkspaces.SelectedItem
+    if (-not $item) { return }
 
-  $ws = [string]$item.Content
-  Populate-Modules -workspace $ws
+    $ws = [string]$item.Content
+    Update-ModuleList -workspace $ws
 
-  $NavModules.SelectedIndex = 0
-  $default = [string]$NavModules.SelectedItem
-  if ($default) { Set-ContentForModule -workspace $ws -module $default }
-})
+    $NavModules.SelectedIndex = 0
+    $default = [string]$NavModules.SelectedItem
+    if ($default) { Set-ContentForModule -workspace $ws -module $default }
+  })
 
 $NavModules.Add_SelectionChanged({
-  $wsItem = $NavWorkspaces.SelectedItem
-  if (-not $wsItem) { return }
-  $ws = [string]$wsItem.Content
+    $wsItem = $NavWorkspaces.SelectedItem
+    if (-not $wsItem) { return }
+    $ws = [string]$wsItem.Content
 
-  $module = [string]$NavModules.SelectedItem
-  if (-not $module) { return }
+    $module = [string]$NavModules.SelectedItem
+    if (-not $module) { return }
 
-  Set-ContentForModule -workspace $ws -module $module
-})
+    Set-ContentForModule -workspace $ws -module $module
+  })
 
 # -----------------------------
 # Top bar actions
@@ -3228,83 +3400,137 @@ $loginContextMenu = New-Object System.Windows.Controls.ContextMenu
 $pasteTokenMenuItem = New-Object System.Windows.Controls.MenuItem
 $pasteTokenMenuItem.Header = "Paste Token…"
 $pasteTokenMenuItem.Add_Click({
-  Show-SetTokenDialog
-})
+    Show-SetTokenDialog
+  })
 
 $loginContextMenu.Items.Add($pasteTokenMenuItem) | Out-Null
 $BtnLogin.ContextMenu = $loginContextMenu
 ### END: Manual Token Entry
 
 $BtnLogin.Add_Click({
-  Write-GcDiag ("Login button clicked (HasToken={0}, Region='{1}')" -f [bool]$script:AppState.AccessToken, $script:AppState.Region)
-  # Check if already logged in - if so, logout
-  if ($script:AppState.AccessToken) {
-    Write-GcDiag "Login button: logging out (clearing token state)"
-    # Logout: Clear token and reset UI
-    # Clear-GcTokenState clears the Auth module's token state
-    # We also clear AppState.AccessToken (application-level state) for complete logout
-    Clear-GcTokenState
-    $script:AppState.AccessToken = $null
-    $script:AppState.Auth = "Not logged in"
-    $script:AppState.TokenStatus = "No token"
+    Write-GcDiag ("Login button clicked (HasToken={0}, Region='{1}')" -f [bool]$script:AppState.AccessToken, $script:AppState.Region)
+    # Check if already logged in - if so, logout
+    if ($script:AppState.AccessToken) {
+      Write-GcDiag "Login button: logging out (clearing token state)"
+      # Logout: Clear token and reset UI
+      # Clear-GcTokenState clears the Auth module's token state
+      # We also clear AppState.AccessToken (application-level state) for complete logout
+      Clear-GcTokenState
+      $script:AppState.AccessToken = $null
+      $script:AppState.Auth = "Not logged in"
+      $script:AppState.TokenStatus = "No token"
 
-    Set-TopContext
-    Set-Status "Logged out successfully."
+      Set-TopContext
+      Set-Status "Logged out successfully."
 
-    $BtnLogin.Content = "Login…"
-    $BtnTestToken.IsEnabled = $false
-    return
-  }
+      $BtnLogin.Content = "Login…"
+      $BtnTestToken.IsEnabled = $false
+      return
+    }
 
-  # Login flow
-  $authConfig = Get-GcAuthConfig
-  Write-GcDiag ("OAuth config snapshot: Region='{0}' ClientId='{1}' RedirectUri='{2}' Scopes='{3}' HasClientSecret={4}" -f $authConfig.Region, $authConfig.ClientId, $authConfig.RedirectUri, ($authConfig.Scopes -join ' '), (-not [string]::IsNullOrWhiteSpace($authConfig.ClientSecret)))
+    # Login flow
+    $authConfig = Get-GcAuthConfig
+    Write-GcDiag ("OAuth config snapshot: Region='{0}' ClientId='{1}' RedirectUri='{2}' Scopes='{3}' HasClientSecret={4}" -f $authConfig.Region, $authConfig.ClientId, $authConfig.RedirectUri, ($authConfig.Scopes -join ' '), (-not [string]::IsNullOrWhiteSpace($authConfig.ClientSecret)))
+    # Ensure we have an object
+    if ($null -eq $authConfig) {
+      $authConfig = [pscustomobject]@{}
+    }
 
-  # Check if client ID is configured
-  if ($authConfig.ClientId -eq 'YOUR_CLIENT_ID_HERE' -or -not $authConfig.ClientId) {
-    [System.Windows.MessageBox]::Show(
-      "Please configure your OAuth Client ID in the script.`n`nSet-GcAuthConfig -ClientId 'your-client-id' -Region 'your-region'",
-      "Configuration Required",
-      [System.Windows.MessageBoxButton]::OK,
-      [System.Windows.MessageBoxImage]::Warning
-    )
-    return
-  }
+    # Ensure required properties exist (so string formatting / logging can’t throw)
+    foreach ($name in @('Region', 'ClientId', 'RedirectUri', 'Scopes', 'ClientSecret')) {
+      if (-not ($authConfig.PSObject.Properties.Name -contains $name)) {
+        $authConfig | Add-Member -NotePropertyName $name -NotePropertyValue '' -Force
+      }
+    }
 
-  # Disable button during auth
-  $BtnLogin.IsEnabled = $false
-  $BtnLogin.Content = "Authenticating..."
-  Set-Status "Starting OAuth flow..."
+    # Pull UI values as fallback if module didn’t populate them
+    if ([string]::IsNullOrWhiteSpace($authConfig.Region) -and $h.TxtRegion) { $authConfig.Region = (Get-UiText $h.TxtRegion) }
+    if ([string]::IsNullOrWhiteSpace($authConfig.ClientId) -and $h.TxtClientId) { $authConfig.ClientId = (Get-UiText $h.TxtClientId) }
+    if ([string]::IsNullOrWhiteSpace($authConfig.RedirectUri) -and $h.TxtRedirectUri) { $authConfig.RedirectUri = (Get-UiText $h.TxtRedirectUri) }
+    if ([string]::IsNullOrWhiteSpace($authConfig.Scopes) -and $h.TxtScopes) { $authConfig.Scopes = (Get-UiText $h.TxtScopes) }
 
-  # Run OAuth flow in background
-  $authModulePath = Join-Path -Path $coreRoot -ChildPath 'Auth.psm1'
-  $authConfigSnapshot = Get-GcAuthConfig
-  Write-GcDiag ("Starting OAuth Login job (AuthModule='{0}', ArtifactsDir='{1}')" -f $authModulePath, $script:ArtifactsDir)
+    # Hard fail early if scopes are blank — OAuth token flows are scope-driven in Genesys Cloud
+    if ([string]::IsNullOrWhiteSpace($authConfig.Scopes)) {
+      Write-GcDiag "OAuth Login: BLOCKED (Scopes are blank). Set scopes in the UI first."
+      Set-GcStatus -h $h -Text "OAuth scopes are blank. Add scopes (e.g., users:readonly analytics:readonly …) then retry." -Level Warn
+      return
+    }
 
-  Start-AppJob -Name "OAuth Login" -Type "Auth" -ScriptBlock {
-    param($authModulePath, $authConfigSnapshot, $artifactsDir)
+    # Check if client ID is configured
+    if ($authConfig.ClientId -eq 'YOUR_CLIENT_ID_HERE' -or -not $authConfig.ClientId) {
+      [System.Windows.MessageBox]::Show(
+        "Please configure your OAuth Client ID in the script.`n`nSet-GcAuthConfig -ClientId 'your-client-id' -Region 'your-region'",
+        "Configuration Required",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      return
+    }
 
-    Import-Module $authModulePath -Force
-    Enable-GcAuthDiagnostics -LogDirectory $artifactsDir | Out-Null
+    # Disable button during auth
+    $BtnLogin.IsEnabled = $false
+    $BtnLogin.Content = "Authenticating..."
+    Set-Status "Starting OAuth flow..."
 
-    # Re-apply auth configuration inside the job runspace (module state is per-runspace).
-    Set-GcAuthConfig `
-      -Region $authConfigSnapshot.Region `
-      -ClientId $authConfigSnapshot.ClientId `
-      -RedirectUri $authConfigSnapshot.RedirectUri `
-      -Scopes $authConfigSnapshot.Scopes `
-      -ClientSecret $authConfigSnapshot.ClientSecret
+    # Run OAuth flow in background
+    $authModulePath = Join-Path -Path $coreRoot -ChildPath 'Auth.psm1'
+    $authConfigSnapshot = Get-GcAuthConfig
+    Write-GcDiag ("Starting OAuth Login job (AuthModule='{0}', ArtifactsDir='{1}')" -f $authModulePath, $script:ArtifactsDir)
 
-    $diag = $null
-    try { $diag = Get-GcAuthDiagnostics } catch { }
+    Start-AppJob -Name "OAuth Login" -Type "Auth" -ScriptBlock {
+      param($authModulePath, $authConfigSnapshot, $artifactsDir)
 
-    try {
-      $tokenResponse = Get-GcTokenAsync -TimeoutSeconds 300
-      if (-not $tokenResponse -or -not $tokenResponse.access_token) {
-        try { $diag = Get-GcAuthDiagnostics } catch { }
+      Import-Module $authModulePath -Force
+      Enable-GcAuthDiagnostics -LogDirectory $artifactsDir | Out-Null
+
+      # Re-apply auth configuration inside the job runspace (module state is per-runspace).
+      Set-GcAuthConfig `
+        -Region $authConfigSnapshot.Region `
+        -ClientId $authConfigSnapshot.ClientId `
+        -RedirectUri $authConfigSnapshot.RedirectUri `
+        -Scopes $authConfigSnapshot.Scopes `
+        -ClientSecret $authConfigSnapshot.ClientSecret
+
+      $diag = $null
+      try { $diag = Get-GcAuthDiagnostics } catch { $diag = $null }
+
+      try {
+        $tokenResponse = Get-GcTokenAsync -TimeoutSeconds 300
+        if (-not $tokenResponse -or -not $tokenResponse.access_token) {
+          try { $diag = Get-GcAuthDiagnostics } catch { $diag = $null }
+          return [PSCustomObject]@{
+            Success     = $false
+            Error       = "OAuth flow returned no access_token."
+            AccessToken = $null
+            TokenType   = $null
+            ExpiresIn   = $null
+            UserInfo    = $null
+            AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
+          }
+        }
+
+        $userInfo = $null
+        try { $userInfo = Test-GcToken } catch { $userInfo = $null }
+
+        try { $diag = Get-GcAuthDiagnostics } catch { $diag = $null }
+
+        return [PSCustomObject]@{
+          Success     = $true
+          Error       = $null
+          AccessToken = $tokenResponse.access_token
+          TokenType   = $tokenResponse.token_type
+          ExpiresIn   = $tokenResponse.expires_in
+          UserInfo    = $userInfo
+          AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
+        }
+      }
+      catch {
+        try { $diag = Get-GcAuthDiagnostics } catch { $diag = $null }
+        $msg = $_.Exception.Message
+        Write-Error $_
         return [PSCustomObject]@{
           Success     = $false
-          Error       = "OAuth flow returned no access_token."
+          Error       = $msg
           AccessToken = $null
           TokenType   = $null
           ExpiresIn   = $null
@@ -3312,110 +3538,94 @@ $BtnLogin.Add_Click({
           AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
         }
       }
+    } -ArgumentList @($authModulePath, $authConfigSnapshot, $script:ArtifactsDir) -OnCompleted {
+      param($job)
 
-      $userInfo = $null
-      try { $userInfo = Test-GcToken } catch { }
+      if ($job.Result -and $job.Result.Success) {
+        Write-GcDiag ("OAuth Login: SUCCESS (Token={0})" -f (Format-GcDiagSecret -Value $job.Result.AccessToken))
+        if ($job.Result.AuthLogPath) { Write-GcDiag ("OAuth Login: Auth diagnostics log: {0}" -f $job.Result.AuthLogPath) }
 
-      try { $diag = Get-GcAuthDiagnostics } catch { }
+        $script:AppState.AccessToken = $job.Result.AccessToken
+        $script:AppState.Auth = "Logged in"
+        $script:AppState.TokenStatus = "Token OK"
 
-      return [PSCustomObject]@{
-        Success     = $true
-        Error       = $null
-        AccessToken = $tokenResponse.access_token
-        TokenType   = $tokenResponse.token_type
-        ExpiresIn   = $tokenResponse.expires_in
-        UserInfo    = $userInfo
-        AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
-      }
-    } catch {
-      try { $diag = Get-GcAuthDiagnostics } catch { }
-      $msg = $_.Exception.Message
-      Write-Error $_
-      return [PSCustomObject]@{
-        Success     = $false
-        Error       = $msg
-        AccessToken = $null
-        TokenType   = $null
-        ExpiresIn   = $null
-        UserInfo    = $null
-        AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
-      }
-    }
-  } -ArgumentList @($authModulePath, $authConfigSnapshot, $script:ArtifactsDir) -OnCompleted {
-    param($job)
-
-    if ($job.Result -and $job.Result.Success) {
-      Write-GcDiag ("OAuth Login: SUCCESS (Token={0})" -f (Format-GcDiagSecret -Value $job.Result.AccessToken))
-      if ($job.Result.AuthLogPath) { Write-GcDiag ("OAuth Login: Auth diagnostics log: {0}" -f $job.Result.AuthLogPath) }
-
-      $script:AppState.AccessToken = $job.Result.AccessToken
-      $script:AppState.Auth = "Logged in"
-      $script:AppState.TokenStatus = "Token OK"
-
-      if ($job.Result.UserInfo) {
-        $script:AppState.Auth = "Logged in as $($job.Result.UserInfo.name)"
-      }
-
-      Set-TopContext
-      Set-Status "Authentication successful!"
-      $BtnLogin.Content = "Logout"
-      $BtnLogin.IsEnabled = $true
-      $BtnTestToken.IsEnabled = $true
-    } else {
-      $err = $null
-      if ($job.Result) { $err = $job.Result.Error }
-      Write-GcDiag ("OAuth Login: FAILED (Error='{0}')" -f $err)
-      $BtnTestToken.IsEnabled = $false
-
-      $script:AppState.Auth = "Login failed"
-      $script:AppState.TokenStatus = "No token"
-      Set-TopContext
-      $authLogPath = $null
-      if ($job.Result -and $job.Result.AuthLogPath) { $authLogPath = $job.Result.AuthLogPath }
-      try {
-        $combined = @()
-        if ($job.Errors) { $combined += @($job.Errors) }
-        if ($job.Logs) { $combined += @($job.Logs) }
-        $text = ($combined -join "`n")
-        if ($text -match 'Auth diagnostics:\s*(?<p>[^)\r\n]+)') {
-          $authLogPath = $matches['p'].Trim()
+        if ($job.Result.UserInfo) {
+          $script:AppState.Auth = "Logged in as $($job.Result.UserInfo.name)"
         }
-      } catch { }
 
-      if ($authLogPath) {
-        Write-GcDiag ("OAuth Login: Auth diagnostics log: {0}" -f $authLogPath)
-        try {
-          if (Test-Path -LiteralPath $authLogPath) {
-            $tail = Get-Content -LiteralPath $authLogPath -Tail 80 -ErrorAction SilentlyContinue
-            Write-GcDiag ("OAuth Login: last {0} auth log lines:" -f @($tail).Count)
-            foreach ($l in @($tail)) { Write-Host $l }
-          }
-        } catch { }
-        Set-Status "Authentication failed. Auth log: $authLogPath"
-      } else {
-        Set-Status "Authentication failed. Check job logs for details."
+        Set-TopContext
+        Set-Status "Authentication successful!"
+        $BtnLogin.Content = "Logout"
+        $BtnLogin.IsEnabled = $true
+        $BtnTestToken.IsEnabled = $true
       }
-      $BtnLogin.Content = "Login…"
-      $BtnLogin.IsEnabled = $true
+      else {
+        $err = $null
+        if ($job.Result) { $err = $job.Result.Error }
+        Write-GcDiag ("OAuth Login: FAILED (Error='{0}')" -f $err)
+        $BtnTestToken.IsEnabled = $false
+
+        $script:AppState.Auth = "Login failed"
+        $script:AppState.TokenStatus = "No token"
+        Set-TopContext
+        $authLogPath = $null
+        if ($job.Result -and $job.Result.AuthLogPath) { $authLogPath = $job.Result.AuthLogPath }
+        try {
+          $combined = @()
+          if ($job.Errors) { $combined += @($job.Errors) }
+          if ($job.Logs) { $combined += @($job.Logs) }
+          $text = ($combined -join "`n")
+          if ($text -match 'Auth diagnostics:\s*(?<p>[^)\r\n]+)') {
+            $authLogPath = $matches['p'].Trim()
+          }
+        }
+        catch { $null = $_ }
+
+        if ($authLogPath) {
+          Write-GcDiag ("OAuth Login: Auth diagnostics log: {0}" -f $authLogPath)
+          try {
+            if (Test-Path -LiteralPath $authLogPath) {
+              $tail = Get-Content -LiteralPath $authLogPath -Tail 80 -ErrorAction SilentlyContinue
+              Write-GcDiag ("OAuth Login: last {0} auth log lines:" -f @($tail).Count)
+              foreach ($l in @($tail)) { Write-Host $l }
+            }
+          }
+          catch { $null = $_ }
+          Set-Status "Authentication failed. Auth log: $authLogPath"
+        }
+        else {
+          Set-Status "Authentication failed. Check job logs for details."
+        }
+        $BtnLogin.Content = "Login…"
+        $BtnLogin.IsEnabled = $true
+      }
     }
-  }
-})
+  })
 
+### BEGIN: Real Test Token
 $BtnTestToken.Add_Click({
-  Write-GcDiag ("Test Token button clicked (HasToken={0}, Region='{1}')" -f [bool]$script:AppState.AccessToken, $script:AppState.Region)
-  ### BEGIN: Manual Token Entry
-  # If no token exists, open the manual token entry dialog instead of showing an error
-  if (-not $script:AppState.AccessToken) {
-    Write-GcDiag "Test Token: no token set -> opening manual token dialog"
-    Show-SetTokenDialog
-    return
-  }
+    if (-not (Ensure-ManualToken)) {
+      Set-Status "Token test canceled (no token set)."
+      return
+    }
 
-  # Use the dedicated token test function
-  Write-GcDiag "Test Token: token exists -> running Start-TokenTest"
-  Start-TokenTest
-  ### END: Manual Token Entry
-})
+    try {
+      $me = Invoke-AppGcRequest -Method GET -Path '/api/v2/users/me'
+      $script:AppState.Auth = 'Token verified'
+      $script:AppState.TokenStatus = "OK: $($me.name)"
+      Set-TopContext
+      Set-Status "Token OK. Hello $($me.name)."
+    }
+    catch {
+      $script:AppState.Auth = 'Not logged in'
+      $script:AppState.TokenStatus = 'Token failed'
+      Set-TopContext
+      [System.Windows.MessageBox]::Show($_.Exception.Message, 'Token Test Failed', 'OK', 'Error') | Out-Null
+      Set-Status "Token test failed."
+    }
+  })
+### END: Real Test Token
+
 
 $BtnJobs.Add_Click({ Open-Backstage -Tab 'Jobs' })
 $BtnArtifacts.Add_Click({ Open-Backstage -Tab 'Artifacts' })
@@ -3424,9 +3634,9 @@ $BtnArtifacts.Add_Click({ Open-Backstage -Tab 'Artifacts' })
 $script:JobsRefreshTimer = New-Object Windows.Threading.DispatcherTimer
 $script:JobsRefreshTimer.Interval = [TimeSpan]::FromMilliseconds(400)
 $script:JobsRefreshTimer.Add_Tick({
-  Refresh-JobsList
-  Refresh-HeaderStats
-})
+    Refresh-JobsList
+    Refresh-HeaderStats
+  })
 $script:JobsRefreshTimer.Start()
 
 # -----------------------------
@@ -3436,10 +3646,10 @@ Set-TopContext
 Refresh-HeaderStats
 
 # Default: Operations → Topic Subscriptions
-for ($i=0; $i -lt $NavWorkspaces.Items.Count; $i++) {
+for ($i = 0; $i -lt $NavWorkspaces.Items.Count; $i++) {
   if ([string]$NavWorkspaces.Items[$i].Content -eq 'Operations') { $NavWorkspaces.SelectedIndex = $i; break }
 }
-Populate-Modules -workspace 'Operations'
+Update-ModuleList -workspace 'Operations'
 $NavModules.SelectedIndex = 0
 Set-ContentForModule -workspace 'Operations' -module 'Topic Subscriptions'
 
