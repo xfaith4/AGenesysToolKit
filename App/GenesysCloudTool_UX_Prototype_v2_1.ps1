@@ -1012,7 +1012,8 @@ function Show-SetTokenDialog {
 
       # Basic token format validation (should look like a JWT or similar)
       # JWT tokens have format: xxxxx.yyyyy.zzzzz (base64 parts separated by dots)
-      # Allow other token formats but warn if it looks suspicious
+      # Minimum length of 20 characters catches obviously invalid tokens while
+      # allowing various token formats (JWT typically 100+ chars, OAuth2 tokens vary)
       if ($token.Length -lt 20) {
         [System.Windows.MessageBox]::Show(
           "The token appears too short to be valid. Please verify you've copied the complete token.",
