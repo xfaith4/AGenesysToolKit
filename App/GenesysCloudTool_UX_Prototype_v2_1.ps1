@@ -2359,6 +2359,457 @@ function New-OAuthTokenUsageView {
   return $view
 }
 
+function New-ConversationLookupView {
+  <#
+  .SYNOPSIS
+    Creates the Conversation Lookup module view with search, filter, and export capabilities.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+
+          <StackPanel>
+            <TextBlock Text="Conversation Lookup" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+            <TextBlock Text="Search conversations by date range, queue, participants, and more" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+          </StackPanel>
+
+          <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+            <Button x:Name="BtnConvSearch" Content="Search" Width="100" Height="32" Margin="0,0,8,0"/>
+            <Button x:Name="BtnConvExportJson" Content="Export JSON" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+            <Button x:Name="BtnConvExportCsv" Content="Export CSV" Width="100" Height="32" IsEnabled="False"/>
+          </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="1" Margin="0,12,0,0">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="200"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="200"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="150"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="Date Range:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox x:Name="CmbDateRange" Grid.Column="1" Height="26" SelectedIndex="2">
+              <ComboBoxItem Content="Last 1 hour"/>
+              <ComboBoxItem Content="Last 6 hours"/>
+              <ComboBoxItem Content="Last 24 hours"/>
+              <ComboBoxItem Content="Last 7 days"/>
+              <ComboBoxItem Content="Custom"/>
+            </ComboBox>
+
+            <TextBlock Grid.Column="2" Text="Conversation ID:" VerticalAlignment="Center" Margin="12,0,8,0"/>
+            <TextBox x:Name="TxtConvIdFilter" Grid.Column="3" Height="26"/>
+
+            <TextBlock Grid.Column="4" Text="Max Results:" VerticalAlignment="Center" Margin="12,0,8,0"/>
+            <TextBox x:Name="TxtMaxResults" Grid.Column="5" Height="26" Text="500"/>
+          </Grid>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Conversations" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBox x:Name="TxtConvSearchFilter" Margin="12,0,0,0" Width="300" Height="26" Text="Filter results..."/>
+          <TextBlock x:Name="TxtConvCount" Text="(0 conversations)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+          <Button x:Name="BtnOpenTimeline" Content="Open Timeline" Width="120" Height="26" Margin="12,0,0,0" IsEnabled="False"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridConversations" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Conversation ID" Binding="{Binding ConversationId}" Width="280"/>
+            <DataGridTextColumn Header="Start Time" Binding="{Binding StartTime}" Width="160"/>
+            <DataGridTextColumn Header="Duration" Binding="{Binding Duration}" Width="100"/>
+            <DataGridTextColumn Header="Participants" Binding="{Binding Participants}" Width="150"/>
+            <DataGridTextColumn Header="Media" Binding="{Binding Media}" Width="100"/>
+            <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    BtnConvSearch       = $view.FindName('BtnConvSearch')
+    BtnConvExportJson   = $view.FindName('BtnConvExportJson')
+    BtnConvExportCsv    = $view.FindName('BtnConvExportCsv')
+    CmbDateRange        = $view.FindName('CmbDateRange')
+    TxtConvIdFilter     = $view.FindName('TxtConvIdFilter')
+    TxtMaxResults       = $view.FindName('TxtMaxResults')
+    TxtConvSearchFilter = $view.FindName('TxtConvSearchFilter')
+    TxtConvCount        = $view.FindName('TxtConvCount')
+    BtnOpenTimeline     = $view.FindName('BtnOpenTimeline')
+    GridConversations   = $view.FindName('GridConversations')
+  }
+
+  $script:ConversationsData = @()
+
+  $h.BtnConvSearch.Add_Click({
+    Set-Status "Searching conversations..."
+    $h.BtnConvSearch.IsEnabled = $false
+    $h.BtnConvExportJson.IsEnabled = $false
+    $h.BtnConvExportCsv.IsEnabled = $false
+    $h.BtnOpenTimeline.IsEnabled = $false
+
+    # Build date range
+    $endTime = Get-Date
+    $startTime = switch ($h.CmbDateRange.SelectedIndex) {
+      0 { $endTime.AddHours(-1) }
+      1 { $endTime.AddHours(-6) }
+      2 { $endTime.AddHours(-24) }
+      3 { $endTime.AddDays(-7) }
+      default { $endTime.AddHours(-24) }
+    }
+
+    $interval = "$($startTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))/$($endTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))"
+    
+    # Get max results
+    $maxResults = 500
+    if (-not [string]::IsNullOrWhiteSpace($h.TxtMaxResults.Text)) {
+      if ([int]::TryParse($h.TxtMaxResults.Text, [ref]$maxResults)) {
+        # Valid number
+      } else {
+        $maxResults = 500
+      }
+    }
+
+    # Build query body
+    $queryBody = @{
+      interval = $interval
+      order = "desc"
+      orderBy = "conversationStart"
+      paging = @{
+        pageSize = 100
+        pageNumber = 1
+      }
+    }
+
+    # Add conversation ID filter if provided
+    if (-not [string]::IsNullOrWhiteSpace($h.TxtConvIdFilter.Text)) {
+      $queryBody.conversationFilters = @(
+        @{
+          type = "and"
+          predicates = @(
+            @{
+              dimension = "conversationId"
+              value = $h.TxtConvIdFilter.Text
+            }
+          )
+        }
+      )
+    }
+
+    Start-AppJob -Name "Search Conversations" -Type "Query" -ScriptBlock {
+      param($queryBody, $accessToken, $instanceName, $maxItems)
+      
+      # Import required modules in runspace
+      $scriptRoot = Split-Path -Parent $PSCommandPath
+      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1') -Force
+      
+      Search-GcConversations -Body $queryBody -AccessToken $accessToken -InstanceName $instanceName -MaxItems $maxItems
+    } -ArgumentList @($queryBody, $script:AppState.AccessToken, $script:AppState.Region, $maxResults) -OnCompleted {
+      param($job)
+      $h.BtnConvSearch.IsEnabled = $true
+
+      if ($job.Result) {
+        $script:ConversationsData = $job.Result
+        $displayData = $job.Result | ForEach-Object {
+          $startTime = if ($_.conversationStart) { 
+            try { [DateTime]::Parse($_.conversationStart).ToString('yyyy-MM-dd HH:mm:ss') } 
+            catch { $_.conversationStart }
+          } else { 'N/A' }
+          
+          $duration = if ($_.conversationEnd -and $_.conversationStart) {
+            try {
+              $start = [DateTime]::Parse($_.conversationStart)
+              $end = [DateTime]::Parse($_.conversationEnd)
+              $span = $end - $start
+              "$([int]$span.TotalSeconds)s"
+            } catch { 'N/A' }
+          } else { 'N/A' }
+
+          $participants = if ($_.participants) { $_.participants.Count } else { 0 }
+          
+          $mediaTypes = if ($_.participants) {
+            ($_.participants | ForEach-Object { 
+              if ($_.sessions) { 
+                $_.sessions | ForEach-Object { 
+                  if ($_.mediaType) { $_.mediaType } 
+                } 
+              } 
+            } | Select-Object -Unique) -join ', '
+          } else { 'N/A' }
+
+          $direction = if ($_.participants) {
+            $dirs = $_.participants | ForEach-Object { 
+              if ($_.sessions) { 
+                $_.sessions | ForEach-Object { 
+                  if ($_.direction) { $_.direction } 
+                } 
+              } 
+            } | Select-Object -Unique
+            $dirs -join ', '
+          } else { 'N/A' }
+
+          [PSCustomObject]@{
+            ConversationId = if ($_.conversationId) { $_.conversationId } else { 'N/A' }
+            StartTime = $startTime
+            Duration = $duration
+            Participants = $participants
+            Media = $mediaTypes
+            Direction = $direction
+            RawData = $_
+          }
+        }
+        $h.GridConversations.ItemsSource = $displayData
+        $h.TxtConvCount.Text = "($($job.Result.Count) conversations)"
+        $h.BtnConvExportJson.IsEnabled = $true
+        $h.BtnConvExportCsv.IsEnabled = $true
+        $h.BtnOpenTimeline.IsEnabled = $true
+        Set-Status "Found $($job.Result.Count) conversations."
+      } else {
+        $h.GridConversations.ItemsSource = @()
+        $h.TxtConvCount.Text = "(0 conversations)"
+        Set-Status "Search failed or returned no results."
+      }
+    }
+  })
+
+  $h.BtnConvExportJson.Add_Click({
+    if (-not $script:ConversationsData -or $script:ConversationsData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "conversations_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:ConversationsData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported $($script:ConversationsData.Count) conversations to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  $h.BtnConvExportCsv.Add_Click({
+    if (-not $script:ConversationsData -or $script:ConversationsData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "conversations_$timestamp.csv"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $h.GridConversations.ItemsSource | Select-Object ConversationId, StartTime, Duration, Participants, Media, Direction |
+        Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
+      Set-Status "Exported $($script:ConversationsData.Count) conversations to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  $h.BtnOpenTimeline.Add_Click({
+    $selected = $h.GridConversations.SelectedItem
+    if (-not $selected) {
+      Set-Status "Please select a conversation to view timeline."
+      return
+    }
+
+    $convId = $selected.ConversationId
+    if ([string]::IsNullOrWhiteSpace($convId) -or $convId -eq 'N/A') {
+      Set-Status "Invalid conversation ID."
+      return
+    }
+
+    # Set the conversation ID for timeline view to pick up
+    $script:AppState.FocusConversationId = $convId
+    
+    # Navigate to Conversation Timeline
+    Show-WorkspaceAndModule -Workspace "Conversations" -Module "Conversation Timeline"
+  })
+
+  $h.TxtConvSearchFilter.Add_TextChanged({
+    if (-not $script:ConversationsData -or $script:ConversationsData.Count -eq 0) { return }
+
+    $searchText = $h.TxtConvSearchFilter.Text.ToLower()
+    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "filter results...") {
+      $h.GridConversations.ItemsSource = $script:ConversationsData | ForEach-Object {
+        $startTime = if ($_.conversationStart) { 
+          try { [DateTime]::Parse($_.conversationStart).ToString('yyyy-MM-dd HH:mm:ss') } 
+          catch { $_.conversationStart }
+        } else { 'N/A' }
+        
+        $duration = if ($_.conversationEnd -and $_.conversationStart) {
+          try {
+            $start = [DateTime]::Parse($_.conversationStart)
+            $end = [DateTime]::Parse($_.conversationEnd)
+            $span = $end - $start
+            "$([int]$span.TotalSeconds)s"
+          } catch { 'N/A' }
+        } else { 'N/A' }
+
+        $participants = if ($_.participants) { $_.participants.Count } else { 0 }
+        
+        $mediaTypes = if ($_.participants) {
+          ($_.participants | ForEach-Object { 
+            if ($_.sessions) { 
+              $_.sessions | ForEach-Object { 
+                if ($_.mediaType) { $_.mediaType } 
+              } 
+            } 
+          } | Select-Object -Unique) -join ', '
+        } else { 'N/A' }
+
+        $direction = if ($_.participants) {
+          $dirs = $_.participants | ForEach-Object { 
+            if ($_.sessions) { 
+              $_.sessions | ForEach-Object { 
+                if ($_.direction) { $_.direction } 
+              } 
+            } 
+          } | Select-Object -Unique
+          $dirs -join ', '
+        } else { 'N/A' }
+
+        [PSCustomObject]@{
+          ConversationId = if ($_.conversationId) { $_.conversationId } else { 'N/A' }
+          StartTime = $startTime
+          Duration = $duration
+          Participants = $participants
+          Media = $mediaTypes
+          Direction = $direction
+          RawData = $_
+        }
+      }
+      $h.TxtConvCount.Text = "($($script:ConversationsData.Count) conversations)"
+      return
+    }
+
+    $filtered = $script:ConversationsData | Where-Object {
+      $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
+      $json -like "*$searchText*"
+    }
+
+    $displayData = $filtered | ForEach-Object {
+      $startTime = if ($_.conversationStart) { 
+        try { [DateTime]::Parse($_.conversationStart).ToString('yyyy-MM-dd HH:mm:ss') } 
+        catch { $_.conversationStart }
+      } else { 'N/A' }
+      
+      $duration = if ($_.conversationEnd -and $_.conversationStart) {
+        try {
+          $start = [DateTime]::Parse($_.conversationStart)
+          $end = [DateTime]::Parse($_.conversationEnd)
+          $span = $end - $start
+          "$([int]$span.TotalSeconds)s"
+        } catch { 'N/A' }
+      } else { 'N/A' }
+
+      $participants = if ($_.participants) { $_.participants.Count } else { 0 }
+      
+      $mediaTypes = if ($_.participants) {
+        ($_.participants | ForEach-Object { 
+          if ($_.sessions) { 
+            $_.sessions | ForEach-Object { 
+              if ($_.mediaType) { $_.mediaType } 
+            } 
+          } 
+        } | Select-Object -Unique) -join ', '
+      } else { 'N/A' }
+
+      $direction = if ($_.participants) {
+        $dirs = $_.participants | ForEach-Object { 
+          if ($_.sessions) { 
+            $_.sessions | ForEach-Object { 
+              if ($_.direction) { $_.direction } 
+            } 
+          } 
+        } | Select-Object -Unique
+        $dirs -join ', '
+      } else { 'N/A' }
+
+      [PSCustomObject]@{
+        ConversationId = if ($_.conversationId) { $_.conversationId } else { 'N/A' }
+        StartTime = $startTime
+        Duration = $duration
+        Participants = $participants
+        Media = $mediaTypes
+        Direction = $direction
+        RawData = $_
+      }
+    }
+
+    $h.GridConversations.ItemsSource = $displayData
+    $h.TxtConvCount.Text = "($($filtered.Count) conversations)"
+  })
+
+  $h.TxtConvSearchFilter.Add_GotFocus({
+    if ($h.TxtConvSearchFilter.Text -eq "Filter results...") {
+      $h.TxtConvSearchFilter.Text = ""
+    }
+  })
+
+  $h.TxtConvSearchFilter.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($h.TxtConvSearchFilter.Text)) {
+      $h.TxtConvSearchFilter.Text = "Filter results..."
+    }
+  })
+
+  return $view
+}
+
 function New-ConversationTimelineView {
   $xamlString = @"
 <UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -4105,6 +4556,10 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Operations::OAuth / Token Usage' {
       $TxtSubtitle.Text = 'View OAuth clients and token usage'
       $MainHost.Content = (New-OAuthTokenUsageView)
+    }
+    'Conversations::Conversation Lookup' {
+      $TxtSubtitle.Text = 'Search conversations by date range, participants, and filters'
+      $MainHost.Content = (New-ConversationLookupView)
     }
     'Conversations::Conversation Timeline' {
       $TxtSubtitle.Text = 'Timeline-first: evidence → story → export'
