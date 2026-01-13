@@ -3345,6 +3345,278 @@ function New-AnalyticsJobsView {
   return $view
 }
 
+function New-IncidentPacketView {
+  <#
+  .SYNOPSIS
+    Creates the Incident Packet module view for generating comprehensive conversation packets.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+
+          <StackPanel>
+            <TextBlock Text="Incident Packet Generator" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+            <TextBlock Text="Generate comprehensive incident packets with conversation data, timeline, and artifacts" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+          </StackPanel>
+
+          <Button x:Name="BtnGeneratePacket" Grid.Column="1" Content="Generate Packet" Width="140" Height="32" VerticalAlignment="Center"/>
+        </Grid>
+
+        <StackPanel Grid.Row="1" Margin="0,12,0,0">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="300"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="Conversation ID:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="TxtPacketConvId" Grid.Column="1" Height="28" Text="Enter conversation ID..."/>
+          </Grid>
+          
+          <TextBlock Text="Packet Contents:" FontWeight="SemiBold" Margin="0,12,0,8"/>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="250"/>
+              <ColumnDefinition Width="250"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+              <CheckBox x:Name="ChkConversationJson" Content="conversation.json" IsChecked="True" IsEnabled="False" Margin="0,0,0,4"/>
+              <CheckBox x:Name="ChkTimelineJson" Content="timeline.json" IsChecked="True" IsEnabled="False" Margin="0,0,0,4"/>
+              <CheckBox x:Name="ChkSummaryMd" Content="summary.md" IsChecked="True" IsEnabled="False" Margin="0,0,0,4"/>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1">
+              <CheckBox x:Name="ChkTranscriptTxt" Content="transcript.txt" IsChecked="True" IsEnabled="False" Margin="0,0,0,4"/>
+              <CheckBox x:Name="ChkEventsNdjson" Content="events.ndjson (if available)" IsChecked="True" IsEnabled="False" Margin="0,0,0,4"/>
+              <CheckBox x:Name="ChkZip" Content="Create ZIP archive" IsChecked="True" Margin="0,0,0,4"/>
+            </StackPanel>
+          </Grid>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Recent Packets" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock x:Name="TxtPacketCount" Text="(0 packets)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+          <Button x:Name="BtnOpenPacketFolder" Content="Open Artifacts" Width="120" Height="26" Margin="12,0,0,0"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridPackets" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Conversation ID" Binding="{Binding ConversationId}" Width="280"/>
+            <DataGridTextColumn Header="Generated Time" Binding="{Binding GeneratedTime}" Width="160"/>
+            <DataGridTextColumn Header="Files" Binding="{Binding FileCount}" Width="80"/>
+            <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="100"/>
+            <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    BtnGeneratePacket      = $view.FindName('BtnGeneratePacket')
+    TxtPacketConvId        = $view.FindName('TxtPacketConvId')
+    ChkConversationJson    = $view.FindName('ChkConversationJson')
+    ChkTimelineJson        = $view.FindName('ChkTimelineJson')
+    ChkSummaryMd           = $view.FindName('ChkSummaryMd')
+    ChkTranscriptTxt       = $view.FindName('ChkTranscriptTxt')
+    ChkEventsNdjson        = $view.FindName('ChkEventsNdjson')
+    ChkZip                 = $view.FindName('ChkZip')
+    TxtPacketCount         = $view.FindName('TxtPacketCount')
+    BtnOpenPacketFolder    = $view.FindName('BtnOpenPacketFolder')
+    GridPackets            = $view.FindName('GridPackets')
+  }
+
+  # Track packet history
+  if (-not (Get-Variable -Name IncidentPacketHistory -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:IncidentPacketHistory = @()
+  }
+
+  function Refresh-PacketHistory {
+    if ($script:IncidentPacketHistory.Count -eq 0) {
+      $h.GridPackets.ItemsSource = @()
+      $h.TxtPacketCount.Text = "(0 packets)"
+      return
+    }
+
+    $displayData = $script:IncidentPacketHistory | ForEach-Object {
+      $size = if (Test-Path $_.Path) {
+        $item = Get-Item $_.Path
+        if ($item.PSIsContainer) {
+          $totalSize = (Get-ChildItem $_.Path -Recurse | Measure-Object -Property Length -Sum).Sum
+          "{0:N2} MB" -f ($totalSize / 1MB)
+        } else {
+          "{0:N2} MB" -f ($item.Length / 1MB)
+        }
+      } else { "N/A" }
+
+      [PSCustomObject]@{
+        ConversationId = $_.ConversationId
+        GeneratedTime = $_.GeneratedTime.ToString('yyyy-MM-dd HH:mm:ss')
+        FileCount = $_.FileCount
+        Size = $size
+        Path = $_.Path
+        PacketData = $_
+      }
+    }
+
+    $h.GridPackets.ItemsSource = $displayData
+    $h.TxtPacketCount.Text = "($($script:IncidentPacketHistory.Count) packets)"
+  }
+
+  $h.BtnGeneratePacket.Add_Click({
+    $convId = $h.TxtPacketConvId.Text.Trim()
+    
+    # Validate conversation ID
+    if ([string]::IsNullOrWhiteSpace($convId) -or $convId -eq "Enter conversation ID...") {
+      [System.Windows.MessageBox]::Show(
+        "Please enter a conversation ID.",
+        "No Conversation ID",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      return
+    }
+
+    # Check authentication
+    if (-not $script:AppState.AccessToken) {
+      [System.Windows.MessageBox]::Show(
+        "Please log in first to generate incident packets.",
+        "Authentication Required",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Warning
+      )
+      return
+    }
+
+    Set-Status "Generating incident packet for conversation: $convId"
+    $h.BtnGeneratePacket.IsEnabled = $false
+
+    $createZip = $h.ChkZip.IsChecked
+
+    Start-AppJob -Name "Export Incident Packet — $convId" -Type 'Export' -ScriptBlock {
+      param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer, $createZip)
+
+      # Import required modules in runspace
+      $scriptRoot = Split-Path -Parent $PSCommandPath
+      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
+
+      try {
+        # Build subscription events from buffer (if available)
+        $subscriptionEvents = $eventBuffer
+
+        # Export packet
+        $packet = Export-GcConversationPacket `
+          -ConversationId $conversationId `
+          -Region $region `
+          -AccessToken $accessToken `
+          -OutputDirectory $artifactsDir `
+          -SubscriptionEvents $subscriptionEvents `
+          -CreateZip:$createZip
+
+        return $packet
+      } catch {
+        Write-Error "Failed to export packet: $_"
+        return $null
+      }
+    } -ArgumentList @($convId, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer, $createZip) -OnCompleted {
+      param($job)
+      $h.BtnGeneratePacket.IsEnabled = $true
+
+      if ($job.Result) {
+        $packet = $job.Result
+        $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
+        
+        # Count files in packet
+        $fileCount = 0
+        if (Test-Path $packet.PacketDirectory) {
+          $fileCount = (Get-ChildItem $packet.PacketDirectory -File).Count
+        }
+
+        $packetRecord = @{
+          ConversationId = $packet.ConversationId
+          GeneratedTime = Get-Date
+          FileCount = $fileCount
+          Path = $artifactPath
+          PacketData = $packet
+        }
+        
+        $script:IncidentPacketHistory += $packetRecord
+        Refresh-PacketHistory
+        
+        $displayPath = Split-Path $artifactPath -Leaf
+        Set-Status "Incident packet generated: $displayPath"
+        Show-Snackbar "Packet generated! Saved to artifacts/$displayPath" -Action "Open Folder" -ActionCallback {
+          Start-Process (Split-Path $artifactPath -Parent)
+        }
+      } else {
+        Set-Status "Failed to generate packet. See job logs for details."
+      }
+    }
+  })
+
+  $h.BtnOpenPacketFolder.Add_Click({
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (Test-Path $artifactsDir) {
+      Start-Process $artifactsDir
+      Set-Status "Opened artifacts folder."
+    } else {
+      Set-Status "Artifacts folder not found."
+    }
+  })
+
+  $h.TxtPacketConvId.Add_GotFocus({
+    if ($h.TxtPacketConvId.Text -eq "Enter conversation ID...") {
+      $h.TxtPacketConvId.Text = ""
+    }
+  })
+
+  $h.TxtPacketConvId.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($h.TxtPacketConvId.Text)) {
+      $h.TxtPacketConvId.Text = "Enter conversation ID..."
+    }
+  })
+
+  Refresh-PacketHistory
+
+  return $view
+}
+
 function New-FlowsView {
   <#
   .SYNOPSIS
@@ -5331,6 +5603,10 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Conversations::Analytics Jobs' {
       $TxtSubtitle.Text = 'Submit and monitor analytics queries'
       $MainHost.Content = (New-AnalyticsJobsView)
+    }
+    'Conversations::Incident Packet' {
+      $TxtSubtitle.Text = 'Generate comprehensive incident packets'
+      $MainHost.Content = (New-IncidentPacketView)
     }
     'Orchestration::Flows' {
       $TxtSubtitle.Text = 'View and export Architect flows'
