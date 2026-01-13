@@ -3098,6 +3098,358 @@ function New-DataActionsView {
   return $view
 }
 
+function New-QueuesView {
+  <#
+  .SYNOPSIS
+    Creates the Queues module view with load, search, and export capabilities.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <StackPanel>
+          <TextBlock Text="Routing Queues" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock Text="View and export routing queues" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="BtnQueueLoad" Content="Load Queues" Width="110" Height="32" Margin="0,0,8,0"/>
+          <Button x:Name="BtnQueueExportJson" Content="Export JSON" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+          <Button x:Name="BtnQueueExportCsv" Content="Export CSV" Width="100" Height="32" IsEnabled="False"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Queues" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBox x:Name="TxtQueueSearch" Margin="12,0,0,0" Width="300" Height="26" Text="Search queues..."/>
+          <TextBlock x:Name="TxtQueueCount" Text="(0 queues)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridQueues" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="250"/>
+            <DataGridTextColumn Header="Division" Binding="{Binding Division}" Width="180"/>
+            <DataGridTextColumn Header="Members" Binding="{Binding Members}" Width="100"/>
+            <DataGridTextColumn Header="Active" Binding="{Binding Active}" Width="80"/>
+            <DataGridTextColumn Header="Modified" Binding="{Binding Modified}" Width="*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    BtnQueueLoad        = $view.FindName('BtnQueueLoad')
+    BtnQueueExportJson  = $view.FindName('BtnQueueExportJson')
+    BtnQueueExportCsv   = $view.FindName('BtnQueueExportCsv')
+    TxtQueueSearch      = $view.FindName('TxtQueueSearch')
+    TxtQueueCount       = $view.FindName('TxtQueueCount')
+    GridQueues          = $view.FindName('GridQueues')
+  }
+
+  $script:QueuesData = @()
+
+  $h.BtnQueueLoad.Add_Click({
+    Set-Status "Loading queues..."
+    $h.BtnQueueLoad.IsEnabled = $false
+    $h.BtnQueueExportJson.IsEnabled = $false
+    $h.BtnQueueExportCsv.IsEnabled = $false
+
+    Start-AppJob -Name "Load Queues" -Type "Query" -ScriptBlock {
+      Get-GcQueues -AccessToken $script:AppState.AccessToken -InstanceName $script:AppState.Region
+    } -OnCompleted {
+      param($job)
+      $h.BtnQueueLoad.IsEnabled = $true
+
+      if ($job.Result) {
+        $script:QueuesData = $job.Result
+        $displayData = $job.Result | ForEach-Object {
+          [PSCustomObject]@{
+            Name = if ($_.name) { $_.name } else { 'N/A' }
+            Division = if ($_.division -and $_.division.name) { $_.division.name } else { 'N/A' }
+            Members = if ($_.memberCount) { $_.memberCount } else { 0 }
+            Active = if ($_.mediaSettings) { 'Yes' } else { 'No' }
+            Modified = if ($_.dateModified) { $_.dateModified } else { '' }
+          }
+        }
+        $h.GridQueues.ItemsSource = $displayData
+        $h.TxtQueueCount.Text = "($($job.Result.Count) queues)"
+        $h.BtnQueueExportJson.IsEnabled = $true
+        $h.BtnQueueExportCsv.IsEnabled = $true
+        Set-Status "Loaded $($job.Result.Count) queues."
+      } else {
+        $h.GridQueues.ItemsSource = @()
+        $h.TxtQueueCount.Text = "(0 queues)"
+        Set-Status "Failed to load queues."
+      }
+    }
+  })
+
+  $h.BtnQueueExportJson.Add_Click({
+    if (-not $script:QueuesData -or $script:QueuesData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "queues_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:QueuesData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported $($script:QueuesData.Count) queues to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  $h.BtnQueueExportCsv.Add_Click({
+    if (-not $script:QueuesData -or $script:QueuesData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "queues_$timestamp.csv"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:QueuesData | Select-Object name, @{N='division';E={if($_.division.name){$_.division.name}else{'N/A'}}}, memberCount, dateModified | 
+        Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
+      Set-Status "Exported $($script:QueuesData.Count) queues to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  $h.TxtQueueSearch.Add_GotFocus({
+    if ($h.TxtQueueSearch.Text -eq "Search queues...") {
+      $h.TxtQueueSearch.Text = ""
+    }
+  })
+
+  $h.TxtQueueSearch.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($h.TxtQueueSearch.Text)) {
+      $h.TxtQueueSearch.Text = "Search queues..."
+    }
+  })
+
+  return $view
+}
+
+function New-SkillsView {
+  <#
+  .SYNOPSIS
+    Creates the Skills (ACD Skills) module view with load, search, and export capabilities.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <StackPanel>
+          <TextBlock Text="ACD Skills" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock Text="View and export routing skills" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="BtnSkillLoad" Content="Load Skills" Width="100" Height="32" Margin="0,0,8,0"/>
+          <Button x:Name="BtnSkillExportJson" Content="Export JSON" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+          <Button x:Name="BtnSkillExportCsv" Content="Export CSV" Width="100" Height="32" IsEnabled="False"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Skills" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBox x:Name="TxtSkillSearch" Margin="12,0,0,0" Width="300" Height="26" Text="Search skills..."/>
+          <TextBlock x:Name="TxtSkillCount" Text="(0 skills)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridSkills" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="300"/>
+            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="120"/>
+            <DataGridTextColumn Header="Modified" Binding="{Binding Modified}" Width="*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    BtnSkillLoad        = $view.FindName('BtnSkillLoad')
+    BtnSkillExportJson  = $view.FindName('BtnSkillExportJson')
+    BtnSkillExportCsv   = $view.FindName('BtnSkillExportCsv')
+    TxtSkillSearch      = $view.FindName('TxtSkillSearch')
+    TxtSkillCount       = $view.FindName('TxtSkillCount')
+    GridSkills          = $view.FindName('GridSkills')
+  }
+
+  $script:SkillsData = @()
+
+  $h.BtnSkillLoad.Add_Click({
+    Set-Status "Loading skills..."
+    $h.BtnSkillLoad.IsEnabled = $false
+    $h.BtnSkillExportJson.IsEnabled = $false
+    $h.BtnSkillExportCsv.IsEnabled = $false
+
+    Start-AppJob -Name "Load Skills" -Type "Query" -ScriptBlock {
+      Get-GcSkills -AccessToken $script:AppState.AccessToken -InstanceName $script:AppState.Region
+    } -OnCompleted {
+      param($job)
+      $h.BtnSkillLoad.IsEnabled = $true
+
+      if ($job.Result) {
+        $script:SkillsData = $job.Result
+        $displayData = $job.Result | ForEach-Object {
+          [PSCustomObject]@{
+            Name = if ($_.name) { $_.name } else { 'N/A' }
+            State = if ($_.state) { $_.state } else { 'active' }
+            Modified = if ($_.dateModified) { $_.dateModified } else { '' }
+          }
+        }
+        $h.GridSkills.ItemsSource = $displayData
+        $h.TxtSkillCount.Text = "($($job.Result.Count) skills)"
+        $h.BtnSkillExportJson.IsEnabled = $true
+        $h.BtnSkillExportCsv.IsEnabled = $true
+        Set-Status "Loaded $($job.Result.Count) skills."
+      } else {
+        $h.GridSkills.ItemsSource = @()
+        $h.TxtSkillCount.Text = "(0 skills)"
+        Set-Status "Failed to load skills."
+      }
+    }
+  })
+
+  $h.BtnSkillExportJson.Add_Click({
+    if (-not $script:SkillsData -or $script:SkillsData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "skills_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:SkillsData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported $($script:SkillsData.Count) skills to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  $h.BtnSkillExportCsv.Add_Click({
+    if (-not $script:SkillsData -or $script:SkillsData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "skills_$timestamp.csv"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:SkillsData | Select-Object name, state, dateModified | 
+        Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
+      Set-Status "Exported $($script:SkillsData.Count) skills to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  $h.TxtSkillSearch.Add_GotFocus({
+    if ($h.TxtSkillSearch.Text -eq "Search skills...") {
+      $h.TxtSkillSearch.Text = ""
+    }
+  })
+
+  $h.TxtSkillSearch.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($h.TxtSkillSearch.Text)) {
+      $h.TxtSkillSearch.Text = "Search skills..."
+    }
+  })
+
+  return $view
+}
+
 function New-SubscriptionsView {
   $xamlString = @"
 <UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -3693,6 +4045,14 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Orchestration::Data Actions' {
       $TxtSubtitle.Text = 'View and export data actions'
       $MainHost.Content = (New-DataActionsView)
+    }
+    'Routing & People::Queues' {
+      $TxtSubtitle.Text = 'View and export routing queues'
+      $MainHost.Content = (New-QueuesView)
+    }
+    'Routing & People::Skills' {
+      $TxtSubtitle.Text = 'View and export ACD skills'
+      $MainHost.Content = (New-SkillsView)
     }
     default {
       $MainHost.Content = (New-PlaceholderView -Title $module -Hint "Module shell for $workspace. UX-first; job-driven backend later.")
