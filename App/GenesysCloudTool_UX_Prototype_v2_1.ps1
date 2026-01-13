@@ -3886,6 +3886,429 @@ function New-AbandonExperienceView {
   return $view
 }
 
+function New-MediaQualityView {
+  <#
+  .SYNOPSIS
+    Creates the Media & Quality module view with recordings, transcripts, and evaluations.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <TabControl x:Name="TabsMediaQuality">
+      <TabItem Header="Recordings">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+
+          <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="12,12,12,12">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+
+              <StackPanel>
+                <TextBlock Text="Recordings" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+                <TextBlock Text="View and download conversation recordings" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+              </StackPanel>
+
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="BtnLoadRecordings" Content="Load Recordings" Width="130" Height="32" Margin="0,0,8,0"/>
+                <Button x:Name="BtnExportRecordings" Content="Export JSON" Width="100" Height="32" IsEnabled="False"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12" Margin="12,0,12,12">
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+              </Grid.RowDefinitions>
+
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Recordings List" FontWeight="SemiBold" Foreground="#FF111827"/>
+                <TextBlock x:Name="TxtRecordingCount" Text="(0 recordings)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+              </StackPanel>
+
+              <DataGrid x:Name="GridRecordings" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                        HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Header="Recording ID" Binding="{Binding RecordingId}" Width="250"/>
+                  <DataGridTextColumn Header="Conversation ID" Binding="{Binding ConversationId}" Width="250"/>
+                  <DataGridTextColumn Header="Duration (s)" Binding="{Binding Duration}" Width="120"/>
+                  <DataGridTextColumn Header="Created" Binding="{Binding Created}" Width="*"/>
+                </DataGrid.Columns>
+              </DataGrid>
+            </Grid>
+          </Border>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Transcripts">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+
+          <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="12,12,12,12">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+
+              <StackPanel>
+                <TextBlock Text="Conversation Transcripts" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+                <TextBlock Text="View conversation transcripts" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+              </StackPanel>
+
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBox x:Name="TxtTranscriptConvId" Width="250" Height="26" Margin="0,0,8,0" Text="Enter conversation ID..."/>
+                <Button x:Name="BtnLoadTranscript" Content="Load Transcript" Width="120" Height="32" Margin="0,0,8,0"/>
+                <Button x:Name="BtnExportTranscript" Content="Export TXT" Width="100" Height="32" IsEnabled="False"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12" Margin="12,0,12,12">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+              <TextBlock x:Name="TxtTranscriptContent" Text="No transcript loaded. Enter a conversation ID and click Load Transcript."
+                         TextWrapping="Wrap" Foreground="#FF111827" FontFamily="Consolas"/>
+            </ScrollViewer>
+          </Border>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Quality Evaluations">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+
+          <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="12,12,12,12">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+
+              <StackPanel>
+                <TextBlock Text="Quality Evaluations" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+                <TextBlock Text="View quality evaluation scores and details" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+              </StackPanel>
+
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="BtnLoadEvaluations" Content="Load Evaluations" Width="130" Height="32" Margin="0,0,8,0"/>
+                <Button x:Name="BtnExportEvaluations" Content="Export JSON" Width="100" Height="32" IsEnabled="False"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12" Margin="12,0,12,12">
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+              </Grid.RowDefinitions>
+
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Evaluations List" FontWeight="SemiBold" Foreground="#FF111827"/>
+                <TextBlock x:Name="TxtEvaluationCount" Text="(0 evaluations)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+              </StackPanel>
+
+              <DataGrid x:Name="GridEvaluations" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                        HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Header="Evaluation ID" Binding="{Binding EvaluationId}" Width="200"/>
+                  <DataGridTextColumn Header="Agent" Binding="{Binding Agent}" Width="150"/>
+                  <DataGridTextColumn Header="Evaluator" Binding="{Binding Evaluator}" Width="150"/>
+                  <DataGridTextColumn Header="Score" Binding="{Binding Score}" Width="80"/>
+                  <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100"/>
+                  <DataGridTextColumn Header="Created" Binding="{Binding Created}" Width="*"/>
+                </DataGrid.Columns>
+              </DataGrid>
+            </Grid>
+          </Border>
+        </Grid>
+      </TabItem>
+    </TabControl>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    # Recordings tab
+    BtnLoadRecordings      = $view.FindName('BtnLoadRecordings')
+    BtnExportRecordings    = $view.FindName('BtnExportRecordings')
+    TxtRecordingCount      = $view.FindName('TxtRecordingCount')
+    GridRecordings         = $view.FindName('GridRecordings')
+    
+    # Transcripts tab
+    TxtTranscriptConvId    = $view.FindName('TxtTranscriptConvId')
+    BtnLoadTranscript      = $view.FindName('BtnLoadTranscript')
+    BtnExportTranscript    = $view.FindName('BtnExportTranscript')
+    TxtTranscriptContent   = $view.FindName('TxtTranscriptContent')
+    
+    # Quality Evaluations tab
+    BtnLoadEvaluations     = $view.FindName('BtnLoadEvaluations')
+    BtnExportEvaluations   = $view.FindName('BtnExportEvaluations')
+    TxtEvaluationCount     = $view.FindName('TxtEvaluationCount')
+    GridEvaluations        = $view.FindName('GridEvaluations')
+  }
+
+  $script:RecordingsData = @()
+  $script:TranscriptData = $null
+  $script:EvaluationsData = @()
+
+  # Load Recordings button handler
+  $h.BtnLoadRecordings.Add_Click({
+    Set-Status "Loading recordings..."
+    $h.BtnLoadRecordings.IsEnabled = $false
+    $h.BtnExportRecordings.IsEnabled = $false
+
+    $coreConvPath = Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1'
+    $coreHttpPath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
+
+    Start-AppJob -Name "Load Recordings" -Type "Query" -ScriptBlock {
+      param($convPath, $httpPath, $accessToken, $region)
+      
+      Import-Module $httpPath -Force
+      Import-Module $convPath -Force
+      
+      Get-GcRecordings -AccessToken $accessToken -InstanceName $region -MaxItems 100
+    } -ArgumentList @($coreConvPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region) -OnCompleted {
+      param($job)
+      $h.BtnLoadRecordings.IsEnabled = $true
+
+      if ($job.Result -and $job.Result.Count -gt 0) {
+        $script:RecordingsData = $job.Result
+        
+        $displayData = $job.Result | ForEach-Object {
+          [PSCustomObject]@{
+            RecordingId = if ($_.id) { $_.id } else { 'N/A' }
+            ConversationId = if ($_.conversationId) { $_.conversationId } else { 'N/A' }
+            Duration = if ($_.durationMilliseconds) { [Math]::Round($_.durationMilliseconds / 1000, 1) } else { 0 }
+            Created = if ($_.dateCreated) { $_.dateCreated } else { 'N/A' }
+          }
+        }
+        
+        $h.GridRecordings.ItemsSource = $displayData
+        $h.TxtRecordingCount.Text = "($($job.Result.Count) recordings)"
+        $h.BtnExportRecordings.IsEnabled = $true
+        Set-Status "Loaded $($job.Result.Count) recordings."
+      } else {
+        $h.GridRecordings.ItemsSource = @()
+        $h.TxtRecordingCount.Text = "(0 recordings)"
+        Set-Status "No recordings found or failed to load."
+      }
+    }
+  })
+
+  # Export Recordings button handler
+  $h.BtnExportRecordings.Add_Click({
+    if (-not $script:RecordingsData -or $script:RecordingsData.Count -eq 0) {
+      Set-Status "No recordings to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "recordings_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:RecordingsData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported $($script:RecordingsData.Count) recordings to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  # Load Transcript button handler
+  $h.BtnLoadTranscript.Add_Click({
+    $convId = $h.TxtTranscriptConvId.Text.Trim()
+    
+    if ([string]::IsNullOrWhiteSpace($convId) -or $convId -eq "Enter conversation ID...") {
+      [System.Windows.MessageBox]::Show("Please enter a conversation ID.", "Missing Input", 
+        [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+      return
+    }
+
+    Set-Status "Loading transcript for conversation $convId..."
+    $h.BtnLoadTranscript.IsEnabled = $false
+    $h.BtnExportTranscript.IsEnabled = $false
+    $h.TxtTranscriptContent.Text = "Loading transcript..."
+
+    $coreConvPath = Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1'
+    $coreHttpPath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
+
+    Start-AppJob -Name "Load Transcript" -Type "Query" -ScriptBlock {
+      param($convPath, $httpPath, $accessToken, $region, $convId)
+      
+      Import-Module $httpPath -Force
+      Import-Module $convPath -Force
+      
+      Get-GcConversationTranscript -ConversationId $convId -AccessToken $accessToken -InstanceName $region
+    } -ArgumentList @($coreConvPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region, $convId) -OnCompleted {
+      param($job)
+      $h.BtnLoadTranscript.IsEnabled = $true
+
+      if ($job.Result -and $job.Result.Count -gt 0) {
+        $script:TranscriptData = $job.Result
+        
+        # Format transcript as text
+        $transcriptText = ""
+        foreach ($entry in $job.Result) {
+          $time = if ($entry.timestamp) { $entry.timestamp } else { "N/A" }
+          $participant = if ($entry.participant) { $entry.participant } else { "Unknown" }
+          $message = if ($entry.message) { $entry.message } else { "" }
+          
+          $transcriptText += "[$time] $participant`: $message`r`n`r`n"
+        }
+        
+        if ([string]::IsNullOrWhiteSpace($transcriptText)) {
+          $transcriptText = "No transcript messages found for this conversation."
+        }
+        
+        $h.TxtTranscriptContent.Text = $transcriptText
+        $h.BtnExportTranscript.IsEnabled = $true
+        Set-Status "Loaded transcript for conversation $convId."
+      } else {
+        $h.TxtTranscriptContent.Text = "No transcript found for conversation $convId or conversation does not exist."
+        Set-Status "No transcript found."
+      }
+    }
+  })
+
+  # Export Transcript button handler
+  $h.BtnExportTranscript.Add_Click({
+    if (-not $script:TranscriptData) {
+      Set-Status "No transcript to export."
+      return
+    }
+
+    $convId = $h.TxtTranscriptConvId.Text.Trim()
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "transcript_${convId}_$timestamp.txt"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $h.TxtTranscriptContent.Text | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported transcript to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  # Load Evaluations button handler
+  $h.BtnLoadEvaluations.Add_Click({
+    Set-Status "Loading quality evaluations..."
+    $h.BtnLoadEvaluations.IsEnabled = $false
+    $h.BtnExportEvaluations.IsEnabled = $false
+
+    $coreConvPath = Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1'
+    $coreHttpPath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
+
+    Start-AppJob -Name "Load Quality Evaluations" -Type "Query" -ScriptBlock {
+      param($convPath, $httpPath, $accessToken, $region)
+      
+      Import-Module $httpPath -Force
+      Import-Module $convPath -Force
+      
+      Get-GcQualityEvaluations -AccessToken $accessToken -InstanceName $region -MaxItems 100
+    } -ArgumentList @($coreConvPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region) -OnCompleted {
+      param($job)
+      $h.BtnLoadEvaluations.IsEnabled = $true
+
+      if ($job.Result -and $job.Result.Count -gt 0) {
+        $script:EvaluationsData = $job.Result
+        
+        $displayData = $job.Result | ForEach-Object {
+          [PSCustomObject]@{
+            EvaluationId = if ($_.id) { $_.id } else { 'N/A' }
+            Agent = if ($_.agent -and $_.agent.name) { $_.agent.name } else { 'N/A' }
+            Evaluator = if ($_.evaluator -and $_.evaluator.name) { $_.evaluator.name } else { 'N/A' }
+            Score = if ($_.score) { $_.score } else { 'N/A' }
+            Status = if ($_.status) { $_.status } else { 'N/A' }
+            Created = if ($_.dateCreated) { $_.dateCreated } else { 'N/A' }
+          }
+        }
+        
+        $h.GridEvaluations.ItemsSource = $displayData
+        $h.TxtEvaluationCount.Text = "($($job.Result.Count) evaluations)"
+        $h.BtnExportEvaluations.IsEnabled = $true
+        Set-Status "Loaded $($job.Result.Count) quality evaluations."
+      } else {
+        $h.GridEvaluations.ItemsSource = @()
+        $h.TxtEvaluationCount.Text = "(0 evaluations)"
+        Set-Status "No evaluations found or failed to load."
+      }
+    }
+  })
+
+  # Export Evaluations button handler
+  $h.BtnExportEvaluations.Add_Click({
+    if (-not $script:EvaluationsData -or $script:EvaluationsData.Count -eq 0) {
+      Set-Status "No evaluations to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "quality_evaluations_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:EvaluationsData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported $($script:EvaluationsData.Count) evaluations to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  # Transcript conversation ID textbox focus handlers
+  $h.TxtTranscriptConvId.Add_GotFocus({
+    if ($h.TxtTranscriptConvId.Text -eq "Enter conversation ID...") {
+      $h.TxtTranscriptConvId.Text = ""
+    }
+  })
+
+  $h.TxtTranscriptConvId.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($h.TxtTranscriptConvId.Text)) {
+      $h.TxtTranscriptConvId.Text = "Enter conversation ID..."
+    }
+  })
+
+  return $view
+}
+
 function New-FlowsView {
   <#
   .SYNOPSIS
@@ -6083,6 +6506,10 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Conversations::Abandon & Experience' {
       $TxtSubtitle.Text = 'Analyze abandonment metrics and customer experience'
       $MainHost.Content = (New-AbandonExperienceView)
+    }
+    'Conversations::Media & Quality' {
+      $TxtSubtitle.Text = 'View recordings, transcripts, and quality evaluations'
+      $MainHost.Content = (New-MediaQualityView)
     }
     'Orchestration::Flows' {
       $TxtSubtitle.Text = 'View and export Architect flows'
