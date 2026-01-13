@@ -1,4 +1,3 @@
-### BEGIN FILE: GenesysCloudTool_UX_Prototype_v2_1.ps1
 # Genesys Cloud Tool — Real Implementation v3.0
 # Money path flow: Login → Start Subscription → Stream events → Open Timeline → Export Packet
 
@@ -95,6 +94,7 @@ Set-GcAuthConfig `
   -Region 'usw2.pure.cloud' `
   -ClientId 'clientid' `
   -RedirectUri 'http://localhost:8085/callback' `
+  -Scopes @('conversations', 'analytics', 'notifications', 'users')
 
 $script:AppState = [ordered]@{
   Region       = 'usw2.pure.cloud'
