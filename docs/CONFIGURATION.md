@@ -72,6 +72,30 @@ From PowerShell, navigate to the repository root and run:
 6. The tool will update to show "Logged in as [Your Name]"
 7. Click **Test Token** to verify the token is valid
 
+## Alternative: Manual Token Entry
+
+If you want to use a token obtained from another source (e.g., Developer Tools, Postman, or another tool), you can manually enter it:
+
+1. Click the **Test Token** button (without logging in via OAuth)
+2. The "Manual Token Entry" dialog will open
+3. Enter your **Region** (e.g., `mypurecloud.com`, `usw2.pure.cloud`, `mypurecloud.ie`)
+4. Paste your **Access Token** in the text box
+   - The token will be automatically sanitized (line breaks and extra whitespace removed)
+   - "Bearer " prefix will be automatically removed if present
+   - Multi-line paste is supported (useful when copying from browser developer tools)
+5. Click **Set + Test** to validate the token
+6. The tool will test the token by calling `/api/v2/users/me`
+7. If successful, you'll see "Token test: OK. User: [Your Name]"
+
+**Tips for Manual Token Entry:**
+- Copy the token exactly as shown in your source (including any line breaks)
+- The dialog will clean up formatting automatically
+- Tokens should be at least 20 characters
+- If you get a 400 Bad Request error, verify:
+  - Region format is correct (no "api." prefix or "https://" scheme)
+  - Token doesn't have invalid characters
+  - Token was copied completely without truncation
+
 ## Using the Tool
 
 ### Money Path Flow: Login → Export Packet
@@ -113,8 +137,36 @@ If you see this error when clicking Login, ensure you've updated the `Set-GcAuth
 
 ### Token Test Fails
 
-- The token may have expired (tokens typically expire after 24 hours)
-- Click "Login…" again to get a new token
+**Common causes and solutions:**
+
+#### 400 Bad Request
+- **Cause**: Token has invalid format or contains line breaks/whitespace
+- **Solution**: Use the Manual Token Entry dialog (click "Test Token" button)
+  - The dialog will automatically clean up line breaks and extra whitespace
+  - Paste the token as-is from your source; formatting will be handled automatically
+
+#### 401 Unauthorized
+- **Cause**: Token is invalid or expired (tokens typically expire after 24 hours)
+- **Solution**: 
+  - For OAuth: Click "Login…" again to get a new token
+  - For manual tokens: Obtain a fresh token from your source
+
+#### 404 Not Found
+- **Cause**: Wrong region configured or API endpoint doesn't exist
+- **Solution**: Verify the region is correct:
+  - US West: `usw2.pure.cloud`
+  - US East: `mypurecloud.com`
+  - Europe (Frankfurt): `mypurecloud.de`
+  - Europe (Dublin): `mypurecloud.ie`
+  - Asia Pacific (Sydney): `mypurecloud.com.au`
+  - Asia Pacific (Tokyo): `mypurecloud.jp`
+
+#### Connection Failed
+- **Cause**: Cannot reach the API endpoint
+- **Solution**:
+  - Verify network connectivity
+  - Check if region format is correct (no "api." prefix or "https://")
+  - Ensure firewall isn't blocking outbound HTTPS connections
 
 ### Export Packet Fails
 

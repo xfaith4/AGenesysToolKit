@@ -823,21 +823,25 @@ function Start-TokenTest {
       $detailMessage = $errorMsg
 
       # Check for common error scenarios
-      if ($errorMsg -match "401|Unauthorized") {
+      if ($errorMsg -match "400|Bad Request") {
+        $userMessage = "Bad Request"
+        $detailMessage = "The API request was malformed. This usually indicates:`n• Token has invalid format or characters`n• Token contains line breaks or extra whitespace`n• Region format is incorrect`n`nRegion: $($script:AppState.Region)`nPlease verify the token was copied correctly without any line breaks.`n`nError: $errorMsg"
+      }
+      elseif ($errorMsg -match "401|Unauthorized") {
         $userMessage = "Token Invalid or Expired"
-        $detailMessage = "The access token is not valid or has expired. Please log in again."
+        $detailMessage = "The access token is not valid or has expired. Please log in again.`n`nError: $errorMsg"
       }
       elseif ($errorMsg -match "Unable to connect|could not be resolved|Name or service not known") {
         $userMessage = "Connection Failed"
-        $detailMessage = "Cannot connect to region '$($script:AppState.Region)'. Please verify:`n• Region is correct`n• Network connection is available`n`nError: $errorMsg"
+        $detailMessage = "Cannot connect to region '$($script:AppState.Region)'. Please verify:`n• Region is correct (e.g., mypurecloud.com, usw2.pure.cloud)`n• Network connection is available`n`nError: $errorMsg"
       }
       elseif ($errorMsg -match "404|Not Found") {
         $userMessage = "Endpoint Not Found"
-        $detailMessage = "API endpoint not found. This may indicate:`n• Wrong region configured`n• API version mismatch`n`nError: $errorMsg"
+        $detailMessage = "API endpoint not found. This may indicate:`n• Wrong region configured`n• API version mismatch`n`nRegion: $($script:AppState.Region)`nError: $errorMsg"
       }
       elseif ($errorMsg -match "403|Forbidden") {
         $userMessage = "Permission Denied"
-        $detailMessage = "Token is valid but lacks permission to access user information."
+        $detailMessage = "Token is valid but lacks permission to access user information.`n`nError: $errorMsg"
       }
 
       # Update AppState to reflect failure
@@ -971,13 +975,18 @@ function Show-SetTokenDialog {
 
     # Set + Test button handler
     $btnSetTest.Add_Click({
+      # Get and clean region input
       $region = $txtRegion.Text.Trim()
-      $token = $txtToken.Text.Trim()
 
-      # Validate inputs
+      # Get token and perform comprehensive sanitization
+      # Remove all line breaks, carriage returns, and extra whitespace
+      $token = $txtToken.Text -replace '[\r\n]+', ''  # Remove line breaks
+      $token = $token.Trim()  # Remove leading/trailing whitespace
+
+      # Validate region input
       if ([string]::IsNullOrWhiteSpace($region)) {
         [System.Windows.MessageBox]::Show(
-          "Please enter a region (e.g., mypurecloud.com)",
+          "Please enter a region (e.g., mypurecloud.com, usw2.pure.cloud)",
           "Region Required",
           [System.Windows.MessageBoxButton]::OK,
           [System.Windows.MessageBoxImage]::Warning
@@ -985,6 +994,7 @@ function Show-SetTokenDialog {
         return
       }
 
+      # Validate token input
       if ([string]::IsNullOrWhiteSpace($token)) {
         [System.Windows.MessageBox]::Show(
           "Please enter an access token",
@@ -996,12 +1006,25 @@ function Show-SetTokenDialog {
       }
 
       # Remove "Bearer " prefix if present (case-insensitive)
-      # Accepts single or multiple whitespace after "Bearer" for flexibility
       if ($token -imatch '^Bearer\s+(.+)$') {
         $token = $matches[1].Trim()
       }
 
-      # Update AppState
+      # Basic token format validation (should look like a JWT or similar)
+      # JWT tokens have format: xxxxx.yyyyy.zzzzz (base64 parts separated by dots)
+      # Minimum length of 20 characters catches obviously invalid tokens while
+      # allowing various token formats (JWT typically 100+ chars, OAuth2 tokens vary)
+      if ($token.Length -lt 20) {
+        [System.Windows.MessageBox]::Show(
+          "The token appears too short to be valid. Please verify you've copied the complete token.",
+          "Token Format Warning",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
+        return
+      }
+
+      # Update AppState with sanitized values
       $script:AppState.Region = $region
       $script:AppState.AccessToken = $token
       $script:AppState.TokenStatus = "Token set (manual)"
