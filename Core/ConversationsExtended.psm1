@@ -129,4 +129,105 @@ function Get-GcQualityEvaluations {
   }
 }
 
-Export-ModuleMember -Function Search-GcConversations, Get-GcConversationById, Get-GcRecordings, Get-GcQualityEvaluations
+function Get-GcRecordingMedia {
+  <#
+  .SYNOPSIS
+    Get recording media URL or metadata for download.
+  
+  .PARAMETER RecordingId
+    The recording ID to retrieve.
+  
+  .PARAMETER AccessToken
+    OAuth access token for authentication.
+  
+  .PARAMETER InstanceName
+    Genesys Cloud instance (e.g., 'usw2.pure.cloud').
+  #>
+  param(
+    [Parameter(Mandatory)][string]$RecordingId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
+  
+  try {
+    $result = Invoke-GcRequest -Method GET -Path "/api/v2/recording/recordings/$RecordingId/media" `
+      -AccessToken $AccessToken -InstanceName $InstanceName
+    
+    return $result
+  } catch {
+    Write-Error "Failed to retrieve recording media: $_"
+    return $null
+  }
+}
+
+function Get-GcConversationTranscript {
+  <#
+  .SYNOPSIS
+    Fetch and format conversation transcript from conversation details.
+  
+  .PARAMETER ConversationId
+    The conversation ID to retrieve transcript from.
+  
+  .PARAMETER AccessToken
+    OAuth access token for authentication.
+  
+  .PARAMETER InstanceName
+    Genesys Cloud instance (e.g., 'usw2.pure.cloud').
+  #>
+  param(
+    [Parameter(Mandatory)][string]$ConversationId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
+  
+  try {
+    # Get conversation details
+    $conv = Invoke-GcRequest -Method GET -Path "/api/v2/conversations/$ConversationId" `
+      -AccessToken $AccessToken -InstanceName $InstanceName
+    
+    if (-not $conv) {
+      return @()
+    }
+    
+    # Extract transcript from conversation data
+    $transcript = @()
+    
+    if ($conv.participants) {
+      foreach ($participant in $conv.participants) {
+        $participantName = if ($participant.name) { $participant.name } else { "Unknown" }
+        
+        if ($participant.sessions) {
+          foreach ($session in $participant.sessions) {
+            if ($session.segments) {
+              foreach ($segment in $session.segments) {
+                # Look for interact segments with messages
+                if ($segment.segmentType -eq 'interact') {
+                  $timestamp = if ($segment.segmentStart) { $segment.segmentStart } else { "" }
+                  
+                  # Check for text messages in properties
+                  if ($segment.properties) {
+                    if ($segment.properties.message) {
+                      $transcript += @{
+                        timestamp = $timestamp
+                        participant = $participantName
+                        message = $segment.properties.message
+                        type = "message"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    return $transcript
+  } catch {
+    Write-Error "Failed to retrieve conversation transcript: $_"
+    return @()
+  }
+}
+
+Export-ModuleMember -Function Search-GcConversations, Get-GcConversationById, Get-GcRecordings, Get-GcQualityEvaluations, Get-GcRecordingMedia, Get-GcConversationTranscript
