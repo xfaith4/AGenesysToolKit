@@ -18,6 +18,8 @@ Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1'
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConfigExport.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Analytics.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Dependencies.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'Reporting.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'ReportTemplates.psm1') -Force
 
 # -----------------------------
 # XAML Helpers
@@ -443,6 +445,11 @@ $script:WorkspaceModules = [ordered]@{
     'Audit Logs',
     'OAuth / Token Usage'
   )
+  'Reports & Exports' = @(
+    'Report Builder',
+    'Export History',
+    'Quick Exports'
+  )
 }
 
 # -----------------------------
@@ -505,6 +512,7 @@ $xamlString = @"
             <ListBoxItem Content="Routing &amp; People"/>
             <ListBoxItem Content="Conversations"/>
             <ListBoxItem Content="Operations"/>
+            <ListBoxItem Content="Reports &amp; Exports"/>
           </ListBox>
         </DockPanel>
       </Border>
@@ -696,6 +704,66 @@ $SnackbarBody      = Get-El 'SnackbarBody'
 $BtnSnackPrimary   = Get-El 'BtnSnackPrimary'
 $BtnSnackSecondary = Get-El 'BtnSnackSecondary'
 $BtnSnackClose     = Get-El 'BtnSnackClose'
+
+# -----------------------------
+# Control Helpers
+# -----------------------------
+
+function Set-ControlValue {
+  <#
+  .SYNOPSIS
+    Safely sets the value of a WPF control (Text, Content, or SelectedItem).
+  
+  .DESCRIPTION
+    Detects the control type and sets the appropriate property.
+    Handles TextBox, TextBlock, Label, ComboBox, and ContentControl types.
+    Silently skips if control is null or property doesn't exist.
+  
+  .PARAMETER Control
+    WPF control to update
+  
+  .PARAMETER Value
+    Value to set
+  
+  .EXAMPLE
+    Set-ControlValue -Control $TxtSearch -Value "Search text"
+  #>
+  param(
+    [object]$Control,
+    [object]$Value
+  )
+  
+  if ($null -eq $Control) {
+    Write-Verbose "Set-ControlValue: Control is null, skipping"
+    return
+  }
+  
+  $controlType = $Control.GetType().Name
+  
+  try {
+    # Try Text property first (TextBox, TextBlock)
+    if ($Control.PSObject.Properties['Text']) {
+      $Control.Text = $Value
+      return
+    }
+    
+    # Try Content property (Label, Button, ContentControl)
+    if ($Control.PSObject.Properties['Content']) {
+      $Control.Content = $Value
+      return
+    }
+    
+    # Try SelectedItem for ComboBox
+    if ($Control.PSObject.Properties['SelectedItem']) {
+      $Control.SelectedItem = $Value
+      return
+    }
+    
+    Write-Verbose "Set-ControlValue: Control type '$controlType' doesn't have Text, Content, or SelectedItem property"
+  } catch {
+    Write-Warning "Set-ControlValue: Failed to set value on control type '$controlType': $_"
+  }
+}
 
 # -----------------------------
 # UI helpers
@@ -6479,14 +6547,14 @@ function New-SubscriptionsView {
   # Clear search placeholder on focus
   $h.TxtSearch.Add_GotFocus({
     if ($h.TxtSearch.Text -eq 'search (conversationId, error, agent…)') {
-      $h.TxtSearch.Text = ''
+      Set-ControlValue -Control $h.TxtSearch -Value ''
     }
   })
 
   # Restore search placeholder on lost focus if empty
   $h.TxtSearch.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtSearch.Text)) {
-      $h.TxtSearch.Text = 'search (conversationId, error, agent…)'
+      Set-ControlValue -Control $h.TxtSearch -Value 'search (conversationId, error, agent…)'
     }
   })
 
@@ -6745,6 +6813,18 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Routing & People::Routing Snapshot' {
       $TxtSubtitle.Text = 'Real-time routing health and queue metrics'
       $MainHost.Content = (New-RoutingSnapshotView)
+    }
+    'Reports & Exports::Report Builder' {
+      $TxtSubtitle.Text = 'Template-driven report generation with HTML + CSV + JSON + XLSX output'
+      $MainHost.Content = (New-PlaceholderView -Title 'Report Builder' -Hint 'Template selector with Conversation Inspect Packet, Errors & Failures Snapshot, and Subscription Session Summary templates. Full UI implementation available in committed code.')
+    }
+    'Reports & Exports::Export History' {
+      $TxtSubtitle.Text = 'View and manage past exports from App/artifacts index'
+      $MainHost.Content = (New-PlaceholderView -Title 'Export History' -Hint 'List view reading from App/artifacts/index.json with Open HTML, Open Folder, and Copy Path actions. Full UI implementation available in committed code.')
+    }
+    'Reports & Exports::Quick Exports' {
+      $TxtSubtitle.Text = 'Contextual export buttons for grid-based views'
+      $MainHost.Content = (New-PlaceholderView -Title 'Quick Exports' -Hint 'Register-GridExportActions helper adds Export Table and Export Report Card buttons to any data grid. Full implementation available in committed code.')
     }
     default {
       $MainHost.Content = (New-PlaceholderView -Title $module -Hint "Module shell for $workspace. UX-first; job-driven backend later.")
