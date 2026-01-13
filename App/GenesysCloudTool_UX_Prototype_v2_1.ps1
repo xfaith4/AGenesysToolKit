@@ -13,6 +13,8 @@ Import-Module (Join-Path -Path $coreRoot -ChildPath 'Subscriptions.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'RoutingPeople.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1') -Force
 
 # -----------------------------
 # XAML Helpers
@@ -2570,6 +2572,532 @@ function New-ConversationTimelineView {
   return $view
 }
 
+function New-FlowsView {
+  <#
+  .SYNOPSIS
+    Creates the Flows module view with list, search, and export capabilities.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <StackPanel>
+          <TextBlock Text="Architect Flows" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+            <TextBlock Text="Type:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox x:Name="CmbFlowType" Width="180" Height="26" SelectedIndex="0">
+              <ComboBoxItem Content="All Types"/>
+              <ComboBoxItem Content="Inbound Call"/>
+              <ComboBoxItem Content="Inbound Chat"/>
+              <ComboBoxItem Content="Inbound Email"/>
+              <ComboBoxItem Content="Outbound"/>
+              <ComboBoxItem Content="Workflow"/>
+              <ComboBoxItem Content="Bot"/>
+            </ComboBox>
+            <TextBlock Text="Status:" VerticalAlignment="Center" Margin="12,0,8,0"/>
+            <ComboBox x:Name="CmbFlowStatus" Width="140" Height="26" SelectedIndex="0">
+              <ComboBoxItem Content="All Status"/>
+              <ComboBoxItem Content="Published"/>
+              <ComboBoxItem Content="Draft"/>
+              <ComboBoxItem Content="Checked Out"/>
+            </ComboBox>
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="BtnFlowLoad" Content="Load Flows" Width="100" Height="32" Margin="0,0,8,0"/>
+          <Button x:Name="BtnFlowExportJson" Content="Export JSON" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+          <Button x:Name="BtnFlowExportCsv" Content="Export CSV" Width="100" Height="32" IsEnabled="False"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Flows" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBox x:Name="TxtFlowSearch" Margin="12,0,0,0" Width="300" Height="26" Text="Search flows..."/>
+          <TextBlock x:Name="TxtFlowCount" Text="(0 flows)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridFlows" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="250"/>
+            <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="150"/>
+            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120"/>
+            <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="80"/>
+            <DataGridTextColumn Header="Modified" Binding="{Binding Modified}" Width="180"/>
+            <DataGridTextColumn Header="Modified By" Binding="{Binding ModifiedBy}" Width="*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    CmbFlowType        = $view.FindName('CmbFlowType')
+    CmbFlowStatus      = $view.FindName('CmbFlowStatus')
+    BtnFlowLoad        = $view.FindName('BtnFlowLoad')
+    BtnFlowExportJson  = $view.FindName('BtnFlowExportJson')
+    BtnFlowExportCsv   = $view.FindName('BtnFlowExportCsv')
+    TxtFlowSearch      = $view.FindName('TxtFlowSearch')
+    TxtFlowCount       = $view.FindName('TxtFlowCount')
+    GridFlows          = $view.FindName('GridFlows')
+  }
+
+  # Store flows data for export
+  $script:FlowsData = @()
+
+  # Load button handler
+  $h.BtnFlowLoad.Add_Click({
+    Set-Status "Loading flows..."
+    $h.BtnFlowLoad.IsEnabled = $false
+    $h.BtnFlowExportJson.IsEnabled = $false
+    $h.BtnFlowExportCsv.IsEnabled = $false
+
+    Start-AppJob -Name "Load Flows" -Type "Query" -ScriptBlock {
+      # Query flows using Genesys Cloud API
+      $maxItems = 500  # Limit to prevent excessive API calls
+      try {
+        $results = Invoke-GcPagedRequest -Path '/api/v2/flows' -Method GET `
+          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
+
+        return $results
+      } catch {
+        Write-Error "Failed to load flows: $_"
+        return @()
+      }
+    } -OnCompleted {
+      param($job)
+
+      $h.BtnFlowLoad.IsEnabled = $true
+
+      if ($job.Result) {
+        $flows = $job.Result
+        $script:FlowsData = $flows
+
+        # Transform to display format
+        $displayData = $flows | ForEach-Object {
+          [PSCustomObject]@{
+            Name = if ($_.name) { $_.name } else { 'N/A' }
+            Type = if ($_.type) { $_.type } else { 'N/A' }
+            Status = if ($_.publishedVersion) { 'Published' } elseif ($_.checkedInVersion) { 'Checked In' } else { 'Draft' }
+            Version = if ($_.publishedVersion.version) { $_.publishedVersion.version } elseif ($_.checkedInVersion.version) { $_.checkedInVersion.version } else { 'N/A' }
+            Modified = if ($_.dateModified) { $_.dateModified } else { '' }
+            ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
+          }
+        }
+
+        $h.GridFlows.ItemsSource = $displayData
+        $h.TxtFlowCount.Text = "($($flows.Count) flows)"
+        $h.BtnFlowExportJson.IsEnabled = $true
+        $h.BtnFlowExportCsv.IsEnabled = $true
+
+        Set-Status "Loaded $($flows.Count) flows."
+      } else {
+        Set-Status "Failed to load flows. Check job logs."
+        $h.GridFlows.ItemsSource = @()
+        $h.TxtFlowCount.Text = "(0 flows)"
+      }
+    }
+  })
+
+  # Export JSON button handler
+  $h.BtnFlowExportJson.Add_Click({
+    if (-not $script:FlowsData -or $script:FlowsData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "flows_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:FlowsData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported $($script:FlowsData.Count) flows to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  # Export CSV button handler
+  $h.BtnFlowExportCsv.Add_Click({
+    if (-not $script:FlowsData -or $script:FlowsData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "flows_$timestamp.csv"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:FlowsData | Select-Object name, type, @{N='status';E={if ($_.publishedVersion) {'Published'} else {'Draft'}}}, 
+        @{N='version';E={if ($_.publishedVersion.version) {$_.publishedVersion.version} else {'N/A'}}},
+        dateModified, @{N='modifiedBy';E={if ($_.modifiedBy.name) {$_.modifiedBy.name} else {'N/A'}}} |
+        Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
+      Set-Status "Exported $($script:FlowsData.Count) flows to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  # Search text changed handler
+  $h.TxtFlowSearch.Add_TextChanged({
+    if (-not $script:FlowsData -or $script:FlowsData.Count -eq 0) { return }
+
+    $searchText = $h.TxtFlowSearch.Text.ToLower()
+    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search flows...") {
+      $displayData = $script:FlowsData | ForEach-Object {
+        [PSCustomObject]@{
+          Name = if ($_.name) { $_.name } else { 'N/A' }
+          Type = if ($_.type) { $_.type } else { 'N/A' }
+          Status = if ($_.publishedVersion) { 'Published' } elseif ($_.checkedInVersion) { 'Checked In' } else { 'Draft' }
+          Version = if ($_.publishedVersion.version) { $_.publishedVersion.version } elseif ($_.checkedInVersion.version) { $_.checkedInVersion.version } else { 'N/A' }
+          Modified = if ($_.dateModified) { $_.dateModified } else { '' }
+          ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
+        }
+      }
+      $h.GridFlows.ItemsSource = $displayData
+      $h.TxtFlowCount.Text = "($($script:FlowsData.Count) flows)"
+      return
+    }
+
+    $filtered = $script:FlowsData | Where-Object {
+      $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
+      $json -like "*$searchText*"
+    }
+
+    $displayData = $filtered | ForEach-Object {
+      [PSCustomObject]@{
+        Name = if ($_.name) { $_.name } else { 'N/A' }
+        Type = if ($_.type) { $_.type } else { 'N/A' }
+        Status = if ($_.publishedVersion) { 'Published' } elseif ($_.checkedInVersion) { 'Checked In' } else { 'Draft' }
+        Version = if ($_.publishedVersion.version) { $_.publishedVersion.version } elseif ($_.checkedInVersion.version) { $_.checkedInVersion.version } else { 'N/A' }
+        Modified = if ($_.dateModified) { $_.dateModified } else { '' }
+        ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
+      }
+    }
+
+    $h.GridFlows.ItemsSource = $displayData
+    $h.TxtFlowCount.Text = "($($filtered.Count) flows)"
+  })
+
+  # Clear search placeholder on focus
+  $h.TxtFlowSearch.Add_GotFocus({
+    if ($h.TxtFlowSearch.Text -eq "Search flows...") {
+      $h.TxtFlowSearch.Text = ""
+    }
+  })
+
+  # Restore search placeholder on lost focus if empty
+  $h.TxtFlowSearch.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($h.TxtFlowSearch.Text)) {
+      $h.TxtFlowSearch.Text = "Search flows..."
+    }
+  })
+
+  return $view
+}
+
+function New-DataActionsView {
+  <#
+  .SYNOPSIS
+    Creates the Data Actions module view with list, search, and export capabilities.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <StackPanel>
+          <TextBlock Text="Data Actions" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+            <TextBlock Text="Category:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox x:Name="CmbDataActionCategory" Width="180" Height="26" SelectedIndex="0">
+              <ComboBoxItem Content="All Categories"/>
+              <ComboBoxItem Content="Custom"/>
+              <ComboBoxItem Content="Platform"/>
+              <ComboBoxItem Content="Integration"/>
+            </ComboBox>
+            <TextBlock Text="Status:" VerticalAlignment="Center" Margin="12,0,8,0"/>
+            <ComboBox x:Name="CmbDataActionStatus" Width="140" Height="26" SelectedIndex="0">
+              <ComboBoxItem Content="All Status"/>
+              <ComboBoxItem Content="Active"/>
+              <ComboBoxItem Content="Inactive"/>
+            </ComboBox>
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="BtnDataActionLoad" Content="Load Actions" Width="110" Height="32" Margin="0,0,8,0"/>
+          <Button x:Name="BtnDataActionExportJson" Content="Export JSON" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+          <Button x:Name="BtnDataActionExportCsv" Content="Export CSV" Width="100" Height="32" IsEnabled="False"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Data Actions" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBox x:Name="TxtDataActionSearch" Margin="12,0,0,0" Width="300" Height="26" Text="Search actions..."/>
+          <TextBlock x:Name="TxtDataActionCount" Text="(0 actions)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridDataActions" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="250"/>
+            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="150"/>
+            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100"/>
+            <DataGridTextColumn Header="Integration" Binding="{Binding Integration}" Width="180"/>
+            <DataGridTextColumn Header="Modified" Binding="{Binding Modified}" Width="180"/>
+            <DataGridTextColumn Header="Modified By" Binding="{Binding ModifiedBy}" Width="*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    CmbDataActionCategory    = $view.FindName('CmbDataActionCategory')
+    CmbDataActionStatus      = $view.FindName('CmbDataActionStatus')
+    BtnDataActionLoad        = $view.FindName('BtnDataActionLoad')
+    BtnDataActionExportJson  = $view.FindName('BtnDataActionExportJson')
+    BtnDataActionExportCsv   = $view.FindName('BtnDataActionExportCsv')
+    TxtDataActionSearch      = $view.FindName('TxtDataActionSearch')
+    TxtDataActionCount       = $view.FindName('TxtDataActionCount')
+    GridDataActions          = $view.FindName('GridDataActions')
+  }
+
+  # Store data actions for export
+  $script:DataActionsData = @()
+
+  # Load button handler
+  $h.BtnDataActionLoad.Add_Click({
+    Set-Status "Loading data actions..."
+    $h.BtnDataActionLoad.IsEnabled = $false
+    $h.BtnDataActionExportJson.IsEnabled = $false
+    $h.BtnDataActionExportCsv.IsEnabled = $false
+
+    Start-AppJob -Name "Load Data Actions" -Type "Query" -ScriptBlock {
+      # Query data actions using Genesys Cloud API
+      $maxItems = 500  # Limit to prevent excessive API calls
+      try {
+        $results = Invoke-GcPagedRequest -Path '/api/v2/integrations/actions' -Method GET `
+          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
+
+        return $results
+      } catch {
+        Write-Error "Failed to load data actions: $_"
+        return @()
+      }
+    } -OnCompleted {
+      param($job)
+
+      $h.BtnDataActionLoad.IsEnabled = $true
+
+      if ($job.Result) {
+        $actions = $job.Result
+        $script:DataActionsData = $actions
+
+        # Transform to display format
+        $displayData = $actions | ForEach-Object {
+          [PSCustomObject]@{
+            Name = if ($_.name) { $_.name } else { 'N/A' }
+            Category = if ($_.category) { $_.category } else { 'N/A' }
+            Status = if ($_.secure -eq $false) { 'Active' } else { 'Active' }
+            Integration = if ($_.integrationId) { $_.integrationId } else { 'N/A' }
+            Modified = if ($_.modifiedDate) { $_.modifiedDate } else { '' }
+            ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
+          }
+        }
+
+        $h.GridDataActions.ItemsSource = $displayData
+        $h.TxtDataActionCount.Text = "($($actions.Count) actions)"
+        $h.BtnDataActionExportJson.IsEnabled = $true
+        $h.BtnDataActionExportCsv.IsEnabled = $true
+
+        Set-Status "Loaded $($actions.Count) data actions."
+      } else {
+        Set-Status "Failed to load data actions. Check job logs."
+        $h.GridDataActions.ItemsSource = @()
+        $h.TxtDataActionCount.Text = "(0 actions)"
+      }
+    }
+  })
+
+  # Export JSON button handler
+  $h.BtnDataActionExportJson.Add_Click({
+    if (-not $script:DataActionsData -or $script:DataActionsData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "data_actions_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:DataActionsData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported $($script:DataActionsData.Count) data actions to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  # Export CSV button handler
+  $h.BtnDataActionExportCsv.Add_Click({
+    if (-not $script:DataActionsData -or $script:DataActionsData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "data_actions_$timestamp.csv"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:DataActionsData | Select-Object name, category, 
+        @{N='status';E={if ($_.secure -eq $false) {'Active'} else {'Active'}}},
+        integrationId, modifiedDate, @{N='modifiedBy';E={if ($_.modifiedBy.name) {$_.modifiedBy.name} else {'N/A'}}} |
+        Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
+      Set-Status "Exported $($script:DataActionsData.Count) data actions to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  # Search text changed handler
+  $h.TxtDataActionSearch.Add_TextChanged({
+    if (-not $script:DataActionsData -or $script:DataActionsData.Count -eq 0) { return }
+
+    $searchText = $h.TxtDataActionSearch.Text.ToLower()
+    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search actions...") {
+      $displayData = $script:DataActionsData | ForEach-Object {
+        [PSCustomObject]@{
+          Name = if ($_.name) { $_.name } else { 'N/A' }
+          Category = if ($_.category) { $_.category } else { 'N/A' }
+          Status = if ($_.secure -eq $false) { 'Active' } else { 'Active' }
+          Integration = if ($_.integrationId) { $_.integrationId } else { 'N/A' }
+          Modified = if ($_.modifiedDate) { $_.modifiedDate } else { '' }
+          ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
+        }
+      }
+      $h.GridDataActions.ItemsSource = $displayData
+      $h.TxtDataActionCount.Text = "($($script:DataActionsData.Count) actions)"
+      return
+    }
+
+    $filtered = $script:DataActionsData | Where-Object {
+      $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
+      $json -like "*$searchText*"
+    }
+
+    $displayData = $filtered | ForEach-Object {
+      [PSCustomObject]@{
+        Name = if ($_.name) { $_.name } else { 'N/A' }
+        Category = if ($_.category) { $_.category } else { 'N/A' }
+        Status = if ($_.secure -eq $false) { 'Active' } else { 'Active' }
+        Integration = if ($_.integrationId) { $_.integrationId } else { 'N/A' }
+        Modified = if ($_.modifiedDate) { $_.modifiedDate } else { '' }
+        ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
+      }
+    }
+
+    $h.GridDataActions.ItemsSource = $displayData
+    $h.TxtDataActionCount.Text = "($($filtered.Count) actions)"
+  })
+
+  # Clear search placeholder on focus
+  $h.TxtDataActionSearch.Add_GotFocus({
+    if ($h.TxtDataActionSearch.Text -eq "Search actions...") {
+      $h.TxtDataActionSearch.Text = ""
+    }
+  })
+
+  # Restore search placeholder on lost focus if empty
+  $h.TxtDataActionSearch.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($h.TxtDataActionSearch.Text)) {
+      $h.TxtDataActionSearch.Text = "Search actions..."
+    }
+  })
+
+  return $view
+}
+
 function New-SubscriptionsView {
   $xamlString = @"
 <UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -3157,6 +3685,14 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Conversations::Conversation Timeline' {
       $TxtSubtitle.Text = 'Timeline-first: evidence → story → export'
       $MainHost.Content = (New-ConversationTimelineView)
+    }
+    'Orchestration::Flows' {
+      $TxtSubtitle.Text = 'View and export Architect flows'
+      $MainHost.Content = (New-FlowsView)
+    }
+    'Orchestration::Data Actions' {
+      $TxtSubtitle.Text = 'View and export data actions'
+      $MainHost.Content = (New-DataActionsView)
     }
     default {
       $MainHost.Content = (New-PlaceholderView -Title $module -Hint "Module shell for $workspace. UX-first; job-driven backend later.")
