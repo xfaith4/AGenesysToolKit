@@ -885,13 +885,13 @@ function Show-SetTokenDialog {
   #>
 
   $xamlString = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Set Access Token"
-        Height="380" Width="520"
-        WindowStartupLocation="CenterOwner"
-        Background="#FFF7F7F9"
-        ResizeMode="NoResize">
+ <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+         Title="Set Access Token"
+         Height="380" Width="760"
+         WindowStartupLocation="CenterOwner"
+         Background="#FFF7F7F9"
+         ResizeMode="NoResize">
   <Grid Margin="16">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>   <!-- Header -->
@@ -925,13 +925,14 @@ function Show-SetTokenDialog {
 
     <Border Grid.Row="3" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="4"
             Background="White" Padding="6" Margin="0,0,0,16">
-      <TextBox x:Name="TxtToken"
-               AcceptsReturn="True"
-               TextWrapping="Wrap"
-               VerticalScrollBarVisibility="Auto"
-               BorderThickness="0"
-               FontFamily="Consolas"
-               FontSize="10"/>
+       <TextBox x:Name="TxtToken"
+                AcceptsReturn="True"
+                TextWrapping="NoWrap"
+                HorizontalScrollBarVisibility="Auto"
+                VerticalScrollBarVisibility="Auto"
+                BorderThickness="0"
+                FontFamily="Consolas"
+                FontSize="10"/>
     </Border>
 
     <!-- Buttons -->
