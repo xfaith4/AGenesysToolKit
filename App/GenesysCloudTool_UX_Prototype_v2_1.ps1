@@ -4799,6 +4799,201 @@ function New-SkillsView {
   return $view
 }
 
+function New-RoutingSnapshotView {
+  <#
+  .SYNOPSIS
+    Creates the Routing Snapshot module view with real-time queue metrics and health indicators.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <StackPanel>
+          <TextBlock Text="Routing Snapshot" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock Text="Real-time queue metrics and routing health indicators" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="BtnSnapshotRefresh" Content="Refresh Now" Width="110" Height="32" Margin="0,0,8,0"/>
+          <Button x:Name="BtnSnapshotExport" Content="Export JSON" Width="100" Height="32" IsEnabled="False"/>
+          <CheckBox x:Name="ChkAutoRefresh" Content="Auto-refresh (30s)" VerticalAlignment="Center" Margin="8,0,0,0" IsChecked="False"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Queue Metrics" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock x:Name="TxtSnapshotTimestamp" Text="" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+          <TextBlock x:Name="TxtSnapshotCount" Text="(0 queues)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridSnapshot" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Queue" Binding="{Binding QueueName}" Width="200"/>
+            <DataGridTextColumn Header="Status" Binding="{Binding HealthStatusDisplay}" Width="80"/>
+            <DataGridTextColumn Header="On Queue" Binding="{Binding AgentsOnQueue}" Width="100"/>
+            <DataGridTextColumn Header="Available" Binding="{Binding AgentsAvailable}" Width="100"/>
+            <DataGridTextColumn Header="Active" Binding="{Binding InteractionsActive}" Width="100"/>
+            <DataGridTextColumn Header="Waiting" Binding="{Binding InteractionsWaiting}" Width="100"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    BtnSnapshotRefresh  = $view.FindName('BtnSnapshotRefresh')
+    BtnSnapshotExport   = $view.FindName('BtnSnapshotExport')
+    ChkAutoRefresh      = $view.FindName('ChkAutoRefresh')
+    TxtSnapshotTimestamp = $view.FindName('TxtSnapshotTimestamp')
+    TxtSnapshotCount    = $view.FindName('TxtSnapshotCount')
+    GridSnapshot        = $view.FindName('GridSnapshot')
+  }
+
+  $script:RoutingSnapshotData = $null
+  $script:RoutingSnapshotTimer = $null
+
+  # Function to refresh snapshot
+  $refreshSnapshot = {
+    Set-Status "Refreshing routing snapshot..."
+    $h.BtnSnapshotRefresh.IsEnabled = $false
+
+    $coreModulePath = Join-Path -Path $coreRoot -ChildPath 'RoutingPeople.psm1'
+    $httpModulePath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
+
+    Start-AppJob -Name "Refresh Routing Snapshot" -Type "Query" -ScriptBlock {
+      param($coreModulePath, $httpModulePath, $accessToken, $region)
+      
+      Import-Module $httpModulePath -Force
+      Import-Module $coreModulePath -Force
+      
+      Get-GcRoutingSnapshot -AccessToken $accessToken -InstanceName $region
+    } -ArgumentList @($coreModulePath, $httpModulePath, $script:AppState.AccessToken, $script:AppState.Region) -OnCompleted {
+      param($job)
+      $h.BtnSnapshotRefresh.IsEnabled = $true
+
+      if ($job.Result -and $job.Result.queues) {
+        $script:RoutingSnapshotData = $job.Result
+        
+        $displayData = $job.Result.queues | ForEach-Object {
+          [PSCustomObject]@{
+            QueueName = $_.queueName
+            HealthStatusDisplay = switch($_.healthStatus) {
+              'green' { '🟢 Good' }
+              'yellow' { '🟡 Warning' }
+              'red' { '🔴 Critical' }
+              default { '⚪ Unknown' }
+            }
+            AgentsOnQueue = $_.agentsOnQueue
+            AgentsAvailable = $_.agentsAvailable
+            InteractionsActive = $_.interactionsActive
+            InteractionsWaiting = $_.interactionsWaiting
+          }
+        }
+        
+        $h.GridSnapshot.ItemsSource = $displayData
+        $h.TxtSnapshotCount.Text = "($($job.Result.queues.Count) queues)"
+        
+        try {
+          $timestamp = [DateTime]::Parse($job.Result.timestamp)
+          $h.TxtSnapshotTimestamp.Text = "Last updated: " + $timestamp.ToLocalTime().ToString('HH:mm:ss')
+        } catch {
+          $h.TxtSnapshotTimestamp.Text = "Last updated: just now"
+        }
+        
+        $h.BtnSnapshotExport.IsEnabled = $true
+        Set-Status "Routing snapshot refreshed successfully."
+      } else {
+        $h.GridSnapshot.ItemsSource = @()
+        $h.TxtSnapshotCount.Text = "(0 queues)"
+        $h.TxtSnapshotTimestamp.Text = ""
+        Set-Status "Failed to refresh routing snapshot."
+      }
+    }
+  }
+
+  # Refresh button click handler
+  $h.BtnSnapshotRefresh.Add_Click($refreshSnapshot)
+
+  # Export button click handler
+  $h.BtnSnapshotExport.Add_Click({
+    if (-not $script:RoutingSnapshotData) {
+      Set-Status "No snapshot data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "routing_snapshot_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:RoutingSnapshotData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported routing snapshot to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  # Auto-refresh checkbox handler
+  $h.ChkAutoRefresh.Add_Checked({
+    # Create timer for auto-refresh every 30 seconds
+    $script:RoutingSnapshotTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $script:RoutingSnapshotTimer.Interval = [TimeSpan]::FromSeconds(30)
+    $script:RoutingSnapshotTimer.Add_Tick($refreshSnapshot)
+    $script:RoutingSnapshotTimer.Start()
+    Set-Status "Auto-refresh enabled (30 seconds)."
+  })
+
+  $h.ChkAutoRefresh.Add_Unchecked({
+    if ($script:RoutingSnapshotTimer) {
+      $script:RoutingSnapshotTimer.Stop()
+      $script:RoutingSnapshotTimer = $null
+    }
+    Set-Status "Auto-refresh disabled."
+  })
+
+  # Cleanup when view is unloaded
+  $view.Add_Unloaded({
+    if ($script:RoutingSnapshotTimer) {
+      $script:RoutingSnapshotTimer.Stop()
+      $script:RoutingSnapshotTimer = $null
+    }
+  })
+
+  return $view
+}
+
 function New-UsersPresenceView {
   <#
   .SYNOPSIS
@@ -5646,6 +5841,10 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Routing & People::Users & Presence' {
       $TxtSubtitle.Text = 'View users and monitor presence status'
       $MainHost.Content = (New-UsersPresenceView)
+    }
+    'Routing & People::Routing Snapshot' {
+      $TxtSubtitle.Text = 'Real-time routing health and queue metrics'
+      $MainHost.Content = (New-RoutingSnapshotView)
     }
     default {
       $MainHost.Content = (New-PlaceholderView -Title $module -Hint "Module shell for $workspace. UX-first; job-driven backend later.")
