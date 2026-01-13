@@ -3215,26 +3215,33 @@ function New-AnalyticsJobsView {
       Import-Module (Join-Path -Path $coreRoot -ChildPath 'Jobs.psm1') -Force
       Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
       
+      # Helper function to call Invoke-GcRequest with context
+      function Invoke-GcRequestWithContext {
+        param($Method, $Path, $Body = $null)
+        Invoke-GcRequest -Method $Method -Path $Path -Body $Body -AccessToken $accessToken -InstanceName $instanceName
+      }
+      
       # Submit the job
-      $job = Start-GcAnalyticsConversationDetailsJob -Body $queryBody
+      $jobResponse = Invoke-GcRequestWithContext -Method POST -Path '/api/v2/analytics/conversations/details/jobs' -Body $queryBody
       
       # Poll for completion
-      $jobId = $job.id
+      $jobId = $jobResponse.id
       $timeout = 300
       $pollInterval = 2
       $elapsed = 0
       
       while ($elapsed -lt $timeout) {
-        $status = Get-GcAnalyticsConversationDetailsJobStatus -JobId $jobId
+        $status = Invoke-GcRequestWithContext -Method GET -Path "/api/v2/analytics/conversations/details/jobs/$jobId"
         
         if ($status.state -match 'FULFILLED|COMPLETED|SUCCESS') {
           # Fetch results
-          $results = Get-GcAnalyticsConversationDetailsJobResults -JobId $jobId -MaxItems $maxItems
+          $results = Invoke-GcPagedRequest -Method GET -Path "/api/v2/analytics/conversations/details/jobs/$jobId/results" `
+            -AccessToken $accessToken -InstanceName $instanceName -MaxItems $maxItems
           return @{
             JobId = $jobId
             Status = $status.state
             Results = $results
-            Job = $job
+            Job = $jobResponse
             StatusData = $status
           }
         }
@@ -4875,8 +4882,16 @@ function New-UsersPresenceView {
     $h.BtnUserExportCsv.IsEnabled = $false
 
     Start-AppJob -Name "Load Users" -Type "Query" -ScriptBlock {
-      Get-GcUsers -AccessToken $script:AppState.AccessToken -InstanceName $script:AppState.Region
-    } -OnCompleted {
+      param($accessToken, $instanceName)
+      
+      # Import required modules in runspace
+      $scriptRoot = Split-Path -Parent $PSCommandPath
+      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+      Import-Module (Join-Path -Path $coreRoot -ChildPath 'RoutingPeople.psm1') -Force
+      Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
+      
+      Get-GcUsers -AccessToken $accessToken -InstanceName $instanceName
+    } -ArgumentList @($script:AppState.AccessToken, $script:AppState.Region) -OnCompleted {
       param($job)
       $h.BtnUserLoad.IsEnabled = $true
 
