@@ -17,6 +17,7 @@ Import-Module (Join-Path -Path $coreRoot -ChildPath 'RoutingPeople.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConfigExport.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Analytics.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'Dependencies.psm1') -Force
 
 # -----------------------------
 # XAML Helpers
@@ -5060,6 +5061,208 @@ function New-ConfigExportView {
   return $view
 }
 
+function New-DependencyImpactMapView {
+  <#
+  .SYNOPSIS
+    Creates the Dependency / Impact Map module view with object reference search.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <StackPanel>
+          <TextBlock Text="Dependency / Impact Map" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock Text="Search flows for references to queues, data actions, and other objects" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="Object Type:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+          <ComboBox x:Name="CmbObjectType" Width="120" Height="26" Margin="0,0,8,0" SelectedIndex="0">
+            <ComboBoxItem Content="Queue"/>
+            <ComboBoxItem Content="Data Action"/>
+            <ComboBoxItem Content="Schedule"/>
+            <ComboBoxItem Content="Skill"/>
+          </ComboBox>
+          <TextBox x:Name="TxtObjectId" Width="300" Height="26" Margin="0,0,8,0" Text="Enter object ID..."/>
+          <Button x:Name="BtnSearchReferences" Content="Search" Width="100" Height="32"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Flow References" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock x:Name="TxtReferenceCount" Text="(0 flows)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+          <Button x:Name="BtnExportReferences" Content="Export JSON" Width="100" Height="26" Margin="12,0,0,0" IsEnabled="False"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridReferences" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Flow Name" Binding="{Binding FlowName}" Width="250"/>
+            <DataGridTextColumn Header="Flow Type" Binding="{Binding FlowType}" Width="150"/>
+            <DataGridTextColumn Header="Division" Binding="{Binding Division}" Width="150"/>
+            <DataGridTextColumn Header="Published" Binding="{Binding Published}" Width="100"/>
+            <DataGridTextColumn Header="Occurrences" Binding="{Binding Occurrences}" Width="120"/>
+            <DataGridTextColumn Header="Flow ID" Binding="{Binding FlowId}" Width="*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    CmbObjectType        = $view.FindName('CmbObjectType')
+    TxtObjectId          = $view.FindName('TxtObjectId')
+    BtnSearchReferences  = $view.FindName('BtnSearchReferences')
+    TxtReferenceCount    = $view.FindName('TxtReferenceCount')
+    BtnExportReferences  = $view.FindName('BtnExportReferences')
+    GridReferences       = $view.FindName('GridReferences')
+  }
+
+  $script:DependencyReferencesData = @()
+
+  # Search button click handler
+  $h.BtnSearchReferences.Add_Click({
+    $objectId = $h.TxtObjectId.Text.Trim()
+    
+    if ([string]::IsNullOrWhiteSpace($objectId) -or $objectId -eq "Enter object ID...") {
+      [System.Windows.MessageBox]::Show("Please enter an object ID to search.", "Missing Input", 
+        [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+      return
+    }
+
+    $objectType = switch ($h.CmbObjectType.SelectedIndex) {
+      0 { "queue" }
+      1 { "dataAction" }
+      2 { "schedule" }
+      3 { "skill" }
+      default { "queue" }
+    }
+
+    Set-Status "Searching for references to $objectType $objectId..."
+    $h.BtnSearchReferences.IsEnabled = $false
+    $h.BtnExportReferences.IsEnabled = $false
+
+    $coreDepsPath = Join-Path -Path $coreRoot -ChildPath 'Dependencies.psm1'
+    $coreHttpPath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
+
+    Start-AppJob -Name "Search Flow References" -Type "Query" -ScriptBlock {
+      param($depsPath, $httpPath, $accessToken, $region, $objId, $objType)
+      
+      Import-Module $httpPath -Force
+      Import-Module $depsPath -Force
+      
+      Search-GcFlowReferences -ObjectId $objId -ObjectType $objType `
+        -AccessToken $accessToken -InstanceName $region
+    } -ArgumentList @($coreDepsPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region, $objectId, $objectType) -OnCompleted {
+      param($job)
+      $h.BtnSearchReferences.IsEnabled = $true
+
+      if ($job.Result -and $job.Result.Count -gt 0) {
+        $script:DependencyReferencesData = $job.Result
+        
+        $displayData = $job.Result | ForEach-Object {
+          [PSCustomObject]@{
+            FlowName = $_.flowName
+            FlowType = $_.flowType
+            Division = $_.division
+            Published = if ($_.published) { "Yes" } else { "No" }
+            Occurrences = $_.occurrences
+            FlowId = $_.flowId
+          }
+        }
+        
+        $h.GridReferences.ItemsSource = $displayData
+        $h.TxtReferenceCount.Text = "($($job.Result.Count) flows)"
+        $h.BtnExportReferences.IsEnabled = $true
+        Set-Status "Found $($job.Result.Count) flows referencing $objectType $objectId."
+      } else {
+        $h.GridReferences.ItemsSource = @()
+        $h.TxtReferenceCount.Text = "(0 flows)"
+        Set-Status "No flow references found for $objectType $objectId."
+      }
+    }
+  })
+
+  # Export button click handler
+  $h.BtnExportReferences.Add_Click({
+    if (-not $script:DependencyReferencesData -or $script:DependencyReferencesData.Count -eq 0) {
+      Set-Status "No references to export."
+      return
+    }
+
+    $objectId = $h.TxtObjectId.Text.Trim()
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "dependencies_${objectId}_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $exportData = @{
+        objectId = $objectId
+        objectType = switch ($h.CmbObjectType.SelectedIndex) {
+          0 { "queue" }
+          1 { "dataAction" }
+          2 { "schedule" }
+          3 { "skill" }
+          default { "queue" }
+        }
+        references = $script:DependencyReferencesData
+        timestamp = (Get-Date).ToString('o')
+      }
+      
+      $exportData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported dependency map to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  # Object ID textbox focus handlers
+  $h.TxtObjectId.Add_GotFocus({
+    if ($h.TxtObjectId.Text -eq "Enter object ID...") {
+      $h.TxtObjectId.Text = ""
+    }
+  })
+
+  $h.TxtObjectId.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($h.TxtObjectId.Text)) {
+      $h.TxtObjectId.Text = "Enter object ID..."
+    }
+  })
+
+  return $view
+}
+
 function New-QueuesView {
   <#
   .SYNOPSIS
@@ -6522,6 +6725,10 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Orchestration::Config Export' {
       $TxtSubtitle.Text = 'Export configuration to JSON for backup or migration'
       $MainHost.Content = (New-ConfigExportView)
+    }
+    'Orchestration::Dependency / Impact Map' {
+      $TxtSubtitle.Text = 'Search flows for object references and dependencies'
+      $MainHost.Content = (New-DependencyImpactMapView)
     }
     'Routing & People::Queues' {
       $TxtSubtitle.Text = 'View and export routing queues'
