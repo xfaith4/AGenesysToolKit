@@ -93,14 +93,11 @@ function ConvertFrom-GcXaml {
 # Initialize Auth Configuration (user should customize these)
 Set-GcAuthConfig `
   -Region 'usw2.pure.cloud' `
-  -Org 'Production' `
   -ClientId 'clientid' `
   -RedirectUri 'http://localhost:8085/callback' `
-  -Scopes @('conversations', 'analytics', 'notifications', 'users')
 
 $script:AppState = [ordered]@{
   Region       = 'usw2.pure.cloud'
-  Org          = 'Production'
   Auth         = 'Not logged in'
   TokenStatus  = 'No token'
   AccessToken  = $null  # STEP 1: Set a token here for testing: $script:AppState.AccessToken = "YOUR_TOKEN_HERE"
@@ -732,7 +729,7 @@ function Start-TokenTest {
     Validates the token in AppState.AccessToken by making a test API call.
     Updates UI with test results including user info and organization.
     Can be called from button handler or programmatically after setting a token.
-    
+
     This function depends on:
     - $script:AppState (global AppState with AccessToken and Region)
     - $BtnTestToken (UI button element for state management)
@@ -757,10 +754,10 @@ function Start-TokenTest {
   # Queue background job to test token via GET /api/v2/users/me
   Start-AppJob -Name "Test Token" -Type "Auth" -ScriptBlock {
     param($region, $token, $coreModulePath)
-    
+
     # Import required modules in runspace
     Import-Module (Join-Path -Path $coreModulePath -ChildPath 'HttpRequests.psm1') -Force
-    
+
     try {
       # Call GET /api/v2/users/me using Invoke-GcRequest with explicit parameters
       $userInfo = Invoke-GcRequest -Path '/api/v2/users/me' -Method GET `
@@ -875,7 +872,7 @@ function Show-SetTokenDialog {
     Provides a UI for entering region and access token manually.
     Validates and sets the token, then triggers an immediate token test.
     Useful for testing with tokens obtained from other sources.
-    
+
     This function depends on:
     - $Window (script-scoped main window for dialog owner)
     - $script:AppState (global AppState for region and token)
@@ -908,7 +905,7 @@ function Show-SetTokenDialog {
     <Border Grid.Row="0" Background="#FF111827" CornerRadius="6" Padding="12" Margin="0,0,0,16">
       <StackPanel>
         <TextBlock Text="Manual Token Entry" FontSize="14" FontWeight="SemiBold" Foreground="White"/>
-        <TextBlock Text="Paste an access token for testing or manual authentication" 
+        <TextBlock Text="Paste an access token for testing or manual authentication"
                    FontSize="11" Foreground="#FFA0AEC0" Margin="0,4,0,0"/>
       </StackPanel>
     </Border>
@@ -922,13 +919,13 @@ function Show-SetTokenDialog {
     <!-- Token Input -->
     <StackPanel Grid.Row="2" Margin="0,0,0,12">
       <TextBlock Text="Access Token:" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
-      <TextBlock Text="(Bearer prefix will be automatically removed if present)" 
+      <TextBlock Text="(Bearer prefix will be automatically removed if present)"
                  FontSize="10" Foreground="#FF6B7280" Margin="0,0,0,4"/>
     </StackPanel>
 
-    <Border Grid.Row="3" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="4" 
+    <Border Grid.Row="3" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="4"
             Background="White" Padding="6" Margin="0,0,0,16">
-      <TextBox x:Name="TxtToken" 
+      <TextBox x:Name="TxtToken"
                AcceptsReturn="True"
                TextWrapping="Wrap"
                VerticalScrollBarVisibility="Auto"
@@ -944,7 +941,7 @@ function Show-SetTokenDialog {
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
 
-      <Button x:Name="BtnClearToken" Grid.Column="0" Content="Clear Token" 
+      <Button x:Name="BtnClearToken" Grid.Column="0" Content="Clear Token"
               Width="100" Height="30" HorizontalAlignment="Left"/>
 
       <StackPanel Grid.Column="1" Orientation="Horizontal">
@@ -958,7 +955,7 @@ function Show-SetTokenDialog {
 
   try {
     $dialog = ConvertFrom-GcXaml -XamlString $xamlString
-    
+
     # Set owner if parent window is available
     if ($Window) {
       $dialog.Owner = $Window
@@ -3231,7 +3228,7 @@ $BtnTestToken.Add_Click({
     Show-SetTokenDialog
     return
   }
-  
+
   # Use the dedicated token test function
   Start-TokenTest
   ### END: Manual Token Entry
