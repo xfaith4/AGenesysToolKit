@@ -3023,6 +3023,327 @@ function New-ConversationTimelineView {
   return $view
 }
 
+function New-AnalyticsJobsView {
+  <#
+  .SYNOPSIS
+    Creates the Analytics Jobs module view for managing long-running analytics queries.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+
+          <StackPanel>
+            <TextBlock Text="Analytics Jobs" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+            <TextBlock Text="Submit and monitor long-running analytics queries" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+          </StackPanel>
+
+          <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+            <Button x:Name="BtnSubmitJob" Content="Submit Job" Width="110" Height="32" Margin="0,0,8,0"/>
+            <Button x:Name="BtnRefresh" Content="Refresh" Width="100" Height="32"/>
+          </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="1" Margin="0,12,0,0">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="200"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="150"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="Date Range:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox x:Name="CmbJobDateRange" Grid.Column="1" Height="26" SelectedIndex="2">
+              <ComboBoxItem Content="Last 1 hour"/>
+              <ComboBoxItem Content="Last 6 hours"/>
+              <ComboBoxItem Content="Last 24 hours"/>
+              <ComboBoxItem Content="Last 7 days"/>
+            </ComboBox>
+
+            <TextBlock Grid.Column="2" Text="Max Results:" VerticalAlignment="Center" Margin="12,0,8,0"/>
+            <TextBox x:Name="TxtJobMaxResults" Grid.Column="3" Height="26" Text="1000"/>
+          </Grid>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Analytics Jobs" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock x:Name="TxtJobCount" Text="(0 jobs)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+          <Button x:Name="BtnViewResults" Content="View Results" Width="110" Height="26" Margin="12,0,0,0" IsEnabled="False"/>
+          <Button x:Name="BtnExportResults" Content="Export Results" Width="110" Height="26" Margin="8,0,0,0" IsEnabled="False"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridJobs" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Job ID" Binding="{Binding JobId}" Width="280"/>
+            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120"/>
+            <DataGridTextColumn Header="Submitted" Binding="{Binding SubmittedTime}" Width="160"/>
+            <DataGridTextColumn Header="Completed" Binding="{Binding CompletedTime}" Width="160"/>
+            <DataGridTextColumn Header="Results" Binding="{Binding ResultCount}" Width="100"/>
+            <DataGridTextColumn Header="Duration" Binding="{Binding Duration}" Width="*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    BtnSubmitJob      = $view.FindName('BtnSubmitJob')
+    BtnRefresh        = $view.FindName('BtnRefresh')
+    CmbJobDateRange   = $view.FindName('CmbJobDateRange')
+    TxtJobMaxResults  = $view.FindName('TxtJobMaxResults')
+    TxtJobCount       = $view.FindName('TxtJobCount')
+    BtnViewResults    = $view.FindName('BtnViewResults')
+    BtnExportResults  = $view.FindName('BtnExportResults')
+    GridJobs          = $view.FindName('GridJobs')
+  }
+
+  # Track submitted jobs
+  if (-not (Get-Variable -Name AnalyticsJobs -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:AnalyticsJobs = @()
+  }
+
+  function Refresh-JobsList {
+    if ($script:AnalyticsJobs.Count -eq 0) {
+      $h.GridJobs.ItemsSource = @()
+      $h.TxtJobCount.Text = "(0 jobs)"
+      return
+    }
+
+    $displayData = $script:AnalyticsJobs | ForEach-Object {
+      $duration = if ($_.CompletedTime -and $_.SubmittedTime) {
+        try {
+          $start = [DateTime]$_.SubmittedTime
+          $end = [DateTime]$_.CompletedTime
+          $span = $end - $start
+          "$([int]$span.TotalSeconds)s"
+        } catch { 'N/A' }
+      } else { 'In Progress' }
+
+      [PSCustomObject]@{
+        JobId = $_.JobId
+        Status = $_.Status
+        SubmittedTime = if ($_.SubmittedTime) { $_.SubmittedTime.ToString('yyyy-MM-dd HH:mm:ss') } else { 'N/A' }
+        CompletedTime = if ($_.CompletedTime) { $_.CompletedTime.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+        ResultCount = if ($_.Results) { $_.Results.Count } else { 0 }
+        Duration = $duration
+        JobData = $_
+      }
+    }
+
+    $h.GridJobs.ItemsSource = $displayData
+    $h.TxtJobCount.Text = "($($script:AnalyticsJobs.Count) jobs)"
+  }
+
+  $h.BtnSubmitJob.Add_Click({
+    Set-Status "Submitting analytics job..."
+    $h.BtnSubmitJob.IsEnabled = $false
+
+    # Build date range
+    $endTime = Get-Date
+    $startTime = switch ($h.CmbJobDateRange.SelectedIndex) {
+      0 { $endTime.AddHours(-1) }
+      1 { $endTime.AddHours(-6) }
+      2 { $endTime.AddHours(-24) }
+      3 { $endTime.AddDays(-7) }
+      default { $endTime.AddHours(-24) }
+    }
+
+    $interval = "$($startTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))/$($endTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))"
+    
+    # Get max results
+    $maxResults = 1000
+    if (-not [string]::IsNullOrWhiteSpace($h.TxtJobMaxResults.Text)) {
+      if ([int]::TryParse($h.TxtJobMaxResults.Text, [ref]$maxResults)) {
+        # Valid number
+      } else {
+        $maxResults = 1000
+      }
+    }
+
+    # Build query body
+    $queryBody = @{
+      interval = $interval
+      order = "desc"
+      orderBy = "conversationStart"
+      paging = @{
+        pageSize = 100
+        pageNumber = 1
+      }
+    }
+
+    # Submit job via background runner
+    Start-AppJob -Name "Submit Analytics Job" -Type "Query" -ScriptBlock {
+      param($queryBody, $accessToken, $instanceName, $maxItems)
+      
+      # Import required modules in runspace
+      $scriptRoot = Split-Path -Parent $PSCommandPath
+      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+      Import-Module (Join-Path -Path $coreRoot -ChildPath 'Jobs.psm1') -Force
+      Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
+      
+      # Submit the job
+      $job = Start-GcAnalyticsConversationDetailsJob -Body $queryBody
+      
+      # Poll for completion
+      $jobId = $job.id
+      $timeout = 300
+      $pollInterval = 2
+      $elapsed = 0
+      
+      while ($elapsed -lt $timeout) {
+        $status = Get-GcAnalyticsConversationDetailsJobStatus -JobId $jobId
+        
+        if ($status.state -match 'FULFILLED|COMPLETED|SUCCESS') {
+          # Fetch results
+          $results = Get-GcAnalyticsConversationDetailsJobResults -JobId $jobId -MaxItems $maxItems
+          return @{
+            JobId = $jobId
+            Status = $status.state
+            Results = $results
+            Job = $job
+            StatusData = $status
+          }
+        }
+        
+        if ($status.state -match 'FAILED|ERROR') {
+          throw "Analytics job failed: $($status.state)"
+        }
+        
+        Start-Sleep -Seconds $pollInterval
+        $elapsed += $pollInterval
+      }
+      
+      throw "Analytics job timed out after $timeout seconds"
+    } -ArgumentList @($queryBody, $script:AppState.AccessToken, $script:AppState.Region, $maxResults) -OnCompleted {
+      param($job)
+      $h.BtnSubmitJob.IsEnabled = $true
+
+      if ($job.Result -and $job.Result.JobId) {
+        $jobData = @{
+          JobId = $job.Result.JobId
+          Status = $job.Result.Status
+          SubmittedTime = Get-Date
+          CompletedTime = Get-Date
+          Results = $job.Result.Results
+          RawJob = $job.Result.Job
+          RawStatus = $job.Result.StatusData
+        }
+        
+        $script:AnalyticsJobs += $jobData
+        Refresh-JobsList
+        Set-Status "Analytics job completed: $($jobData.JobId) - $($jobData.Results.Count) results"
+        
+        $h.BtnViewResults.IsEnabled = $true
+        $h.BtnExportResults.IsEnabled = $true
+      } else {
+        Set-Status "Failed to submit analytics job. See job logs for details."
+      }
+    }
+  })
+
+  $h.BtnRefresh.Add_Click({
+    Refresh-JobsList
+    Set-Status "Refreshed job list."
+  })
+
+  $h.BtnViewResults.Add_Click({
+    $selected = $h.GridJobs.SelectedItem
+    if (-not $selected) {
+      Set-Status "Please select a job to view results."
+      return
+    }
+
+    $jobId = $selected.JobId
+    $jobData = $script:AnalyticsJobs | Where-Object { $_.JobId -eq $jobId } | Select-Object -First 1
+    
+    if (-not $jobData -or -not $jobData.Results) {
+      Set-Status "No results available for this job."
+      return
+    }
+
+    # Show results in a message box (simplified - in production, this would open a new view)
+    $resultSummary = "Job ID: $($jobData.JobId)`nStatus: $($jobData.Status)`nResults: $($jobData.Results.Count) conversations"
+    [System.Windows.MessageBox]::Show(
+      $resultSummary,
+      "Analytics Job Results",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Information
+    )
+    Set-Status "Viewing results for job: $jobId"
+  })
+
+  $h.BtnExportResults.Add_Click({
+    $selected = $h.GridJobs.SelectedItem
+    if (-not $selected) {
+      Set-Status "Please select a job to export results."
+      return
+    }
+
+    $jobId = $selected.JobId
+    $jobData = $script:AnalyticsJobs | Where-Object { $_.JobId -eq $jobId } | Select-Object -First 1
+    
+    if (-not $jobData -or -not $jobData.Results) {
+      Set-Status "No results available for this job."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "analytics_job_${jobId}_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $jobData.Results | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported $($jobData.Results.Count) results to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  Refresh-JobsList
+
+  return $view
+}
+
 function New-FlowsView {
   <#
   .SYNOPSIS
@@ -3973,6 +4294,222 @@ function New-SkillsView {
   return $view
 }
 
+function New-UsersPresenceView {
+  <#
+  .SYNOPSIS
+    Creates the Users & Presence module view with user management and presence monitoring.
+  #>
+  $xamlString = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <StackPanel>
+          <TextBlock Text="Users &amp; Presence" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBlock Text="View users, monitor presence status, and manage routing" Margin="0,4,0,0" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="BtnUserLoad" Content="Load Users" Width="110" Height="32" Margin="0,0,8,0"/>
+          <Button x:Name="BtnUserExportJson" Content="Export JSON" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+          <Button x:Name="BtnUserExportCsv" Content="Export CSV" Width="100" Height="32" IsEnabled="False"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Users" FontWeight="SemiBold" Foreground="#FF111827"/>
+          <TextBox x:Name="TxtUserSearch" Margin="12,0,0,0" Width="300" Height="26" Text="Search users..."/>
+          <TextBlock x:Name="TxtUserCount" Text="(0 users)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
+        </StackPanel>
+
+        <DataGrid x:Name="GridUsers" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="200"/>
+            <DataGridTextColumn Header="Email" Binding="{Binding Email}" Width="250"/>
+            <DataGridTextColumn Header="Division" Binding="{Binding Division}" Width="150"/>
+            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="100"/>
+            <DataGridTextColumn Header="Username" Binding="{Binding Username}" Width="*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xamlString
+
+  $h = @{
+    BtnUserLoad        = $view.FindName('BtnUserLoad')
+    BtnUserExportJson  = $view.FindName('BtnUserExportJson')
+    BtnUserExportCsv   = $view.FindName('BtnUserExportCsv')
+    TxtUserSearch      = $view.FindName('TxtUserSearch')
+    TxtUserCount       = $view.FindName('TxtUserCount')
+    GridUsers          = $view.FindName('GridUsers')
+  }
+
+  $script:UsersData = @()
+
+  $h.BtnUserLoad.Add_Click({
+    Set-Status "Loading users..."
+    $h.BtnUserLoad.IsEnabled = $false
+    $h.BtnUserExportJson.IsEnabled = $false
+    $h.BtnUserExportCsv.IsEnabled = $false
+
+    Start-AppJob -Name "Load Users" -Type "Query" -ScriptBlock {
+      Get-GcUsers -AccessToken $script:AppState.AccessToken -InstanceName $script:AppState.Region
+    } -OnCompleted {
+      param($job)
+      $h.BtnUserLoad.IsEnabled = $true
+
+      if ($job.Result) {
+        $script:UsersData = $job.Result
+        $displayData = $job.Result | ForEach-Object {
+          [PSCustomObject]@{
+            Name = if ($_.name) { $_.name } else { 'N/A' }
+            Email = if ($_.email) { $_.email } else { 'N/A' }
+            Division = if ($_.division -and $_.division.name) { $_.division.name } else { 'N/A' }
+            State = if ($_.state) { $_.state } else { 'N/A' }
+            Username = if ($_.username) { $_.username } else { 'N/A' }
+          }
+        }
+        $h.GridUsers.ItemsSource = $displayData
+        $h.TxtUserCount.Text = "($($job.Result.Count) users)"
+        $h.BtnUserExportJson.IsEnabled = $true
+        $h.BtnUserExportCsv.IsEnabled = $true
+        Set-Status "Loaded $($job.Result.Count) users."
+      } else {
+        $h.GridUsers.ItemsSource = @()
+        $h.TxtUserCount.Text = "(0 users)"
+        Set-Status "Failed to load users."
+      }
+    }
+  })
+
+  $h.BtnUserExportJson.Add_Click({
+    if (-not $script:UsersData -or $script:UsersData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "users_$timestamp.json"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:UsersData | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
+      Set-Status "Exported $($script:UsersData.Count) users to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  $h.BtnUserExportCsv.Add_Click({
+    if (-not $script:UsersData -or $script:UsersData.Count -eq 0) {
+      Set-Status "No data to export."
+      return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $filename = "users_$timestamp.csv"
+    $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
+    if (-not (Test-Path $artifactsDir)) {
+      New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+    }
+    $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
+
+    try {
+      $script:UsersData | Select-Object name, email, username, state, @{N='division';E={if($_.division.name){$_.division.name}else{'N/A'}}} | 
+        Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
+      Set-Status "Exported $($script:UsersData.Count) users to $filename"
+      Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
+        Start-Process (Split-Path $filepath -Parent)
+      }
+    } catch {
+      Set-Status "Failed to export: $_"
+    }
+  })
+
+  $h.TxtUserSearch.Add_TextChanged({
+    if (-not $script:UsersData -or $script:UsersData.Count -eq 0) { return }
+
+    $searchText = $h.TxtUserSearch.Text.ToLower()
+    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search users...") {
+      $displayData = $script:UsersData | ForEach-Object {
+        [PSCustomObject]@{
+          Name = if ($_.name) { $_.name } else { 'N/A' }
+          Email = if ($_.email) { $_.email } else { 'N/A' }
+          Division = if ($_.division -and $_.division.name) { $_.division.name } else { 'N/A' }
+          State = if ($_.state) { $_.state } else { 'N/A' }
+          Username = if ($_.username) { $_.username } else { 'N/A' }
+        }
+      }
+      $h.GridUsers.ItemsSource = $displayData
+      $h.TxtUserCount.Text = "($($script:UsersData.Count) users)"
+      return
+    }
+
+    $filtered = $script:UsersData | Where-Object {
+      $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
+      $json -like "*$searchText*"
+    }
+
+    $displayData = $filtered | ForEach-Object {
+      [PSCustomObject]@{
+        Name = if ($_.name) { $_.name } else { 'N/A' }
+        Email = if ($_.email) { $_.email } else { 'N/A' }
+        Division = if ($_.division -and $_.division.name) { $_.division.name } else { 'N/A' }
+        State = if ($_.state) { $_.state } else { 'N/A' }
+        Username = if ($_.username) { $_.username } else { 'N/A' }
+      }
+    }
+
+    $h.GridUsers.ItemsSource = $displayData
+    $h.TxtUserCount.Text = "($($filtered.Count) users)"
+  })
+
+  $h.TxtUserSearch.Add_GotFocus({
+    if ($h.TxtUserSearch.Text -eq "Search users...") {
+      $h.TxtUserSearch.Text = ""
+    }
+  })
+
+  $h.TxtUserSearch.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($h.TxtUserSearch.Text)) {
+      $h.TxtUserSearch.Text = "Search users..."
+    }
+  })
+
+  return $view
+}
+
 function New-SubscriptionsView {
   $xamlString = @"
 <UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -4565,6 +5102,10 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
       $TxtSubtitle.Text = 'Timeline-first: evidence → story → export'
       $MainHost.Content = (New-ConversationTimelineView)
     }
+    'Conversations::Analytics Jobs' {
+      $TxtSubtitle.Text = 'Submit and monitor analytics queries'
+      $MainHost.Content = (New-AnalyticsJobsView)
+    }
     'Orchestration::Flows' {
       $TxtSubtitle.Text = 'View and export Architect flows'
       $MainHost.Content = (New-FlowsView)
@@ -4580,6 +5121,10 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Routing & People::Skills' {
       $TxtSubtitle.Text = 'View and export ACD skills'
       $MainHost.Content = (New-SkillsView)
+    }
+    'Routing & People::Users & Presence' {
+      $TxtSubtitle.Text = 'View users and monitor presence status'
+      $MainHost.Content = (New-UsersPresenceView)
     }
     default {
       $MainHost.Content = (New-PlaceholderView -Title $module -Hint "Module shell for $workspace. UX-first; job-driven backend later.")
