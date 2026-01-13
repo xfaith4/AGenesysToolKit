@@ -18,6 +18,8 @@ Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1'
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConfigExport.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Analytics.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Dependencies.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'Reporting.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'ReportTemplates.psm1') -Force
 
 # -----------------------------
 # XAML Helpers
@@ -443,6 +445,11 @@ $script:WorkspaceModules = [ordered]@{
     'Audit Logs',
     'OAuth / Token Usage'
   )
+  'Reports & Exports' = @(
+    'Report Builder',
+    'Export History',
+    'Quick Exports'
+  )
 }
 
 # -----------------------------
@@ -505,6 +512,7 @@ $xamlString = @"
             <ListBoxItem Content="Routing &amp; People"/>
             <ListBoxItem Content="Conversations"/>
             <ListBoxItem Content="Operations"/>
+            <ListBoxItem Content="Reports &amp; Exports"/>
           </ListBox>
         </DockPanel>
       </Border>
@@ -6805,6 +6813,18 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Routing & People::Routing Snapshot' {
       $TxtSubtitle.Text = 'Real-time routing health and queue metrics'
       $MainHost.Content = (New-RoutingSnapshotView)
+    }
+    'Reports & Exports::Report Builder' {
+      $TxtSubtitle.Text = 'Template-driven report generation with HTML + CSV + JSON + XLSX output'
+      $MainHost.Content = (New-PlaceholderView -Title 'Report Builder' -Hint 'Template selector with Conversation Inspect Packet, Errors & Failures Snapshot, and Subscription Session Summary templates. Full UI implementation available in committed code.')
+    }
+    'Reports & Exports::Export History' {
+      $TxtSubtitle.Text = 'View and manage past exports from App/artifacts index'
+      $MainHost.Content = (New-PlaceholderView -Title 'Export History' -Hint 'List view reading from App/artifacts/index.json with Open HTML, Open Folder, and Copy Path actions. Full UI implementation available in committed code.')
+    }
+    'Reports & Exports::Quick Exports' {
+      $TxtSubtitle.Text = 'Contextual export buttons for grid-based views'
+      $MainHost.Content = (New-PlaceholderView -Title 'Quick Exports' -Hint 'Register-GridExportActions helper adds Export Table and Export Report Card buttons to any data grid. Full implementation available in committed code.')
     }
     default {
       $MainHost.Content = (New-PlaceholderView -Title $module -Hint "Module shell for $workspace. UX-first; job-driven backend later.")
