@@ -720,6 +720,46 @@ function Refresh-ArtifactsList {
 # Manual Token Entry Dialog
 # -----------------------------
 
+# -----------------------------
+# Console diagnostics (Token workflows)
+# -----------------------------
+# NOTE: These are intentionally noisy; the user requested console-level tracing to diagnose 400 responses.
+# Set `GC_TOOLKIT_REVEAL_SECRETS=1` to print full token values (otherwise masked).
+$script:GcConsoleDiagnosticsEnabled = $true
+$script:GcConsoleDiagnosticsRevealSecrets = $false
+try {
+  if ($env:GC_TOOLKIT_DIAGNOSTICS -and ($env:GC_TOOLKIT_DIAGNOSTICS -match '^(0|false|no|off)$')) {
+    $script:GcConsoleDiagnosticsEnabled = $false
+  }
+  if ($env:GC_TOOLKIT_REVEAL_SECRETS -and ($env:GC_TOOLKIT_REVEAL_SECRETS -match '^(1|true|yes|on)$')) {
+    $script:GcConsoleDiagnosticsRevealSecrets = $true
+  }
+} catch { }
+
+function Format-GcDiagSecret {
+  param(
+    [AllowNull()][AllowEmptyString()][string]$Value,
+    [int]$Head = 10,
+    [int]$Tail = 6
+  )
+
+  if ($script:GcConsoleDiagnosticsRevealSecrets) { return $Value }
+  if ([string]::IsNullOrWhiteSpace($Value)) { return '<empty>' }
+
+  $len = $Value.Length
+  if ($len -le ($Head + $Tail + 3)) { return ("<{0} chars>" -f $len) }
+  return ("{0}...{1} (<{2} chars>)" -f $Value.Substring(0, $Head), $Value.Substring($len - $Tail), $len)
+}
+
+function Write-GcDiag {
+  param(
+    [Parameter(Mandatory)][string]$Message
+  )
+  if (-not $script:GcConsoleDiagnosticsEnabled) { return }
+  $ts = (Get-Date).ToString('HH:mm:ss.fff')
+  Write-Host ("[{0}] [DIAG] {1}" -f $ts, $Message)
+}
+
 function Start-TokenTest {
   <#
   .SYNOPSIS
@@ -742,9 +782,12 @@ function Start-TokenTest {
   #>
 
   if (-not $script:AppState.AccessToken) {
+    Write-GcDiag "Start-TokenTest: no token in AppState.AccessToken"
     Set-Status "No token available to test."
     return
   }
+
+  Write-GcDiag ("Start-TokenTest: begin (Region='{0}', Token={1})" -f $script:AppState.Region, (Format-GcDiagSecret -Value $script:AppState.AccessToken))
 
   # Disable button during test
   $BtnTestToken.IsEnabled = $false
@@ -759,34 +802,113 @@ function Start-TokenTest {
     Import-Module (Join-Path -Path $coreModulePath -ChildPath 'HttpRequests.psm1') -Force
 
     try {
+      $diag = New-Object 'System.Collections.Generic.List[string]'
+
+      $baseUri = "https://api.$region/"
+      $path = '/api/v2/users/me'
+      $resolvedPath = $path.TrimStart('/')
+      $requestUri = ($baseUri.TrimEnd('/') + '/' + $resolvedPath)
+
+      $reveal = $false
+      try {
+        if ($env:GC_TOOLKIT_REVEAL_SECRETS -and ($env:GC_TOOLKIT_REVEAL_SECRETS -match '^(1|true|yes|on)$')) { $reveal = $true }
+      } catch { }
+
+      $tokenShown = "<empty>"
+      if ($token) {
+        if ($reveal) {
+          $tokenShown = $token
+        } else {
+          $tokenShown = ("{0}...<{1} chars>" -f $token.Substring(0, [Math]::Min(12, $token.Length)), $token.Length)
+        }
+      }
+
+      $diag.Add("Start: region='$region'") | Out-Null
+      $diag.Add(("BaseUri: {0}" -f $baseUri)) | Out-Null
+      $diag.Add(("Request: GET {0}" -f $requestUri)) | Out-Null
+      $diag.Add(("Authorization: Bearer {0}" -f $tokenShown)) | Out-Null
+      $diag.Add("Content-Type: application/json; charset=utf-8") | Out-Null
+
       # Call GET /api/v2/users/me using Invoke-GcRequest with explicit parameters
       $userInfo = Invoke-GcRequest -Path '/api/v2/users/me' -Method GET `
-        -InstanceName $region -AccessToken $token
+        -InstanceName $region -AccessToken $token -RetryCount 0
 
       return [PSCustomObject]@{
         Success = $true
         UserInfo = $userInfo
         Error = $null
+        Diagnostics = @($diag)
+        RequestUri = $requestUri
       }
     } catch {
       # Capture detailed error information for better diagnostics
       $errorMessage = $_.Exception.Message
       $statusCode = $null
+      $responseBody = $null
 
       # Try to extract HTTP status code if available
       if ($_.Exception.Response) {
-        $statusCode = [int]$_.Exception.Response.StatusCode
+        try { $statusCode = [int]$_.Exception.Response.StatusCode } catch { }
+        try {
+          # Windows PowerShell (HttpWebResponse)
+          if ($_.Exception.Response -is [System.Net.HttpWebResponse]) {
+            $stream = $_.Exception.Response.GetResponseStream()
+            if ($stream) {
+              $reader = New-Object System.IO.StreamReader($stream)
+              $responseBody = $reader.ReadToEnd()
+            }
+          }
+
+          # PowerShell 7+ (HttpResponseMessage)
+          if (-not $responseBody -and $_.Exception.Response -is [System.Net.Http.HttpResponseMessage]) {
+            $responseBody = $_.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+          }
+        } catch { }
       }
+
+      # PowerShell 7 often places response content into ErrorDetails
+      try {
+        if (-not $responseBody -and $_.ErrorDetails -and $_.ErrorDetails.Message) {
+          $responseBody = $_.ErrorDetails.Message
+        }
+      } catch { }
 
       return [PSCustomObject]@{
         Success = $false
         UserInfo = $null
         Error = $errorMessage
         StatusCode = $statusCode
+        ResponseBody = $responseBody
+        Diagnostics = @($diag)
+        RequestUri = $requestUri
       }
     }
   } -ArgumentList @($script:AppState.Region, $script:AppState.AccessToken, $coreRoot) -OnCompleted {
     param($job)
+
+    # Dump diagnostics to console + job logs (UI thread safe)
+    try {
+      if ($job.Result -and $job.Result.Diagnostics) {
+        Write-GcDiag ("Token test diagnostics ({0} lines):" -f @($job.Result.Diagnostics).Count)
+        foreach ($line in @($job.Result.Diagnostics)) {
+          Write-GcDiag $line
+          try { Add-GcJobLog -Job $job -Message ("DIAG: {0}" -f $line) } catch { }
+        }
+      }
+      if ($job.Result -and $job.Result.RequestUri) {
+        Write-GcDiag ("Token test requestUri: {0}" -f $job.Result.RequestUri)
+        try { Add-GcJobLog -Job $job -Message ("DIAG: requestUri={0}" -f $job.Result.RequestUri) } catch { }
+      }
+      if ($job.Result -and -not $job.Result.Success) {
+        Write-GcDiag ("Token test failed: StatusCode={0} Error='{1}'" -f $job.Result.StatusCode, $job.Result.Error)
+        if ($job.Result.ResponseBody) {
+          $body = [string]$job.Result.ResponseBody
+          if ($body.Length -gt 4096) { $body = $body.Substring(0, 4096) + '…' }
+          Write-GcDiag ("Token test error body: {0}" -f $body)
+          try { Add-GcJobLog -Job $job -Message ("DIAG: errorBody={0}" -f $body) } catch { }
+        }
+      }
+    } catch { }
 
     if ($job.Result -and $job.Result.Success) {
       # SUCCESS: Token is valid
@@ -955,6 +1077,7 @@ function Show-SetTokenDialog {
 "@
 
   try {
+    Write-GcDiag ("Show-SetTokenDialog: open (prefill Region='{0}')" -f $script:AppState.Region)
     $dialog = ConvertFrom-GcXaml -XamlString $xamlString
 
     # Set owner if parent window is available
@@ -973,13 +1096,17 @@ function Show-SetTokenDialog {
 
     # Set + Test button handler
     $btnSetTest.Add_Click({
+      Write-GcDiag "Manual token entry: 'Set + Test' clicked"
+
       # Get and clean region input
       $region = $txtRegion.Text.Trim()
+      Write-GcDiag ("Manual token entry: region(raw)='{0}'" -f $region)
 
       # Get token and perform comprehensive sanitization
       # Remove all line breaks, carriage returns, and extra whitespace
       $token = $txtToken.Text -replace '[\r\n]+', ''  # Remove line breaks
       $token = $token.Trim()  # Remove leading/trailing whitespace
+      Write-GcDiag ("Manual token entry: token(raw/sanitized)={0}" -f (Format-GcDiagSecret -Value $token))
 
       # Validate region input
       if ([string]::IsNullOrWhiteSpace($region)) {
@@ -1007,6 +1134,7 @@ function Show-SetTokenDialog {
       if ($token -imatch '^Bearer\s+(.+)$') {
         $token = $matches[1].Trim()
       }
+      Write-GcDiag ("Manual token entry: token(after Bearer strip)={0}" -f (Format-GcDiagSecret -Value $token))
 
       # Basic token format validation (should look like a JWT or similar)
       # JWT tokens have format: xxxxx.yyyyy.zzzzz (base64 parts separated by dots)
@@ -1027,6 +1155,7 @@ function Show-SetTokenDialog {
       $script:AppState.AccessToken = $token
       $script:AppState.TokenStatus = "Token set (manual)"
       $script:AppState.Auth = "Manual token"
+      Write-GcDiag ("Manual token entry: AppState updated (Region='{0}', AccessToken={1})" -f $script:AppState.Region, (Format-GcDiagSecret -Value $script:AppState.AccessToken))
 
       # Update UI context
       Set-TopContext
@@ -1036,17 +1165,20 @@ function Show-SetTokenDialog {
       $dialog.Close()
 
       # Trigger token test using the dedicated helper function
+      Write-GcDiag "Manual token entry: launching Start-TokenTest"
       Start-TokenTest
     })
 
     # Cancel button handler
     $btnCancel.Add_Click({
+      Write-GcDiag "Manual token entry: Cancel clicked"
       $dialog.DialogResult = $false
       $dialog.Close()
     })
 
     # Clear Token button handler
     $btnClearToken.Add_Click({
+      Write-GcDiag "Manual token entry: Clear Token clicked"
       $result = [System.Windows.MessageBox]::Show(
         "This will clear the current access token. Continue?",
         "Clear Token",
@@ -1055,6 +1187,7 @@ function Show-SetTokenDialog {
       )
 
       if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
+        Write-GcDiag "Manual token entry: Clear Token confirmed (Yes)"
         $script:AppState.AccessToken = $null
         $script:AppState.Auth = "Not logged in"
         $script:AppState.TokenStatus = "No token"
@@ -1068,6 +1201,7 @@ function Show-SetTokenDialog {
 
     # Show dialog
     $dialog.ShowDialog() | Out-Null
+    Write-GcDiag "Show-SetTokenDialog: closed"
 
   } catch {
     Write-Error "Failed to show token dialog: $_"
@@ -3102,8 +3236,10 @@ $BtnLogin.ContextMenu = $loginContextMenu
 ### END: Manual Token Entry
 
 $BtnLogin.Add_Click({
+  Write-GcDiag ("Login button clicked (HasToken={0}, Region='{1}')" -f [bool]$script:AppState.AccessToken, $script:AppState.Region)
   # Check if already logged in - if so, logout
   if ($script:AppState.AccessToken) {
+    Write-GcDiag "Login button: logging out (clearing token state)"
     # Logout: Clear token and reset UI
     # Clear-GcTokenState clears the Auth module's token state
     # We also clear AppState.AccessToken (application-level state) for complete logout
@@ -3122,6 +3258,7 @@ $BtnLogin.Add_Click({
 
   # Login flow
   $authConfig = Get-GcAuthConfig
+  Write-GcDiag ("OAuth config snapshot: Region='{0}' ClientId='{1}' RedirectUri='{2}' Scopes='{3}' HasClientSecret={4}" -f $authConfig.Region, $authConfig.ClientId, $authConfig.RedirectUri, ($authConfig.Scopes -join ' '), (-not [string]::IsNullOrWhiteSpace($authConfig.ClientSecret)))
 
   # Check if client ID is configured
   if ($authConfig.ClientId -eq 'YOUR_CLIENT_ID_HERE' -or -not $authConfig.ClientId) {
@@ -3142,6 +3279,7 @@ $BtnLogin.Add_Click({
   # Run OAuth flow in background
   $authModulePath = Join-Path -Path $coreRoot -ChildPath 'Auth.psm1'
   $authConfigSnapshot = Get-GcAuthConfig
+  Write-GcDiag ("Starting OAuth Login job (AuthModule='{0}', ArtifactsDir='{1}')" -f $authModulePath, $script:ArtifactsDir)
 
   Start-AppJob -Name "OAuth Login" -Type "Auth" -ScriptBlock {
     param($authModulePath, $authConfigSnapshot, $artifactsDir)
@@ -3157,32 +3295,59 @@ $BtnLogin.Add_Click({
       -Scopes $authConfigSnapshot.Scopes `
       -ClientSecret $authConfigSnapshot.ClientSecret
 
+    $diag = $null
+    try { $diag = Get-GcAuthDiagnostics } catch { }
+
     try {
       $tokenResponse = Get-GcTokenAsync -TimeoutSeconds 300
       if (-not $tokenResponse -or -not $tokenResponse.access_token) {
-        return $null
+        try { $diag = Get-GcAuthDiagnostics } catch { }
+        return [PSCustomObject]@{
+          Success     = $false
+          Error       = "OAuth flow returned no access_token."
+          AccessToken = $null
+          TokenType   = $null
+          ExpiresIn   = $null
+          UserInfo    = $null
+          AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
+        }
       }
 
       $userInfo = $null
       try { $userInfo = Test-GcToken } catch { }
 
-      $diag = Get-GcAuthDiagnostics
+      try { $diag = Get-GcAuthDiagnostics } catch { }
 
       return [PSCustomObject]@{
+        Success     = $true
+        Error       = $null
         AccessToken = $tokenResponse.access_token
         TokenType   = $tokenResponse.token_type
         ExpiresIn   = $tokenResponse.expires_in
         UserInfo    = $userInfo
-        AuthLogPath = $diag.LogPath
+        AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
       }
     } catch {
+      try { $diag = Get-GcAuthDiagnostics } catch { }
+      $msg = $_.Exception.Message
       Write-Error $_
-      return $null
+      return [PSCustomObject]@{
+        Success     = $false
+        Error       = $msg
+        AccessToken = $null
+        TokenType   = $null
+        ExpiresIn   = $null
+        UserInfo    = $null
+        AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
+      }
     }
   } -ArgumentList @($authModulePath, $authConfigSnapshot, $script:ArtifactsDir) -OnCompleted {
     param($job)
 
-    if ($job.Result) {
+    if ($job.Result -and $job.Result.Success) {
+      Write-GcDiag ("OAuth Login: SUCCESS (Token={0})" -f (Format-GcDiagSecret -Value $job.Result.AccessToken))
+      if ($job.Result.AuthLogPath) { Write-GcDiag ("OAuth Login: Auth diagnostics log: {0}" -f $job.Result.AuthLogPath) }
+
       $script:AppState.AccessToken = $job.Result.AccessToken
       $script:AppState.Auth = "Logged in"
       $script:AppState.TokenStatus = "Token OK"
@@ -3197,10 +3362,16 @@ $BtnLogin.Add_Click({
       $BtnLogin.IsEnabled = $true
       $BtnTestToken.IsEnabled = $true
     } else {
+      $err = $null
+      if ($job.Result) { $err = $job.Result.Error }
+      Write-GcDiag ("OAuth Login: FAILED (Error='{0}')" -f $err)
+      $BtnTestToken.IsEnabled = $false
+
       $script:AppState.Auth = "Login failed"
       $script:AppState.TokenStatus = "No token"
       Set-TopContext
       $authLogPath = $null
+      if ($job.Result -and $job.Result.AuthLogPath) { $authLogPath = $job.Result.AuthLogPath }
       try {
         $combined = @()
         if ($job.Errors) { $combined += @($job.Errors) }
@@ -3212,6 +3383,14 @@ $BtnLogin.Add_Click({
       } catch { }
 
       if ($authLogPath) {
+        Write-GcDiag ("OAuth Login: Auth diagnostics log: {0}" -f $authLogPath)
+        try {
+          if (Test-Path -LiteralPath $authLogPath) {
+            $tail = Get-Content -LiteralPath $authLogPath -Tail 80 -ErrorAction SilentlyContinue
+            Write-GcDiag ("OAuth Login: last {0} auth log lines:" -f @($tail).Count)
+            foreach ($l in @($tail)) { Write-Host $l }
+          }
+        } catch { }
         Set-Status "Authentication failed. Auth log: $authLogPath"
       } else {
         Set-Status "Authentication failed. Check job logs for details."
@@ -3223,14 +3402,17 @@ $BtnLogin.Add_Click({
 })
 
 $BtnTestToken.Add_Click({
+  Write-GcDiag ("Test Token button clicked (HasToken={0}, Region='{1}')" -f [bool]$script:AppState.AccessToken, $script:AppState.Region)
   ### BEGIN: Manual Token Entry
   # If no token exists, open the manual token entry dialog instead of showing an error
   if (-not $script:AppState.AccessToken) {
+    Write-GcDiag "Test Token: no token set -> opening manual token dialog"
     Show-SetTokenDialog
     return
   }
 
   # Use the dedicated token test function
+  Write-GcDiag "Test Token: token exists -> running Start-TokenTest"
   Start-TokenTest
   ### END: Manual Token Entry
 })
