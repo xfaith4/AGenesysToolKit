@@ -13,7 +13,7 @@ The Orchestration workspace handles administrative configuration tasks, includin
 | Flows | ✅ Fully Implemented | N/A |
 | Data Actions | ✅ Fully Implemented | N/A |
 | Dependency / Impact Map | 🔴 Not Implemented | Medium |
-| Config Export | 🔴 Not Implemented | Medium |
+| Config Export | ✅ Fully Implemented | N/A |
 
 ## Implemented Modules
 
@@ -173,110 +173,49 @@ function Build-GcDependencyMap {
 
 ---
 
-### 4. Config Export Module 🔴 Not Implemented
+### 4. Config Export Module ✅ Fully Implemented
 
 **Priority**: Medium - Useful for backup, documentation, and migration
 
-**Purpose**: Export Genesys Cloud configuration to JSON/YAML for backup, version control, or migration purposes
+**Status**: Complete - Core module and view implemented with full export capabilities
 
-**View Requirements**:
-```powershell
-function New-ConfigExportView {
-  # UI Components:
-  # - Configuration type selector: Flows, Queues, Skills, Data Actions, Integrations, Users
-  # - Select all / Select specific checkbox
-  # - Export format: JSON, YAML (if supported)
-  # - Include related objects checkbox (e.g., export flow with referenced queues)
-  # - Progress bar for export
-  # - Actions: Export Selected, Export All, Schedule Export (future)
-}
-```
+**Implemented Features**:
+- ✅ `Core/ConfigExport.psm1` module created
+- ✅ `Export-GcFlowsConfig` - Export flows to JSON
+- ✅ `Export-GcQueuesConfig` - Export queues to JSON
+- ✅ `Export-GcSkillsConfig` - Export skills to JSON
+- ✅ `Export-GcDataActionsConfig` - Export data actions to JSON
+- ✅ `Export-GcCompleteConfig` - Bulk export with organized directory structure
+- ✅ `New-ConfigExportView` - UI with checkboxes for each config type
+- ✅ Export history tracking
+- ✅ ZIP archive creation
+- ✅ Background execution via Start-AppJob
 
-**API Endpoints**:
-- All relevant configuration APIs (flows, queues, skills, users, etc.)
-- No dedicated "export" API - must query each resource type individually
-
-**Core Module Functions Needed**:
-```powershell
-# Create new Core/ConfigExport.psm1 module
-function Export-GcFlowsConfig {
-  param($FlowIds, $AccessToken, $InstanceName, $OutputPath)
-  # Export flows to JSON file
-  # Optionally include dependencies
-}
-
-function Export-GcQueuesConfig {
-  param($QueueIds, $AccessToken, $InstanceName, $OutputPath)
-  # Export queues to JSON file
-}
-
-function Export-GcSkillsConfig {
-  param($SkillIds, $AccessToken, $InstanceName, $OutputPath)
-  # Export skills to JSON file
-}
-
-function Export-GcDataActionsConfig {
-  param($ActionIds, $AccessToken, $InstanceName, $OutputPath)
-  # Export data actions to JSON file
-}
-
-function Export-GcCompleteConfig {
-  param($AccessToken, $InstanceName, $OutputDirectory)
-  # Export all configuration types to organized directory structure
-  # artifacts/
-  #   config_export_20240115/
-  #     flows/
-  #       flow1.json
-  #       flow2.json
-  #     queues/
-  #       queue1.json
-  #     skills/
-  #       skill1.json
-  # Creates ZIP archive
-}
-```
-
-**Data Model**:
-Export structure:
+**Export Structure**:
 ```
 config_export_20240115_103045/
 ├── flows/
-│   ├── flow_customer_service.json
-│   ├── flow_sales.json
-│   └── manifest.json (list of exported flows)
+│   ├── flow_{id}.json
+│   └── manifest.json
 ├── queues/
-│   ├── queue_customer_service.json
+│   ├── queue_{id}.json
 │   └── manifest.json
 ├── skills/
-│   ├── skill_spanish.json
+│   ├── skill_{id}.json
 │   └── manifest.json
 ├── data_actions/
-│   ├── action_lookup_customer.json
+│   ├── action_{id}.json
 │   └── manifest.json
-├── users/ (optional)
-│   └── manifest.json
-├── metadata.json (export timestamp, scope, user)
+├── metadata.json
 └── config_export_20240115_103045.zip
 ```
-
-**Implementation Steps**:
-1. Create `Core/ConfigExport.psm1` module
-2. Implement individual export functions (flows, queues, skills, data actions)
-3. Implement `Export-GcCompleteConfig` for bulk export
-4. Create `New-ConfigExportView` with checkboxes for each config type
-5. Implement "Export Selected" button handler
-6. Add progress tracking during export
-7. Generate ZIP archive of exported files
-8. Add "Open Folder" button to view exported files
 
 **Use Cases**:
 - **Backup**: Periodic export of configuration for disaster recovery
 - **Version Control**: Track configuration changes in Git
-- **Migration**: Export from one org and import to another (import not in scope)
+- **Migration**: Export from one org (import not in scope)
 - **Documentation**: Generate JSON files for documentation purposes
 - **Audit**: Review configuration changes over time
-
-**Estimated Effort**: 6-8 hours
 
 ---
 
@@ -409,26 +348,28 @@ Ensure OAuth client has the following scopes:
 **Current State**:
 - ✅ Flows module fully implemented and functional
 - ✅ Data Actions module fully implemented and functional
+- ✅ Config Export module fully implemented and functional
 - 🔴 Dependency / Impact Map not implemented
-- 🔴 Config Export not implemented
 
-**Next Steps**:
-1. Implement `New-ConfigExportView` (6-8 hours) - **RECOMMENDED PRIORITY**
-2. Create `Core/ConfigExport.psm1` module
-3. Implement `New-DependencyImpactMapView` (simplified search version: 4-6 hours)
-4. Create `Core/Dependencies.psm1` module (simplified)
-5. Add view mappings to switch statement in main app
-6. Test end-to-end functionality
+**Completed in v0.5.0**:
+1. ✅ `New-ConfigExportView` - Export configuration with history tracking
+2. ✅ `Core/ConfigExport.psm1` - Export functions for all config types
 
-**Total Estimated Effort**: 10-14 hours (simplified) or 16-20 hours (full implementation)
+**Remaining Work**:
+1. Implement `New-DependencyImpactMapView` (simplified search version: 4-6 hours)
+2. Create `Core/Dependencies.psm1` module (simplified)
+3. Add view mapping to switch statement in main app
+4. Test end-to-end functionality
+
+**Total Remaining Effort**: 4-6 hours (simplified)
 
 ---
 
 **Recommendation**: 
-- **Config Export** is higher value and easier to implement - prioritize this
+- **Config Export** ✅ Completed
 - **Dependency Analysis** can be simplified to text-based search initially
-- Both are "nice to have" rather than critical functionality
+- Dependency analysis is "nice to have" rather than critical functionality
 
 ---
 
-**Status**: Roadmap complete. Ready for implementation.
+**Status**: Roadmap 75% complete (3 of 4 modules implemented).

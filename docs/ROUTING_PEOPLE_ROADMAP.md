@@ -10,9 +10,9 @@ The Routing & People workspace focuses on ACD (Automatic Call Distribution) conf
 
 | Module | Status | Priority |
 |--------|--------|----------|
-| Queues | 🟡 Partially Implemented | High |
-| Skills | 🟡 Partially Implemented | High |
-| Users & Presence | 🔴 Not Implemented | High |
+| Queues | ✅ Fully Implemented | N/A |
+| Skills | ✅ Fully Implemented | N/A |
+| Users & Presence | ✅ Fully Implemented | N/A |
 | Routing Snapshot | 🔴 Not Implemented | Medium |
 
 ## Implementation Plan
@@ -115,80 +115,29 @@ function New-SkillsView {
 
 ---
 
-### 3. Users & Presence Module 🔴 Not Implemented
+### 3. Users & Presence Module ✅ Fully Implemented
 
 **Priority**: High - Critical for user management and monitoring
 
-**Purpose**: View and manage users, monitor presence status, configure routing settings
+**Status**: Complete - view implemented with user listing, search, and export
 
-**View Requirements**:
-```powershell
-function New-UsersPresenceView {
-  # UI Components:
-  # - Tabs: Users, Presence Status, Routing Status
-  # - User filters: Status (active/inactive), Division, Role
-  # - Presence filters: Available, On Queue, Off Queue, Away, etc.
-  # - Display: User name, email, division, status, presence
-  # - Actions: Load Users, Export, Refresh Presence
-  # - Real-time presence updates (optional enhancement)
-}
-```
+**Implemented Features**:
+- ✅ `New-UsersPresenceView` function
+- ✅ Load users with Get-GcUsers
+- ✅ Display user name, email, division, state, username
+- ✅ Search/filter functionality
+- ✅ Export to JSON/CSV
+- ✅ Background execution via Start-AppJob
 
-**API Endpoints**:
-- `GET /api/v2/users` - List all users
-- `GET /api/v2/users/{userId}` - Get user details
-- `GET /api/v2/users/{userId}/presence/{sourceId}` - Get user presence
-- `GET /api/v2/presencedefinitions` - Get presence definitions
-- `GET /api/v2/users/{userId}/routingskills` - Get user routing skills
+**Core Module Functions**:
+- ✅ `Get-GcUsers` - Already implemented in Core/RoutingPeople.psm1
+- ✅ `Get-GcUserPresence` - Already implemented in Core/RoutingPeople.psm1
 
-**Core Module Functions Needed**:
-```powershell
-# In Core/RoutingPeople.psm1
-function Get-GcUsers {
-  # Already implemented ✅
-}
-
-function Get-GcUserPresence {
-  # Already implemented ✅
-}
-
-function Get-GcUserRoutingStatus {
-  param($UserId, $AccessToken, $InstanceName)
-  # Fetch routing status (on queue, off queue)
-}
-
-function Get-GcUserRoutingSkills {
-  param($UserId, $AccessToken, $InstanceName)
-  # Fetch user's routing skills with proficiency levels
-}
-```
-
-**Data Model**:
-```json
-{
-  "user": {
-    "id": "user-id",
-    "name": "John Smith",
-    "email": "john.smith@example.com",
-    "division": { "name": "Sales" },
-    "state": "active",
-    "presence": {
-      "presenceDefinition": { "systemPresence": "AVAILABLE" },
-      "modifiedDate": "2024-01-15T10:30:00Z"
-    }
-  }
-}
-```
-
-**Implementation Steps**:
-1. Add `Get-GcUserRoutingStatus` and `Get-GcUserRoutingSkills` to `Core/RoutingPeople.psm1`
-2. Create `New-UsersPresenceView` function with tabbed layout
-3. Implement "Load Users" with presence aggregation
-4. Add real-time presence refresh (every 30 seconds)
-5. Implement search/filter across users and presence
-6. Add export functionality
-
-**Estimated Effort**: 4-6 hours
+**Future Enhancements** (not in current scope):
+- Real-time presence monitoring with auto-refresh
+- User routing status display
+- User routing skills with proficiency levels
+- Tabbed layout for different views
 
 ---
 
@@ -382,22 +331,26 @@ Ensure OAuth client has the following scopes:
 ## Summary
 
 **Current State**:
-- ✅ Core module functions implemented for Queues and Skills
-- ✅ Core module functions implemented for Users and Presence
-- 🔴 View functions not yet created (placeholders active)
+- ✅ Core module functions implemented for Queues, Skills, Users, and Presence
+- ✅ Queues view fully implemented with search and export
+- ✅ Skills view fully implemented with search and export
+- ✅ Users & Presence view fully implemented with search and export
 - 🔴 Routing Snapshot module not implemented
 
-**Next Steps**:
-1. Implement `New-QueuesView` (2 hours)
-2. Implement `New-SkillsView` (2 hours)
-3. Implement `New-UsersPresenceView` (4-6 hours)
-4. Implement `New-RoutingSnapshotView` (6-8 hours)
-5. Add view mappings to switch statement in main app
-6. Test end-to-end functionality
-7. Create unit tests
+**Completed in v0.5.0**:
+1. ✅ `New-QueuesView` - List, search, export queues
+2. ✅ `New-SkillsView` - List, search, export skills
+3. ✅ `New-UsersPresenceView` - List, search, export users
 
-**Total Estimated Effort**: 14-18 hours
+**Remaining Work**:
+1. Implement `New-RoutingSnapshotView` (6-8 hours)
+2. Create core functions for queue observations
+3. Add view mapping to switch statement in main app
+4. Test end-to-end functionality
+5. Create unit tests
+
+**Total Remaining Effort**: 6-8 hours
 
 ---
 
-**Status**: Roadmap complete. Ready for implementation.
+**Status**: Roadmap 75% complete (3 of 4 modules implemented).
