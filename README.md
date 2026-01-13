@@ -231,7 +231,7 @@ $packet = Export-GcConversationPacket `
 
 ## Development Status
 
-**Current Phase: JobRunner Implementation Complete ✅**
+**Current Phase: All Planned Modules Complete ✅ (v0.6.0)**
 
 - [x] Repository structure established
 - [x] Core HTTP primitives implemented
@@ -243,17 +243,30 @@ $packet = Export-GcConversationPacket `
 - [x] **Conversation timeline reconstruction**
 - [x] **Incident packet generator (ZIP archives)**
 - [x] **Real Export Packet flow (end-to-end)**
+- [x] **All 9 planned modules implemented** (v0.6.0)
+  - [x] Conversations::Conversation Lookup
+  - [x] Conversations::Analytics Jobs
+  - [x] Conversations::Incident Packet
+  - [x] Conversations::Abandon & Experience (NEW)
+  - [x] Conversations::Media & Quality (NEW)
+  - [x] Routing & People::Users & Presence
+  - [x] Routing & People::Routing Snapshot (NEW)
+  - [x] Orchestration::Config Export
+  - [x] Orchestration::Dependency / Impact Map (NEW)
 - [x] Documentation complete
 - [x] Smoke tests passing (10/10)
 - [x] **JobRunner tests passing (12/12)**
 - [x] WPF UI integrated with real backend
 - [x] **All mock jobs replaced with real runspace-based execution**
 
-**Next Phase: Subscription Engine Integration**
+**Next Phase: Enhancements and Polish (v1.0.0)**
 
 - [ ] Wire real-time WebSocket subscriptions into UI
 - [ ] Replace mock event streaming with live events
 - [ ] Implement structured event storage and filtering
+- [ ] Enhanced visualizations and dashboards
+- [ ] Performance optimizations
+- [ ] Comprehensive test coverage
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for detailed phased development plan.
 

@@ -225,14 +225,20 @@ These are potential future phases, subject to user feedback and prioritization:
 - **v0.2.0** (Phase 1): Core HTTP & pagination primitives
 - **v0.3.0** (Phase 2): Job pattern and analytics endpoints
 - **v0.4.0** (Phase 3): UI integration, Job Center, and exports
-- **v0.5.0** (Current): Module implementation phase - 50% complete
+- **v0.5.0**: Module implementation phase - 56% complete (5 of 9 modules)
   - ✅ Conversations::Conversation Lookup
   - ✅ Conversations::Analytics Jobs
   - ✅ Conversations::Incident Packet (standalone)
   - ✅ Routing & People::Users & Presence
   - ✅ Orchestration::Config Export
-  - 🚧 Remaining: Routing Snapshot, Media & Quality, Abandon & Experience, Dependency Map
-- **v1.0.0** (Phase 4+): Production-ready with OAuth and full feature set
+- **v0.6.0** (Current): All modules complete - 100% implementation
+  - ✅ Routing & People::Routing Snapshot - Real-time queue metrics with auto-refresh
+  - ✅ Conversations::Abandon & Experience - Abandonment metrics and analysis
+  - ✅ Conversations::Media & Quality - Recordings, transcripts, evaluations
+  - ✅ Orchestration::Dependency / Impact Map - Flow reference search
+  - ✅ All 9 planned modules fully implemented
+  - ✅ Smoke tests passing (10/10)
+- **v1.0.0** (Next): Production-ready release with OAuth and enhanced features
 
 ---
 
