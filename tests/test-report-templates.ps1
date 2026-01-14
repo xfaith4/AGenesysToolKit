@@ -41,16 +41,16 @@ try {
   
   Write-Host "  Found $($templates.Count) templates"
   
-  if ($templates.Count -eq 3) {
-    Write-Host "  [PASS] Expected number of templates (3)" -ForegroundColor Green
+  if ($templates.Count -eq 4) {
+    Write-Host "  [PASS] Expected number of templates (4)" -ForegroundColor Green
     $testsPassed++
   } else {
-    Write-Host "  [FAIL] Expected 3 templates, got $($templates.Count)" -ForegroundColor Red
+    Write-Host "  [FAIL] Expected 4 templates, got $($templates.Count)" -ForegroundColor Red
     $testsFailed++
   }
   
   # Check template names
-  $expectedNames = @('Conversation Inspect Packet', 'Errors & Failures Snapshot', 'Subscription Session Summary')
+  $expectedNames = @('Conversation Inspect Packet', 'Errors & Failures Snapshot', 'Subscription Session Summary', 'Executive Daily Summary')
   $actualNames = $templates.Name
   
   $allNamesMatch = $true
