@@ -478,8 +478,7 @@ $xamlString = @"
         <TextBlock x:Name="TxtContext" Text="Region:  | Org:  | Auth:  | Token:" Foreground="#FFE5E7EB" FontSize="12" Margin="0,0,12,0" VerticalAlignment="Center"/>
         <Button x:Name="BtnLogin" Content="Login…" Width="92" Height="28" Margin="0,0,8,0"/>
         <Button x:Name="BtnTestToken" Content="Test Token" Width="92" Height="28" Margin="0,0,10,0"/>
-        <Button x:Name="BtnJobs" Content="Jobs (0)" Width="92" Height="28" Margin="0,0,8,0"/>
-        <Button x:Name="BtnArtifacts" Content="Artifacts (0)" Width="110" Height="28"/>
+        <Button x:Name="BtnBackstage" Content="Backstage" Width="110" Height="28"/>
       </StackPanel>
 
       <Border DockPanel.Dock="Right" Margin="0,0,12,0" VerticalAlignment="Center" CornerRadius="6" Background="#FF0B1220" BorderBrush="#FF374151" BorderThickness="1">
@@ -667,8 +666,7 @@ function Get-El([string]$name) { $Window.FindName($name) }
 $TxtContext   = Get-El 'TxtContext'
 $BtnLogin     = Get-El 'BtnLogin'
 $BtnTestToken = Get-El 'BtnTestToken'
-$BtnJobs      = Get-El 'BtnJobs'
-$BtnArtifacts = Get-El 'BtnArtifacts'
+$BtnBackstage = Get-El 'BtnBackstage'
 $TxtCommand   = Get-El 'TxtCommand'
 
 # Nav
@@ -775,8 +773,9 @@ function Set-TopContext {
 function Set-Status([string]$msg) { $TxtStatus.Text = $msg }
 
 function Refresh-HeaderStats {
-  $BtnJobs.Content      = "Jobs ($($script:AppState.Jobs.Count))"
-  $BtnArtifacts.Content = "Artifacts ($($script:AppState.Artifacts.Count))"
+  $jobCount = $script:AppState.Jobs.Count
+  $artifactCount = $script:AppState.Artifacts.Count
+  $BtnBackstage.Content = "Backstage ($jobCount/$artifactCount)"
   $TxtStats.Text        = "Pinned: $($script:AppState.PinnedCount) | Stream: $($script:AppState.StreamCount)"
 }
 
@@ -1357,10 +1356,19 @@ function Add-ArtifactAndNotify {
 # Backstage drawer
 # -----------------------------
 function Refresh-JobsList {
+  # Preserve selected index to avoid flashing when list refreshes
+  $selectedIdx = $LstJobs.SelectedIndex
+  
   $LstJobs.Items.Clear()
   foreach ($j in $script:AppState.Jobs) {
     $LstJobs.Items.Add("$($j.Status) [$($j.Progress)%] — $($j.Name)") | Out-Null
   }
+  
+  # Restore selection if it was valid and still within range
+  if ($selectedIdx -ge 0 -and $selectedIdx -lt $LstJobs.Items.Count) {
+    $LstJobs.SelectedIndex = $selectedIdx
+  }
+  
   Refresh-HeaderStats
 }
 
@@ -7085,8 +7093,7 @@ $BtnTestToken.Add_Click({
   ### END: Manual Token Entry
 })
 
-$BtnJobs.Add_Click({ Open-Backstage -Tab 'Jobs' })
-$BtnArtifacts.Add_Click({ Open-Backstage -Tab 'Artifacts' })
+$BtnBackstage.Add_Click({ Open-Backstage -Tab 'Jobs' })
 
 # Keep Jobs list fresh (light polling)
 $script:JobsRefreshTimer = New-Object Windows.Threading.DispatcherTimer
