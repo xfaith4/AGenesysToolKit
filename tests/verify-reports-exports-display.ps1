@@ -57,8 +57,8 @@ try {
   $content = Get-Content -Path $appFile -Raw
   
   # Look for the old pattern: direct assignment to ItemsSource in Refresh-ArtifactList
-  # We need to check within the Refresh-ArtifactList function context
-  $refreshArtifactListMatch = [regex]::Match($content, 'function Refresh-ArtifactList\s*\{([\s\S]*?)\n\s*\}')
+  # Use a more flexible pattern that handles various brace styles
+  $refreshArtifactListMatch = [regex]::Match($content, 'function\s+Refresh-ArtifactList\s*\{([\s\S]*?)\n\s*\}\s*(?:\n|$)', [System.Text.RegularExpressions.RegexOptions]::Multiline)
   
   if ($refreshArtifactListMatch.Success) {
     $functionBody = $refreshArtifactListMatch.Groups[1].Value
@@ -74,8 +74,8 @@ try {
       $testsFailed++
     }
   } else {
-    Write-Host "  [WARN] Could not parse Refresh-ArtifactList function" -ForegroundColor Yellow
-    $testsPassed++
+    Write-Host "  [FAIL] Could not parse Refresh-ArtifactList function - function may not exist" -ForegroundColor Red
+    $testsFailed++
   }
 } catch {
   Write-Host "  [FAIL] Exception: $_" -ForegroundColor Red
@@ -119,9 +119,11 @@ try {
   $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
   $content = Get-Content -Path $appFile -Raw
   
-  $reportBuilder = $content -match "'Reports & Exports::Report Builder'[\s\S]*?New-ReportsExportsView"
-  $exportHistory = $content -match "'Reports & Exports::Export History'[\s\S]*?New-ReportsExportsView"
-  $quickExports = $content -match "'Reports & Exports::Quick Exports'[\s\S]*?New-ReportsExportsView"
+  # Use more specific patterns that match within the switch statement context
+  # Look for the switch case followed by the function call on subsequent lines
+  $reportBuilder = $content -match "'Reports\s+&\s+Exports::Report\s+Builder'\s*\{[^\}]*?New-ReportsExportsView"
+  $exportHistory = $content -match "'Reports\s+&\s+Exports::Export\s+History'\s*\{[^\}]*?New-ReportsExportsView"
+  $quickExports = $content -match "'Reports\s+&\s+Exports::Quick\s+Exports'\s*\{[^\}]*?New-ReportsExportsView"
   
   if ($reportBuilder -and $exportHistory -and $quickExports) {
     Write-Host "  [PASS] All three modules route correctly:" -ForegroundColor Green
