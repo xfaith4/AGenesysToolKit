@@ -1357,10 +1357,19 @@ function Add-ArtifactAndNotify {
 # Backstage drawer
 # -----------------------------
 function Refresh-JobsList {
+  # Preserve selected index to avoid flashing when list refreshes
+  $selectedIdx = $LstJobs.SelectedIndex
+  
   $LstJobs.Items.Clear()
   foreach ($j in $script:AppState.Jobs) {
     $LstJobs.Items.Add("$($j.Status) [$($j.Progress)%] — $($j.Name)") | Out-Null
   }
+  
+  # Restore selection if it was valid and still within range
+  if ($selectedIdx -ge 0 -and $selectedIdx -lt $LstJobs.Items.Count) {
+    $LstJobs.SelectedIndex = $selectedIdx
+  }
+  
   Refresh-HeaderStats
 }
 
