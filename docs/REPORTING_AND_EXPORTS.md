@@ -146,6 +146,74 @@ $bundle = Invoke-GcReportTemplate `
 
 ---
 
+### 4. Executive Daily Summary
+
+**Description:** Professional 1-day executive report with peak concurrent conversations by media type (1-min intervals), total media volumes, and abandon rates. Includes customizable branding for executive presentations.
+
+**Use Case:** Daily operational reports for executives and management, KPI tracking, historical performance analysis.
+
+**Required Parameters:**
+- `Region` — Genesys Cloud region (e.g., `usw2.pure.cloud`)
+- `AccessToken` — OAuth access token
+
+**Optional Parameters:**
+- `TargetDate` — Date to report on (defaults to yesterday if not specified)
+- `BrandingTitle` — Custom title for report (default: "Contact Center Operations")
+- `BrandingColor` — Custom color for branding in hex format (default: "#0066CC")
+
+**Output Rows:** Detailed metrics including:
+- Peak concurrent conversations by media type (Voice, Chat, Email, Message, Callback)
+- Time of peak for each media type
+- Total volume per media type for the day
+- Abandon rate and total abandoned/offered counts
+
+**Summary Metrics:**
+- Report Date
+- Branding Title and Color
+- Generation timestamp
+- Total Conversations
+- Peak Concurrent by Media Type
+- Total Volume by Media Type
+- Total Abandoned/Offered
+- Abandon Rate (%)
+
+**Example Usage:**
+```powershell
+Import-Module ./Core/ReportTemplates.psm1
+
+# Generate report for yesterday with default branding
+$bundle = Invoke-GcReportTemplate `
+  -TemplateName 'Executive Daily Summary' `
+  -Parameters @{
+    Region = 'usw2.pure.cloud'
+    AccessToken = $accessToken
+  }
+
+# Generate report for specific date with custom branding
+$bundle = Invoke-GcReportTemplate `
+  -TemplateName 'Executive Daily Summary' `
+  -Parameters @{
+    Region = 'usw2.pure.cloud'
+    AccessToken = $accessToken
+    TargetDate = (Get-Date '2026-01-10')
+    BrandingTitle = 'ACME Corporation - Daily Operations'
+    BrandingColor = '#FF6B35'
+  }
+
+# Open HTML report
+Open-GcArtifact -Path $bundle.ReportHtmlPath
+```
+
+**Report Features:**
+- Defaults to previous day if no date specified
+- Tracks peak concurrency at 1-minute intervals
+- Automatically categorizes media types
+- Calculates abandon rate based on customer/external participants
+- Professional HTML output suitable for executive distribution
+- Customizable branding for corporate identity
+
+---
+
 ## Format Specifications
 
 ### metadata.json
