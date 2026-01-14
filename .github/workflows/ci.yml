@@ -7,10 +7,16 @@ on:
     branches: [ main, develop ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Run Tests
     runs-on: windows-latest
+    
+    permissions:
+      contents: read
     
     steps:
     - name: Checkout repository
@@ -60,6 +66,9 @@ jobs:
   lint:
     name: Lint PowerShell Code
     runs-on: windows-latest
+    
+    permissions:
+      contents: read
     
     steps:
     - name: Checkout repository
