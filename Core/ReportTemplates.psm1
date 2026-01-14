@@ -543,6 +543,22 @@ function Invoke-ExecutiveDailySummaryReport {
     [string]$BrandingColor = "#0066CC"
   )
   
+  # Helper function to map media types to standard categories
+  function Get-StandardMediaType {
+    param([string]$MediaType)
+    
+    $type = if ($MediaType) { $MediaType.ToLower() } else { 'other' }
+    
+    switch -Regex ($type) {
+      '^voice$|^call$' { return 'voice' }
+      '^chat$|^webchat$' { return 'chat' }
+      '^email$' { return 'email' }
+      '^message$|^sms$' { return 'message' }
+      '^callback$' { return 'callback' }
+      default { return 'other' }
+    }
+  }
+  
   $warnings = @()
   $rows = @()
   $summary = [ordered]@{}
@@ -562,15 +578,11 @@ function Invoke-ExecutiveDailySummaryReport {
     $summary['BrandingColor'] = $BrandingColor
     $summary['GeneratedAt'] = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     
-    # Build analytics query for conversation details
+    # Build analytics query for conversation details with pagination support
     $queryBody = @{
       interval = $startTime + "/" + $endTime
       order = "asc"
       orderBy = "conversationStart"
-      paging = @{
-        pageSize = 100
-        pageNumber = 1
-      }
       segmentFilters = @(
         @{
           type = "and"
@@ -587,14 +599,15 @@ function Invoke-ExecutiveDailySummaryReport {
     
     Write-Output "Fetching conversation data for $($TargetDate.ToString('yyyy-MM-dd'))..."
     
-    # Query conversation details
+    # Query conversation details - this handles pagination internally
     $conversations = @()
     try {
       $result = Invoke-GcAnalyticsConversationDetailsQuery `
         -Body $queryBody `
         -AccessToken $AccessToken `
         -InstanceName $Region `
-        -TimeoutSeconds 300
+        -TimeoutSeconds 300 `
+        -All
       
       if ($result -and $result.conversations) {
         $conversations = $result.conversations
@@ -626,17 +639,9 @@ function Invoke-ExecutiveDailySummaryReport {
         foreach ($participant in $conv.participants) {
           if ($participant.sessions) {
             foreach ($session in $participant.sessions) {
-              $mediaType = if ($session.mediaType) { $session.mediaType.ToLower() } else { 'other' }
-              
-              # Map media types to standard categories
-              switch -Regex ($mediaType) {
-                '^voice$|^call$' { $mediaTypeVolumes['voice']++ }
-                '^chat$|^webchat$' { $mediaTypeVolumes['chat']++ }
-                '^email$' { $mediaTypeVolumes['email']++ }
-                '^message$|^sms$' { $mediaTypeVolumes['message']++ }
-                '^callback$' { $mediaTypeVolumes['callback']++ }
-                default { $mediaTypeVolumes['other']++ }
-              }
+              # Map media type to standard category
+              $standardMediaType = Get-StandardMediaType -MediaType $session.mediaType
+              $mediaTypeVolumes[$standardMediaType]++
               
               # Calculate concurrent conversations by minute
               if ($session.segments) {
@@ -644,6 +649,7 @@ function Invoke-ExecutiveDailySummaryReport {
                   if ($segment.segmentStart) {
                     try {
                       $segmentStart = [datetime]::Parse($segment.segmentStart)
+                      # Use 5 minutes as default duration if no end time (reasonable estimate for active session)
                       $segmentEnd = if ($segment.segmentEnd) { [datetime]::Parse($segment.segmentEnd) } else { $segmentStart.AddMinutes(5) }
                       
                       # Round to minute boundaries
@@ -666,16 +672,7 @@ function Invoke-ExecutiveDailySummaryReport {
                         }
                         
                         # Increment counter for this media type
-                        $mappedMediaType = switch -Regex ($mediaType) {
-                          '^voice$|^call$' { 'voice' }
-                          '^chat$|^webchat$' { 'chat' }
-                          '^email$' { 'email' }
-                          '^message$|^sms$' { 'message' }
-                          '^callback$' { 'callback' }
-                          default { 'other' }
-                        }
-                        
-                        $concurrencyByMinute[$minuteKey][$mappedMediaType]++
+                        $concurrencyByMinute[$minuteKey][$standardMediaType]++
                         
                         $currentMinute = $currentMinute.AddMinutes(1)
                       }
@@ -742,22 +739,29 @@ function Invoke-ExecutiveDailySummaryReport {
           if ($participant.purpose -eq 'customer' -or $participant.purpose -eq 'external') {
             $offeredCount++
             
-            # Check if abandoned (disconnected before being answered)
+            # Check if abandoned (customer disconnected before agent answered)
+            # A call is NOT abandoned if there was an agent interaction
             if ($participant.sessions) {
-              $hasAnsweredSession = $false
+              $hadAgentInteraction = $false
               foreach ($session in $participant.sessions) {
                 if ($session.segments) {
                   foreach ($segment in $session.segments) {
-                    if ($segment.disconnectType -eq 'peer' -or $segment.disconnectType -eq 'transfer') {
-                      $hasAnsweredSession = $true
+                    # Check for agent interaction indicators
+                    # - If segment has media and was connected to agent
+                    # - If there's a talking duration or hold time
+                    if ($segment.segmentType -eq 'interact' -or 
+                        $segment.segmentType -eq 'hold' -or
+                        ($segment.properties -and $segment.properties.talkingDurationMilliseconds)) {
+                      $hadAgentInteraction = $true
                       break
                     }
                   }
                 }
-                if ($hasAnsweredSession) { break }
+                if ($hadAgentInteraction) { break }
               }
               
-              if (-not $hasAnsweredSession) {
+              # If no agent interaction, consider it abandoned
+              if (-not $hadAgentInteraction) {
                 $abandonedCount++
               }
             }
