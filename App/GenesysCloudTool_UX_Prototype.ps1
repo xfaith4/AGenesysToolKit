@@ -5,7 +5,8 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
 # Import core modules
 $scriptRoot = Split-Path -Parent $PSCommandPath
-$coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+$repoRoot = Split-Path -Parent $scriptRoot
+$coreRoot = Join-Path -Path $repoRoot -ChildPath 'Core'
 
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Auth.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'JobRunner.psm1') -Force
@@ -24,6 +25,24 @@ Import-Module (Join-Path -Path $coreRoot -ChildPath 'ReportTemplates.psm1') -For
 # -----------------------------
 # XAML Helpers
 # -----------------------------
+### BEGIN: Safe enable/disable helper
+function Set-ControlEnabled {
+  param(
+    [Parameter(Mandatory = $true)] $Control,
+    [Parameter(Mandatory = $true)][bool] $Enabled
+  )
+  if ($null -eq $Control) { return }
+
+  if ($Control.PSObject.Properties.Match('IsEnabled').Count -gt 0) {
+    $Control.IsEnabled = $Enabled
+    return
+  }
+  if ($Control.PSObject.Properties.Match('Enabled').Count -gt 0) {
+    $Control.Enabled = $Enabled
+    return
+  }
+}
+### END: Safe enable/disable helper
 
 function Escape-GcXml {
   <#
@@ -104,6 +123,8 @@ Set-GcAuthConfig `
   -Scopes @('conversations', 'analytics', 'notifications', 'users')
 
 $script:AppState = [ordered]@{
+  RepositoryRoot       = $repoRoot
+  AppRoot              = $scriptRoot
   Region               = 'usw2.pure.cloud'
   Auth                 = 'Not logged in'
   TokenStatus          = 'No token'
@@ -263,8 +284,8 @@ $script:TimelineJobScriptBlock = {
   param($conversationId, $region, $accessToken, $eventBuffer)
 
   # Import required modules in runspace
-  $scriptRoot = Split-Path -Parent $PSCommandPath
-  $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+  $repoRoot = Split-Path -Parent $scriptRoot
+  $coreRoot = Join-Path -Path $repoRoot -ChildPath 'Core'
   Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
   Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
 
@@ -493,7 +514,7 @@ $xamlString = @"
           <TextBlock Text="Ctrl+K" Foreground="#FF9CA3AF" FontSize="11" Margin="0,0,8,0" VerticalAlignment="Center"/>
           <TextBox x:Name="TxtCommand" Width="460" Background="Transparent" Foreground="#FFF9FAFB" BorderThickness="0"
                    FontSize="12" VerticalContentAlignment="Center"
-                   ToolTip="Search: endpoints, modules, actions… (mock)"/>
+                   ToolTip="Search: endpoints, modules, actions…"/>
         </DockPanel>
       </Border>
     </DockPanel>
@@ -1432,18 +1453,25 @@ $BtnCancelJob.Add_Click({
             return
           }
           catch {
-            # Fallback to mock cancellation
+            # If cancellation fails, surface the error and leave the job state unchanged.
+            Add-JobLog -Job $job -Message "Cancel failed: $_"
+            Set-Status "Cancellation failed for: $($job.Name)"
+            Refresh-JobsList
+            return
           }
         }
 
-        # Fallback: mock cancellation
-        $job.Status = 'Canceled'
-        $job.CanCancel = $false
-        Add-JobLog -Job $job -Message "Cancel requested by user."
-        Set-Status "Canceled job: $($job.Name)"
-        Refresh-JobsList
+        # If JobRunner isn't available, we can't cancel safely.
+        [System.Windows.MessageBox]::Show(
+          "Job cancellation is not available because the JobRunner module is not loaded.",
+          "Cancel Not Available",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Information
+        )
+        Set-Status "Cancel not available for: $($job.Name)"
+        return
       }
-    }
+}
   })
 
 # -----------------------------
@@ -3061,7 +3089,7 @@ function New-ConversationTimelineView {
   $lst.Add_SelectionChanged({
       if ($lst.SelectedItem) {
         $sel = [string]$lst.SelectedItem
-        $detail.Text = "{`r`n  `"event`": `"$sel`",`r`n  `"note`": `"Mock payload would include segments, media stats, participant/session IDs.`"`r`n}"
+        $detail.Text = "{`r`n  `"event`": `"$sel`",`r`n  `"note`": `"Select an event to view details.`"`r`n}"
       }
     })
 
@@ -3076,37 +3104,8 @@ function New-ConversationTimelineView {
           [System.Windows.MessageBoxButton]::OK,
           [System.Windows.MessageBoxImage]::Warning
         )
-
-        # Fallback to mock export using Start-AppJob
-        Start-AppJob -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -ScriptBlock {
-          param($conversationId, $artifactsDir)
-
-          Start-Sleep -Milliseconds 1400
-
-          $file = Join-Path -Path $artifactsDir -ChildPath "incident-packet-mock-$($conversationId)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-          @(
-            "Incident Packet (mock)",
-            "ConversationId: $conversationId",
-            "Generated: $(Get-Date)",
-            "",
-            "NOTE: This is a mock packet. Log in to export real conversation data."
-          ) | Set-Content -Path $file -Encoding UTF8
-
-          return $file
-        } -ArgumentList @($conv, $script:ArtifactsDir) -OnCompleted {
-          param($job)
-
-          if ($job.Result) {
-            $file = $job.Result
-            Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
-            Set-Status "Exported mock incident packet: $file"
-          }
-        } | Out-Null
-
-        Refresh-HeaderStats
         return
       }
-
       # Real export using ArtifactGenerator with Start-AppJob
       Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
         param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
@@ -4214,8 +4213,8 @@ function New-MediaQualityView {
   # Load Recordings button handler
   $h.BtnLoadRecordings.Add_Click({
       Set-Status "Loading recordings..."
-      $h.BtnLoadRecordings.IsEnabled = $false
-      $h.BtnExportRecordings.IsEnabled = $false
+      Set-ControlEnabled $h.BtnLoadRecordings $false
+      Set-ControlEnabled $h.BtnExportRecordings $false
 
       $coreConvPath = Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1'
       $coreHttpPath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
@@ -6279,426 +6278,382 @@ function New-UsersPresenceView {
 }
 
 function New-SubscriptionsView {
-  $xamlString = @"
-<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  # ---------------------------------------------------------------------------
+  # Operations > Topic Subscriptions
+  # Real implementation using Genesys Notifications API (no simulated events).
+  # ---------------------------------------------------------------------------
+  $xaml = @"
+<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Padding="16">
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
     </Grid.RowDefinitions>
 
-    <Border CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="12" Margin="0,0,0,12">
-      <Grid>
+    <GroupBox Header="Topic Subscriptions" Margin="0,0,0,12" Grid.Row="0">
+      <Grid Margin="10">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
 
-        <StackPanel>
-          <TextBlock Text="Topic Subscriptions" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827"/>
-          <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-            <TextBlock Text="Topics:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-            <CheckBox x:Name="ChkTranscription" Content="AudioHook Transcription" IsChecked="True" Margin="0,0,10,0"/>
-            <CheckBox x:Name="ChkAgentAssist" Content="Google Agent Assist" IsChecked="True" Margin="0,0,10,0"/>
-            <CheckBox x:Name="ChkErrors" Content="Errors" IsChecked="True"/>
-          </StackPanel>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-          <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-            <TextBlock Text="Queue:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-            <TextBox x:Name="TxtQueue" Width="220" Height="26" Text="Support - Voice"/>
-            <TextBlock Text="Severity:" VerticalAlignment="Center" Margin="12,0,8,0"/>
-            <ComboBox x:Name="CmbSeverity" Width="120" Height="26" SelectedIndex="1">
-              <ComboBoxItem Content="info+"/>
-              <ComboBoxItem Content="warn+"/>
-              <ComboBoxItem Content="error"/>
-            </ComboBox>
-            <TextBlock Text="ConversationId:" VerticalAlignment="Center" Margin="12,0,8,0"/>
-            <TextBox x:Name="TxtConv" Width="240" Height="26" Text="(optional)"/>
-          </StackPanel>
+        <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.Column="0" Margin="0,0,12,8">
+          <TextBlock Text="Topics:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+          <CheckBox x:Name="ChkAudioHook" Content="AudioHook Transcription" Margin="0,0,12,0" IsChecked="True"/>
+          <CheckBox x:Name="ChkAgentAssist" Content="Google Agent Assist" Margin="0,0,12,0" IsChecked="True"/>
+          <CheckBox x:Name="ChkErrors" Content="Errors" IsChecked="True"/>
         </StackPanel>
 
-        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button x:Name="BtnStart" Content="Start" Width="86" Height="32" Margin="0,0,8,0"/>
-          <Button x:Name="BtnStop" Content="Stop" Width="86" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
-          <Button x:Name="BtnOpenTimeline" Content="Open Timeline" Width="120" Height="32" Margin="0,0,8,0"/>
-          <Button x:Name="BtnExportPacket" Content="Export Packet" Width="120" Height="32"/>
+        <StackPanel Orientation="Horizontal" Grid.Row="1" Grid.Column="0">
+          <TextBlock Text="Queue:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+          <TextBox x:Name="TxtQueue" Width="220" Margin="0,0,12,0" Text="Support - Voice"/>
+
+          <TextBlock Text="Severity:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+          <ComboBox x:Name="CmbSeverity" Width="100" Margin="0,0,12,0">
+            <ComboBoxItem Content="info+" IsSelected="False"/>
+            <ComboBoxItem Content="warn+" IsSelected="True"/>
+            <ComboBoxItem Content="error+" IsSelected="False"/>
+          </ComboBox>
+
+          <TextBlock Text="ConversationId:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+          <TextBox x:Name="TxtConv" Width="220" Margin="0,0,12,0" Text="(optional)"/>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.Column="1" Grid.RowSpan="2" VerticalAlignment="Center">
+          <Button x:Name="BtnStart" Content="Start" Width="88" Margin="0,0,8,0"/>
+          <Button x:Name="BtnStop" Content="Stop" Width="88" Margin="0,0,8,0" IsEnabled="False"/>
+          <Button x:Name="BtnOpenTimeline" Content="Open Timeline" Width="110" Margin="0,0,8,0"/>
+          <Button x:Name="BtnExportPacket" Content="Export Packet" Width="110"/>
         </StackPanel>
       </Grid>
-    </Border>
+    </GroupBox>
 
     <Grid Grid.Row="1">
       <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="2*"/>
         <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="460"/>
       </Grid.ColumnDefinitions>
 
-      <Border Grid.Column="0" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12" Margin="0,0,12,0">
-        <Grid>
+      <GroupBox Header="Live Event Stream" Grid.Column="0" Margin="0,0,12,0">
+        <Grid Margin="10">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
           </Grid.RowDefinitions>
 
-          <StackPanel Orientation="Horizontal" Grid.Row="0">
-            <TextBlock Text="Live Event Stream" FontWeight="SemiBold" Foreground="#FF111827"/>
-            <TextBox x:Name="TxtSearch" Margin="12,0,0,0" Width="300" Height="26" Text="search (conversationId, error, agent…)"/>
-            <Button x:Name="BtnPin" Content="Pin Selected" Width="110" Height="26" Margin="12,0,0,0"/>
-          </StackPanel>
+          <Grid Grid.Row="0" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="TxtSearch" Grid.Column="0" Height="26" VerticalContentAlignment="Center"
+                     Text="search (conversationId, error, agent...)"/>
+            <Button x:Name="BtnPin" Grid.Column="1" Content="Pin Selected" Width="100" Margin="8,0,0,0"/>
+          </Grid>
 
-          <ListBox x:Name="LstEvents" Grid.Row="1" Margin="0,10,0,0"/>
+          <ListBox x:Name="LstEvents" Grid.Row="1" />
         </Grid>
-      </Border>
+      </GroupBox>
 
-      <Border Grid.Column="1" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="White" Padding="12">
-        <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-          </Grid.RowDefinitions>
+      <Grid Grid.Column="1">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-          <TextBlock Text="Transcript / Agent Assist" FontWeight="SemiBold" Foreground="#FF111827"/>
+        <GroupBox Header="Transcript / Agent Assist" Grid.Row="0" Margin="0,0,0,12">
+          <Grid Margin="10">
+            <TextBox x:Name="TxtTranscript" TextWrapping="Wrap" AcceptsReturn="True"
+                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                     Text="(When streaming, transcript snippets + Agent Assist hints appear here.)"/>
+          </Grid>
+        </GroupBox>
 
-          <TextBox x:Name="TxtTranscript" Grid.Row="1" Margin="0,10,0,10"
-                   AcceptsReturn="True" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"
-                   Text="(When streaming, transcript snippets + Agent Assist hints appear here.)"/>
-
-          <Border Grid.Row="2" Background="#FFF9FAFB" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="6" Padding="10">
-            <StackPanel>
-              <TextBlock Text="Agent Assist (mock cards)" FontWeight="SemiBold" Foreground="#FF111827"/>
-              <TextBlock Text="• Suggestion: Verify identity (DOB + ZIP)" Margin="0,6,0,0" Foreground="#FF374151"/>
-              <TextBlock Text="• Knowledge: Password Reset – Standard Flow" Margin="0,3,0,0" Foreground="#FF374151"/>
-              <TextBlock Text="• Warning: Rising WebRTC disconnects in Support - Voice" Margin="0,3,0,0" Foreground="#FF374151"/>
-            </StackPanel>
-          </Border>
-        </Grid>
-      </Border>
+        <GroupBox Header="Pinned Events" Grid.Row="1">
+          <Grid Margin="10">
+            <ListBox x:Name="LstPinned" Height="120"/>
+          </Grid>
+        </GroupBox>
+      </Grid>
     </Grid>
   </Grid>
-</UserControl>
+</Border>
 "@
 
-  $view = ConvertFrom-GcXaml -XamlString $xamlString
+  $view = Convert-XamlToControl $xaml
+  $h = Get-NamedElements -Root $view
 
-  $h = @{
-    ChkTranscription = $view.FindName('ChkTranscription')
-    ChkAgentAssist   = $view.FindName('ChkAgentAssist')
-    ChkErrors        = $view.FindName('ChkErrors')
-    TxtQueue         = $view.FindName('TxtQueue')
-    CmbSeverity      = $view.FindName('CmbSeverity')
-    TxtConv          = $view.FindName('TxtConv')
-    BtnStart         = $view.FindName('BtnStart')
-    BtnStop          = $view.FindName('BtnStop')
-    BtnOpenTimeline  = $view.FindName('BtnOpenTimeline')
-    BtnExportPacket  = $view.FindName('BtnExportPacket')
-    TxtSearch        = $view.FindName('TxtSearch')
-    BtnPin           = $view.FindName('BtnPin')
-    LstEvents        = $view.FindName('LstEvents')
-    TxtTranscript    = $view.FindName('TxtTranscript')
-  }
+  # Ensure pinned list is bound to shared collection (keeps app-wide pin state)
+  $h.LstPinned.ItemsSource = $script:AppState.PinnedEvents
 
-  # Streaming timer (simulated AudioHook / Agent Assist)
-  if (Get-Variable -Name StreamTimer -Scope Script -ErrorAction SilentlyContinue) {
-    if ($null -ne $script:StreamTimer) {
-      $script:StreamTimer.Stop() | Out-Null
-    }
-  }
+  function Resolve-QueueIdByName {
+    param([Parameter(Mandatory)][string]$Name)
 
-  $script:StreamTimer = New-Object Windows.Threading.DispatcherTimer
-  $script:StreamTimer.Interval = [TimeSpan]::FromMilliseconds(650)
-
-  function Append-TranscriptLine([string]$line) {
-    $h.TxtTranscript.AppendText("$line`r`n")
-    $h.TxtTranscript.ScrollToEnd()
-  }
-
-  function New-MockEvent {
-    $conv = if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') { $h.TxtConv.Text } else { "c-$(Get-Random -Minimum 100000 -Maximum 999999)" }
-
-    $types = @(
-      'audiohook.transcription.partial',
-      'audiohook.transcription.final',
-      'audiohook.agentassist.suggestion',
-      'audiohook.error'
-    )
-
-    $allowed = @()
-    if ($h.ChkTranscription.IsChecked) { $allowed += $types | Where-Object { $_ -like 'audiohook.transcription*' } }
-    if ($h.ChkAgentAssist.IsChecked) { $allowed += $types | Where-Object { $_ -like 'audiohook.agentassist*' } }
-    if ($h.ChkErrors.IsChecked) { $allowed += $types | Where-Object { $_ -eq 'audiohook.error' } }
-    if (-not $allowed) { $allowed = $types }
-
-    $etype = $allowed | Get-Random
-    $sev = switch ($etype) {
-      'audiohook.error' { 'error' }
-      'audiohook.agentassist.suggestion' { 'info' }
-      default { 'warn' }
-    }
-
-    $snips = @(
-      "Caller: I'm having trouble logging in.",
-      "Agent: Can you confirm your account number?",
-      "Caller: It says my password is incorrect.",
-      "Agent: Let's do a reset — do you have email access?",
-      "Agent Assist: Ask for DOB + ZIP to verify identity.",
-      "Agent Assist: Surface KB: Password Reset — Standard Flow.",
-      "ERROR: Transcription upstream timeout (HTTP 504)."
-    )
-
-    $text = ($snips | Get-Random)
-    $ts = Get-Date
-    $queueName = $h.TxtQueue.Text
-
-    # Create raw data object (simulates original parsed JSON)
-    $raw = @{
-      eventId   = [guid]::NewGuid().ToString()
-      timestamp = $ts.ToString('o')
-      topicName = $etype
-      eventBody = @{
-        conversationId = $conv
-        text           = $text
-        severity       = $sev
-        queueName      = $queueName
-      }
-    }
-
-    # Pre-calculate cached JSON for search performance
-    $cachedJson = ''
     try {
-      $cachedJson = ($raw | ConvertTo-Json -Compress -Depth 10).ToLower()
+      # Genesys: GET /api/v2/routing/queues?name=<queueName>&pageSize=1
+      $encoded = [System.Web.HttpUtility]::UrlEncode($Name)
+      $res = Invoke-AppGcRequest -Method GET -Path "/api/v2/routing/queues?name=$encoded&pageSize=1"
+      if ($res -and $res.entities -and $res.entities.Count -gt 0) {
+        return $res.entities[0].id
+      }
+    } catch {
+      Set-Status "Queue lookup failed for '$Name': $_"
     }
-    catch {
-      # If JSON conversion fails, use empty string
+    return $null
+  }
+
+  function New-NormalizedEvent {
+    param([Parameter(Mandatory)][object]$Raw)
+
+    $topic = $Raw.topicName
+    $body  = $Raw.eventBody
+    $meta  = $Raw.metadata
+
+    $convId = $null
+    if ($topic -match '^v2\.conversations\.([^\.]+)') { $convId = $matches[1] }
+    elseif ($body -and $body.conversationId) { $convId = [string]$body.conversationId }
+
+    $sev = $null
+    if ($body -and $body.severity) { $sev = [string]$body.severity }
+    elseif ($topic -like 'v2.system.errors*') { $sev = 'error' }
+
+    $ts = Get-Date
+    if ($meta -and $meta.timestamp) {
+      try { $ts = [datetime]$meta.timestamp } catch { }
     }
 
-    # Return structured event object with consistent schema
-    [pscustomobject]@{
+    [PSCustomObject]@{
       ts             = $ts
+      topic          = $topic
+      conversationId = $convId
       severity       = $sev
-      topic          = $etype
-      conversationId = $conv
-      queueId        = $null
-      queueName      = $queueName
-      text           = $text
-      raw            = $raw
-      _cachedRawJson = $cachedJson
+      raw            = $Raw
     }
   }
 
-  $script:StreamTimer.Add_Tick({
-      if (-not $script:AppState.IsStreaming) { return }
+  function Passes-SearchFilter {
+    param(
+      [Parameter(Mandatory)][object]$Evt,
+      [string]$SearchText
+    )
+    if ([string]::IsNullOrWhiteSpace($SearchText)) { return $true }
+    $s = $SearchText.Trim()
+    if ($s -eq 'search (conversationId, error, agent...)') { return $true }
 
-      $evt = New-MockEvent
+    $hay = @(
+      $Evt.topic,
+      $Evt.conversationId,
+      ($Evt.raw | ConvertTo-Json -Depth 6 -Compress)
+    ) -join ' '
+    return ($hay -match [regex]::Escape($s))
+  }
 
-      # Store in EventBuffer for export
-      $script:AppState.EventBuffer.Insert(0, $evt)
+  function Append-EventToUI {
+    param([Parameter(Mandatory)][object]$Evt)
 
-      # Format for display and add to ListBox with object as Tag
-      $listItem = New-Object System.Windows.Controls.ListBoxItem
-      $listItem.Content = Format-EventSummary -Event $evt
-      $listItem.Tag = $evt
-      $h.LstEvents.Items.Insert(0, $listItem) | Out-Null
+    # Keep a full-fidelity buffer for export/timeline (shared across the app)
+    $script:AppState.EventBuffer.Add($Evt) | Out-Null
 
-      # Update transcript panel
-      $tsStr = $evt.ts.ToString('HH:mm:ss.fff')
-      if ($evt.topic -like 'audiohook.transcription*') { Append-TranscriptLine "$tsStr  $($evt.text)" }
-      if ($evt.topic -like 'audiohook.agentassist*') { Append-TranscriptLine "$tsStr  [Agent Assist] $($evt.text)" }
-      if ($evt.topic -eq 'audiohook.error') { Append-TranscriptLine "$tsStr  [ERROR] $($evt.text)" }
+    $summary = Format-EventSummary -Event $Evt
 
-      $script:AppState.StreamCount++
-      Refresh-HeaderStats
+    $item = New-Object System.Windows.Controls.ListBoxItem
+    $item.Content = $summary
+    $item.Tag     = $Evt
+    [void]$h.LstEvents.Items.Insert(0, $item)
 
-      # Limit list size (keep most recent 250 events)
-      if ($h.LstEvents.Items.Count -gt 250) {
-        $h.LstEvents.Items.RemoveAt($h.LstEvents.Items.Count - 1)
-      }
+    # Trim list for UI performance (keep the newest 500)
+    while ($h.LstEvents.Items.Count -gt 500) {
+      $h.LstEvents.Items.RemoveAt($h.LstEvents.Items.Count - 1)
+    }
+  }
 
-      # Limit EventBuffer size
-      if ($script:AppState.EventBuffer.Count -gt 1000) {
-        $script:AppState.EventBuffer.RemoveAt($script:AppState.EventBuffer.Count - 1)
-      }
-    })
-  $script:StreamTimer.Start()
+  # Timer to pull events from Core.Subscriptions event buffer (real WebSocket events)
+  if (-not $script:StreamTimer) {
+    $script:StreamTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $script:StreamTimer.Interval = [TimeSpan]::FromMilliseconds(250)
+    $script:StreamTimer.Add_Tick({
+        if (-not $script:AppState.IsStreaming) { return }
 
-  # Actions
-  $h.BtnStart.Add_Click({
-      if ($script:AppState.IsStreaming) { return }
+        $events = @()
+        try { $events = Get-GcSubscriptionEvents } catch { return }
 
-      Start-AppJob -Name "Connect subscription (AudioHook / Agent Assist)" -Type 'Subscription' -ScriptBlock {
-        # Simulate subscription connection work
-        Start-Sleep -Milliseconds 1200
-        return @{ Success = $true; Message = "Subscription connected" }
-      } -OnCompleted {
-        param($job)
-        $script:AppState.IsStreaming = $true
-        $h.BtnStart.IsEnabled = $false
-        $h.BtnStop.IsEnabled = $true
-        Set-Status "Subscription started."
+        if (-not $events -or $events.Count -eq 0) { return }
+
+        $search = $h.TxtSearch.Text
+        foreach ($raw in $events) {
+          $evt = New-NormalizedEvent -Raw $raw
+          if (Passes-SearchFilter -Evt $evt -SearchText $search) {
+            Append-EventToUI -Evt $evt
+          }
+        }
+
+        # Update header counters
         Refresh-HeaderStats
-      } | Out-Null
+      })
+    $script:StreamTimer.Start()
+  }
 
-      Refresh-HeaderStats
-    })
-
-  $h.BtnStop.Add_Click({
-      if (-not $script:AppState.IsStreaming) { return }
-
-      Start-AppJob -Name "Disconnect subscription" -Type 'Subscription' -ScriptBlock {
-        # Simulate subscription disconnection work
-        Start-Sleep -Milliseconds 700
-        return @{ Success = $true; Message = "Subscription disconnected" }
-      } -OnCompleted {
-        param($job)
-        $script:AppState.IsStreaming = $false
-        $h.BtnStart.IsEnabled = $true
-        $h.BtnStop.IsEnabled = $false
-        Set-Status "Subscription stopped."
-        Refresh-HeaderStats
-      } | Out-Null
-
-      Refresh-HeaderStats
+  $h.LstEvents.Add_SelectionChanged({
+      $sel = $h.LstEvents.SelectedItem
+      if ($sel -and $sel.Tag) {
+        $evt = $sel.Tag
+        # Prefer transcript/agent-assist shaped bodies, else show raw JSON (bounded depth)
+        $body = $evt.raw.eventBody
+        if ($body -and ($body.transcript -or $body.text -or $body.suggestions)) {
+          $h.TxtTranscript.Text = ($body | ConvertTo-Json -Depth 6)
+        } else {
+          $h.TxtTranscript.Text = ($evt.raw | ConvertTo-Json -Depth 8)
+        }
+      }
     })
 
   $h.BtnPin.Add_Click({
-      if ($h.LstEvents.SelectedItem) {
-        $selectedItem = $h.LstEvents.SelectedItem
-
-        # Get the event object from the ListBoxItem's Tag
-        if ($selectedItem -is [System.Windows.Controls.ListBoxItem] -and $selectedItem.Tag) {
-          $evt = $selectedItem.Tag
-
-          # Check if already pinned (avoid duplicates)
-          $alreadyPinned = $false
-          foreach ($pinnedEvt in $script:AppState.PinnedEvents) {
-            if ($pinnedEvt.raw.eventId -eq $evt.raw.eventId) {
-              $alreadyPinned = $true
-              break
-            }
-          }
-
-          if (-not $alreadyPinned) {
-            $script:AppState.PinnedEvents.Add($evt)
-            $script:AppState.PinnedCount++
-            Refresh-HeaderStats
-            Set-Status "Pinned event: $($evt.topic) for conversation $($evt.conversationId)"
-          }
-          else {
-            Set-Status "Event already pinned."
-          }
-        }
-        else {
-          Set-Status "Cannot pin event: invalid selection."
-        }
+      $sel = $h.LstEvents.SelectedItem
+      if ($sel -and $sel.Tag) {
+        $evt = $sel.Tag
+        $script:AppState.PinnedEvents.Insert(0, (Format-EventSummary -Event $evt)) | Out-Null
       }
     })
 
-  # Search box filtering
-  $h.TxtSearch.Add_TextChanged({
-      $searchText = $h.TxtSearch.Text
-
-      # Skip filtering if placeholder text
-      if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq 'search (conversationId, error, agent…)') {
-        # Show all events
-        foreach ($item in $h.LstEvents.Items) {
-          if ($item -is [System.Windows.Controls.ListBoxItem]) {
-            $item.Visibility = 'Visible'
-          }
-        }
-        return
-      }
-
-      $searchLower = $searchText.ToLower()
-
-      # Filter events
-      foreach ($item in $h.LstEvents.Items) {
-        if ($item -is [System.Windows.Controls.ListBoxItem] -and $item.Tag) {
-          $evt = $item.Tag
-          $shouldShow = $false
-
-          # Search in conversationId
-          if ($evt.conversationId -and $evt.conversationId.ToLower().Contains($searchLower)) {
-            $shouldShow = $true
-          }
-
-          # Search in topic/type
-          if (-not $shouldShow -and $evt.topic -and $evt.topic.ToLower().Contains($searchLower)) {
-            $shouldShow = $true
-          }
-
-          # Search in severity
-          if (-not $shouldShow -and $evt.severity -and $evt.severity.ToLower().Contains($searchLower)) {
-            $shouldShow = $true
-          }
-
-          # Search in text
-          if (-not $shouldShow -and $evt.text -and $evt.text.ToLower().Contains($searchLower)) {
-            $shouldShow = $true
-          }
-
-          # Search in queueName
-          if (-not $shouldShow -and $evt.queueName -and $evt.queueName.ToLower().Contains($searchLower)) {
-            $shouldShow = $true
-          }
-
-          # Search in raw JSON (pre-cached during event creation for performance)
-          if (-not $shouldShow -and $evt._cachedRawJson -and $evt._cachedRawJson.Contains($searchLower)) {
-            $shouldShow = $true
-          }
-
-          $item.Visibility = if ($shouldShow) { 'Visible' } else { 'Collapsed' }
-        }
-      }
-    })
-
-  # Clear search placeholder on focus
-  $h.TxtSearch.Add_GotFocus({
-      if ($h.TxtSearch.Text -eq 'search (conversationId, error, agent…)') {
-        Set-ControlValue -Control $h.TxtSearch -Value ''
-      }
-    })
-
-  # Restore search placeholder on lost focus if empty
-  $h.TxtSearch.Add_LostFocus({
-      if ([string]::IsNullOrWhiteSpace($h.TxtSearch.Text)) {
-        Set-ControlValue -Control $h.TxtSearch -Value 'search (conversationId, error, agent…)'
-      }
-    })
-
-  $h.BtnOpenTimeline.Add_Click({
-      # Derive conversation ID from textbox first, then from selected event
-      $conv = ''
-
-      # Priority 1: Check conversationId textbox
-      if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') {
-        $conv = $h.TxtConv.Text.Trim()
-      }
-
-      # Priority 2: Infer from selected event
-      if (-not $conv -and $h.LstEvents.SelectedItem) {
-        if ($h.LstEvents.SelectedItem -is [System.Windows.Controls.ListBoxItem] -and $h.LstEvents.SelectedItem.Tag) {
-          $evt = $h.LstEvents.SelectedItem.Tag
-          $conv = $evt.conversationId
-        }
-        else {
-          # Fallback: parse from string (for backward compatibility)
-          $s = [string]$h.LstEvents.SelectedItem
-          if ($s -match 'conv=(?<cid>c-\d+)\s') { $conv = $matches['cid'] }
-        }
-      }
-
-      # Validate we have a conversation ID
-      if (-not $conv) {
+  $h.BtnStart.Add_Click({
+      if (-not $script:AppState.AccessToken) {
         [System.Windows.MessageBox]::Show(
-          "Please enter a conversation ID or select an event from the stream.",
-          "No Conversation ID",
+          "No access token is set. Use Login... or Test Token to set one, then try again.",
+          "Authentication Required",
           [System.Windows.MessageBoxButton]::OK,
           [System.Windows.MessageBoxImage]::Warning
         )
         return
       }
 
-      # Check if authenticated
+      if ($script:AppState.SubscriptionProvider -and $script:AppState.SubscriptionProvider.IsConnected) {
+        Set-Status "Subscription already running."
+        return
+      }
+
+      $convId = $h.TxtConv.Text
+      if ($convId -and $convId -eq '(optional)') { $convId = $null }
+      if ($convId) { $convId = $convId.Trim() }
+
+      $queueName = $h.TxtQueue.Text
+      if ($queueName) { $queueName = $queueName.Trim() }
+
+      try {
+        $provider = New-GcSubscriptionProvider -Region $script:AppState.Region -AccessToken $script:AppState.AccessToken
+        Connect-GcSubscriptionProvider -Provider $provider
+
+        $catalog = Get-GcTopicCatalog
+
+        # Errors (no ID required)
+        if ($h.ChkErrors.IsChecked) {
+          foreach ($t in $catalog['Errors']) {
+            Add-GcSubscription -Provider $provider -TopicName $t | Out-Null
+          }
+        }
+
+        # Queue conversations (requires queueId)
+        if ($queueName) {
+          $queueId = Resolve-QueueIdByName -Name $queueName
+          if ($queueId) {
+            foreach ($t in $catalog['Queue']) {
+              $topic = Resolve-GcTopicWithId -TopicTemplate $t -Id $queueId
+              Add-GcSubscription -Provider $provider -TopicName $topic | Out-Null
+            }
+          } else {
+            Set-Status "Queue not found: $queueName"
+          }
+        }
+
+        # Conversation-scoped topics (requires conversationId)
+        if (($h.ChkAudioHook.IsChecked -or $h.ChkAgentAssist.IsChecked) -and -not $convId) {
+          Set-Status "AudioHook/Agent Assist selected: enter a ConversationId to receive those events."
+        }
+
+        if ($convId) {
+          # Subscribe to base conversation topic as well (helps with enrichment)
+          foreach ($t in $catalog['Conversations']) {
+            $topic = Resolve-GcTopicWithId -TopicTemplate $t -Id $convId
+            Add-GcSubscription -Provider $provider -TopicName $topic | Out-Null
+          }
+
+          if ($h.ChkAudioHook.IsChecked) {
+            foreach ($t in $catalog['AudioHook.Transcription']) {
+              $topic = Resolve-GcTopicWithId -TopicTemplate $t -Id $convId
+              Add-GcSubscription -Provider $provider -TopicName $topic | Out-Null
+            }
+          }
+
+          if ($h.ChkAgentAssist.IsChecked) {
+            foreach ($t in $catalog['AgentAssist']) {
+              $topic = Resolve-GcTopicWithId -TopicTemplate $t -Id $convId
+              Add-GcSubscription -Provider $provider -TopicName $topic | Out-Null
+            }
+          }
+        }
+
+        Start-GcSubscriptionReceive -Provider $provider -OnError {
+          param($msg)
+          # Keep it simple: write error text to status bar.
+          Set-Status $msg
+        } | Out-Null
+
+        $script:AppState.SubscriptionProvider = $provider
+        $script:AppState.IsStreaming = $true
+
+        $h.BtnStart.IsEnabled = $false
+        $h.BtnStop.IsEnabled  = $true
+
+        Set-Status "Subscription started."
+        Refresh-HeaderStats
+      } catch {
+        Set-Status "Failed to start subscription: $_"
+        [System.Windows.MessageBox]::Show(
+          "Failed to start subscription: $_",
+          "Subscription Error",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Error
+        )
+      }
+    })
+
+  $h.BtnStop.Add_Click({
+      try {
+        $script:AppState.IsStreaming = $false
+
+        if ($script:AppState.SubscriptionProvider) {
+          Disconnect-GcSubscriptionProvider -Provider $script:AppState.SubscriptionProvider | Out-Null
+          $script:AppState.SubscriptionProvider = $null
+        }
+
+        $h.BtnStart.IsEnabled = $true
+        $h.BtnStop.IsEnabled  = $false
+
+        Set-Status "Subscription stopped."
+        Refresh-HeaderStats
+      } catch {
+        Set-Status "Stop failed: $_"
+      }
+    })
+
+  $h.BtnOpenTimeline.Add_Click({
+      $conv = $h.TxtConv.Text
+      if ([string]::IsNullOrWhiteSpace($conv) -or $conv -eq '(optional)') {
+        [System.Windows.MessageBox]::Show(
+          "Enter a ConversationId first.",
+          "ConversationId Required",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Information
+        )
+        return
+      }
+
       if (-not $script:AppState.AccessToken) {
         [System.Windows.MessageBox]::Show(
           "Please log in first to retrieve conversation details.",
@@ -6711,20 +6666,15 @@ function New-SubscriptionsView {
 
       Set-Status "Retrieving timeline for conversation $conv..."
 
-      # Start background job to retrieve and build timeline (using shared scriptblock)
-      Start-AppJob -Name "Open Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
+      Start-AppJob -Name "Open Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:BuildTimelineJob `
+        -Args @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
         -OnCompleted {
         param($job)
 
         if ($job.Result -and $job.Result.Timeline) {
           $result = $job.Result
           Set-Status "Timeline ready for conversation $($result.ConversationId) with $($result.Timeline.Count) events."
-
-          # Show timeline window
-          Show-TimelineWindow `
-            -ConversationId $result.ConversationId `
-            -TimelineEvents $result.Timeline `
-            -SubscriptionEvents $result.SubscriptionEvents
+          Show-TimelineWindow -ConversationId $result.ConversationId -TimelineEvents $result.Timeline -SubscriptionEvents $result.SubscriptionEvents
         }
         else {
           Set-Status "Failed to build timeline. See job logs for details."
@@ -6735,13 +6685,16 @@ function New-SubscriptionsView {
             [System.Windows.MessageBoxImage]::Error
           )
         }
-      }
+      } | Out-Null
 
       Refresh-HeaderStats
     })
 
   $h.BtnExportPacket.Add_Click({
-      $conv = if ($h.TxtConv.Text -and $h.TxtConv.Text -ne '(optional)') { $h.TxtConv.Text } else { "c-$(Get-Random -Minimum 100000 -Maximum 999999)" }
+      $conv = $h.TxtConv.Text
+      if ([string]::IsNullOrWhiteSpace($conv) -or $conv -eq '(optional)') {
+        $conv = "c-$(Get-Random -Minimum 100000 -Maximum 999999)"
+      }
 
       if (-not $script:AppState.AccessToken) {
         [System.Windows.MessageBox]::Show(
@@ -6750,84 +6703,35 @@ function New-SubscriptionsView {
           [System.Windows.MessageBoxButton]::OK,
           [System.Windows.MessageBoxImage]::Warning
         )
-
-        # Fallback to mock export using Start-AppJob
-        Start-AppJob -Name "Export Incident Packet (Mock) — $conv" -Type 'Export' -ScriptBlock {
-          param($conversationId, $artifactsDir)
-
-          Start-Sleep -Milliseconds 1400
-
-          $file = Join-Path -Path $artifactsDir -ChildPath "incident-packet-mock-$($conversationId)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
-          @(
-            "Incident Packet (mock) — Subscription Evidence",
-            "ConversationId: $conversationId",
-            "Generated: $(Get-Date)",
-            "",
-            "NOTE: This is a mock packet. Log in to export real conversation data.",
-            ""
-          ) | Set-Content -Path $file -Encoding UTF8
-
-          return $file
-        } -ArgumentList @($conv, $script:ArtifactsDir) -OnCompleted {
-          param($job)
-
-          if ($job.Result) {
-            $file = $job.Result
-            Add-ArtifactAndNotify -Name "Incident Packet (Mock) — $conv" -Path $file -ToastTitle 'Export complete (mock)'
-            Set-Status "Exported mock incident packet: $file"
-          }
-        } | Out-Null
-
-        Refresh-HeaderStats
         return
       }
 
       # Real export using ArtifactGenerator with Start-AppJob
       Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
-        param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
+        param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer, $repoRoot)
 
-        # Import required modules in runspace
-        $scriptRoot = Split-Path -Parent $PSCommandPath
-        $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+        # Import required modules in the job runspace
+        $coreRoot = Join-Path -Path $repoRoot -ChildPath 'Core'
         Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
+        Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
 
         try {
-          # Build subscription events from buffer
           $subscriptionEvents = $eventBuffer
-
-          # Export packet
-          $packet = Export-GcConversationPacket `
-            -ConversationId $conversationId `
-            -Region $region `
-            -AccessToken $accessToken `
-            -OutputDirectory $artifactsDir `
-            -SubscriptionEvents $subscriptionEvents `
-            -CreateZip
-
-          return $packet
+          Export-GcConversationPacket -ConversationId $conversationId -Region $region -AccessToken $accessToken -OutputDirectory $artifactsDir -SubscriptionEvents $subscriptionEvents -CreateZip
+        } catch {
+          throw $_
         }
-        catch {
-          Write-Error "Failed to export packet: $_"
-          return $null
-        }
-      } -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer) `
+      } -Args @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer, $script:AppState.RepositoryRoot) `
         -OnCompleted {
         param($job)
 
         if ($job.Result) {
-          $packet = $job.Result
-          $artifactPath = if ($packet.ZipPath) { $packet.ZipPath } else { $packet.PacketDirectory }
-          $artifactName = "Incident Packet — $($packet.ConversationId)"
-
-          Add-ArtifactAndNotify -Name $artifactName -Path $artifactPath -ToastTitle 'Export complete'
-          Set-Status "Exported incident packet: $artifactPath"
+          $file = $job.Result
+          Add-ArtifactAndNotify -Name "Incident Packet — $conv" -Path $file -ToastTitle 'Export complete'
+          Set-Status "Exported incident packet: $file"
         }
-        else {
-          Set-Status "Failed to export packet. See job logs for details."
-        }
-      }
-
-      Refresh-HeaderStats
+        Refresh-HeaderStats
+      } | Out-Null
     })
 
   return $view
@@ -7425,7 +7329,7 @@ function New-ReportsExportsView {
 
   # Preset management
   $h.BtnLoadPreset.Add_Click({
-      $presetsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'App\artifacts\presets'
+      $presetsDir = Join-Path -Path $script:ArtifactsDir -ChildPath 'presets'
 
       if (-not (Test-Path $presetsDir)) {
         [System.Windows.MessageBox]::Show(
@@ -7521,7 +7425,7 @@ function New-ReportsExportsView {
       }
 
       # Create presets directory
-      $presetsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'App\artifacts\presets'
+      $presetsDir = Join-Path -Path $script:ArtifactsDir -ChildPath 'presets'
       if (-not (Test-Path $presetsDir)) {
         New-Item -ItemType Directory -Path $presetsDir -Force | Out-Null
       }
@@ -7878,6 +7782,7 @@ $BtnLogin.Add_Click({
       )
       return
     }
+    Write-Host ("BtnLoadRecordings type: {0}" -f $h.BtnLoadRecordings.GetType().FullName)
 
     # Disable button during auth
     $BtnLogin.IsEnabled = $false
