@@ -44,6 +44,307 @@ function Set-ControlEnabled {
 }
 ### END: Safe enable/disable helper
 
+### BEGIN: WPF XAML Helpers
+function Convert-XamlToControl {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)][string]$Xaml
+  )
+
+  Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase | Out-Null
+
+  $sr = New-Object System.IO.StringReader($Xaml)
+  $xr = [System.Xml.XmlReader]::Create($sr)
+  try {
+    return [System.Windows.Markup.XamlReader]::Load($xr)
+  }
+  finally {
+    try { $xr.Close() } catch {}
+    try { $sr.Close() } catch {}
+  }
+}
+
+function Get-NamedElements {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)]$Root
+  )
+
+  $map = [ordered]@{}
+
+  function _WalkVisual {
+    param($node)
+    if ($null -eq $node) { return }
+
+    if ($node -is [System.Windows.FrameworkElement] -and $node.Name) {
+      if (-not $map.Contains($node.Name)) { $map[$node.Name] = $node }
+    }
+
+    $count = 0
+    try { $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($node) } catch { $count = 0 }
+    for ($i=0; $i -lt $count; $i++) {
+      $child = $null
+      try { $child = [System.Windows.Media.VisualTreeHelper]::GetChild($node, $i) } catch {}
+      if ($child) { _WalkVisual $child }
+    }
+  }
+
+  function _WalkLogical {
+    param($node)
+    if ($null -eq $node) { return }
+
+    if ($node -is [System.Windows.FrameworkElement] -and $node.Name) {
+      if (-not $map.Contains($node.Name)) { $map[$node.Name] = $node }
+    }
+
+    $children = @()
+    try { $children = [System.Windows.LogicalTreeHelper]::GetChildren($node) } catch { $children = @() }
+    foreach ($c in $children) {
+      _WalkLogical $c
+    }
+  }
+
+  # Logical first (captures templated content better), then visual (catches the rest)
+  _WalkLogical $Root
+  _WalkVisual  $Root
+
+  return [pscustomobject]$map
+}
+### END: WPF XAML Helpers
+$required = @('LstJobs', 'LstArtifacts', 'BtnCancelJob', 'TxtJobLogs') # adjust to your actual names
+foreach ($name in $required) {
+  if (-not $h.ContainsKey($name) -or -not $h[$name]) {
+    throw "Backstage UI missing required element: $name (check XAML Name=...)"
+  }
+}
+### BEGIN: Reports & Exports helpers (script-scope)
+function Refresh-TemplateList {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)]$h,
+    [Parameter(Mandatory=$true)][object[]]$Templates
+  )
+
+  $searchText = ($h.TxtTemplateSearch.Text ?? '').ToString().Trim().ToLowerInvariant()
+
+  $filtered = $Templates
+  if ($searchText -and $searchText -ne 'search templates...') {
+    $filtered = $Templates | Where-Object {
+      (($_.Name ?? '').ToString().ToLowerInvariant().Contains($searchText)) -or
+      (($_.Description ?? '').ToString().ToLowerInvariant().Contains($searchText))
+    }
+  }
+
+  $h.LstTemplates.Items.Clear()
+  foreach ($t in $filtered) {
+    $item = New-Object System.Windows.Controls.ListBoxItem
+    $item.Content = $t.Name
+    $item.Tag     = $t
+    [void]$h.LstTemplates.Items.Add($item)
+  }
+}
+
+function Build-ParameterPanel {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)]$h,
+    [Parameter(Mandatory=$true)]$Template
+  )
+
+  $h.PnlParameters.Children.Clear()
+  if ($script:ParameterControls) { $script:ParameterControls.Clear() } else { $script:ParameterControls = @{} }
+
+  if (-not $Template -or -not $Template.Parameters -or $Template.Parameters.Count -eq 0) {
+    $noParamsText = New-Object System.Windows.Controls.TextBlock
+    $noParamsText.Text = "This template has no parameters"
+    $noParamsText.Foreground = [System.Windows.Media.Brushes]::Gray
+    $noParamsText.Margin = New-Object System.Windows.Thickness(0,10,0,0)
+    [void]$h.PnlParameters.Children.Add($noParamsText)
+    return
+  }
+
+  foreach ($paramName in $Template.Parameters.Keys) {
+    $paramDef = $Template.Parameters[$paramName]
+
+    $paramGrid = New-Object System.Windows.Controls.Grid
+    $paramGrid.Margin = New-Object System.Windows.Thickness(0,0,0,12)
+
+    $row1 = New-Object System.Windows.Controls.RowDefinition; $row1.Height = [System.Windows.GridLength]::Auto
+    $row2 = New-Object System.Windows.Controls.RowDefinition; $row2.Height = [System.Windows.GridLength]::Auto
+    $row3 = New-Object System.Windows.Controls.RowDefinition; $row3.Height = [System.Windows.GridLength]::Auto
+    [void]$paramGrid.RowDefinitions.Add($row1)
+    [void]$paramGrid.RowDefinitions.Add($row2)
+    [void]$paramGrid.RowDefinitions.Add($row3)
+
+    $label = New-Object System.Windows.Controls.TextBlock
+    $labelText = $paramName + ($(if ($paramDef.Required) { ' *' } else { '' }))
+    $label.Text = $labelText
+    $label.FontWeight = [System.Windows.FontWeights]::SemiBold
+    [System.Windows.Controls.Grid]::SetRow($label, 0)
+    [void]$paramGrid.Children.Add($label)
+
+    if ($paramDef.Description) {
+      $desc = New-Object System.Windows.Controls.TextBlock
+      $desc.Text = $paramDef.Description
+      $desc.FontSize = 11
+      $desc.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(107,114,128))
+      $desc.Margin = New-Object System.Windows.Thickness(0,2,0,4)
+      $desc.TextWrapping = [System.Windows.TextWrapping]::Wrap
+      [System.Windows.Controls.Grid]::SetRow($desc, 1)
+      [void]$paramGrid.Children.Add($desc)
+    }
+
+    $type = if ($paramDef.Type) { $paramDef.Type.ToString().ToLowerInvariant() } else { 'string' }
+    $control = $null
+
+    switch ($type) {
+      'bool' {
+        $control = New-Object System.Windows.Controls.CheckBox
+        $control.IsChecked = $false
+        $control.Margin = New-Object System.Windows.Thickness(0,4,0,0)
+      }
+      'int' {
+        $control = New-Object System.Windows.Controls.TextBox
+        $control.Height = 28
+        $control.Margin = New-Object System.Windows.Thickness(0,4,0,0)
+      }
+      'datetime' {
+        $control = New-Object System.Windows.Controls.DatePicker
+        $control.Height = 28
+        $control.Margin = New-Object System.Windows.Thickness(0,4,0,0)
+        $control.SelectedDate = Get-Date
+      }
+      'array' {
+        $control = New-Object System.Windows.Controls.TextBox
+        $control.Height = 80
+        $control.AcceptsReturn = $true
+        $control.TextWrapping = [System.Windows.TextWrapping]::Wrap
+        $control.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
+        $control.Margin = New-Object System.Windows.Thickness(0,4,0,0)
+      }
+      default {
+        $control = New-Object System.Windows.Controls.TextBox
+        $control.Height = 28
+        $control.Margin = New-Object System.Windows.Thickness(0,4,0,0)
+      }
+    }
+
+    [System.Windows.Controls.Grid]::SetRow($control, 2)
+    [void]$paramGrid.Children.Add($control)
+
+    # Used by Get-ParameterValues (existing function)
+    $script:ParameterControls[$paramName] = [PSCustomObject]@{
+      Control  = $control
+      Type     = $type
+      Required = [bool]($paramDef.Required)
+    }
+
+    [void]$h.PnlParameters.Children.Add($paramGrid)
+  }
+}
+
+
+
+### BEGIN: Get-ParameterValues (script-scope)
+function Get-ParameterValues {
+    $params = @{}
+    $valid = $true
+
+    foreach ($paramName in $script:ParameterControls.Keys) {
+      $paramInfo = $script:ParameterControls[$paramName]
+      $control = $paramInfo.Control
+      $type = $paramInfo.Type
+      $required = $paramInfo.Required
+      $value = $null
+
+      switch ($type) {
+        'bool' {
+          $value = $control.IsChecked
+        }
+        'int' {
+          if ($control.Text) {
+            try {
+              $value = [int]$control.Text
+            }
+            catch {
+              $valid = $false
+            }
+          }
+        }
+        'datetime' {
+          if ($control.SelectedDate) {
+            $value = $control.SelectedDate
+          }
+        }
+        'array' {
+          if ($control.Text) {
+            # Split by newlines
+            $value = $control.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          }
+        }
+        default {
+          $value = $control.Text
+
+          # Special handling for AccessToken
+          if ($paramName -eq 'AccessToken' -and $value -eq '***TOKEN***') {
+            $value = $script:AppState.AccessToken
+          }
+        }
+      }
+
+      # Validate required parameters
+      if ($required -and (-not $value -or $value -eq '')) {
+        $control.BorderBrush = [System.Windows.Media.Brushes]::Red
+        $valid = $false
+      }
+      else {
+        $control.BorderBrush = [System.Windows.Media.Brushes]::LightGray
+      }
+
+      if ($value) {
+        $params[$paramName] = $value
+      }
+    }
+
+    if (-not $valid) {
+      return $null
+    }
+
+    return $params
+  }
+### END: Get-ParameterValues (script-scope)
+
+function Refresh-ArtifactList {
+  param(
+    [hashtable]$h = $script:BackstageHandles
+  )
+  if (-not $h) { return }
+
+  try {
+    $artifacts = Get-GcArtifactIndex
+
+    $displayItems = $artifacts | Sort-Object -Property Timestamp -Descending | Select-Object -First 20 | ForEach-Object {
+      [PSCustomObject]@{
+        DisplayName  = $_.ReportName
+        DisplayTime  = "$($_.Timestamp) - $($_.Status)"
+        BundlePath   = $_.BundlePath
+        RunId        = $_.RunId
+        ArtifactData = $_
+      }
+    }
+
+    $h.LstArtifacts.ItemsSource = $null
+    $h.LstArtifacts.Items.Clear()
+    foreach ($item in $displayItems) {
+      [void]$h.LstArtifacts.Items.Add($item)
+    }
+  }
+  catch {
+    Write-Warning "Failed to load artifact index: $_"
+  }
+}
+### END: Reports & Exports helpers (script-scope)
+
 function Escape-GcXml {
   <#
   .SYNOPSIS
@@ -6916,235 +7217,28 @@ function New-ReportsExportsView {
   # Load templates
   $templates = Get-GcReportTemplates
 
-  function Refresh-TemplateList {
-    $searchText = $h.TxtTemplateSearch.Text.ToLower()
 
-    $filteredTemplates = $templates
-    if ($searchText -and $searchText -ne 'search templates...') {
-      $filteredTemplates = $templates | Where-Object {
-        $_.Name.ToLower().Contains($searchText) -or
-        $_.Description.ToLower().Contains($searchText)
-      }
-    }
 
-    $h.LstTemplates.Items.Clear()
-    foreach ($template in $filteredTemplates) {
-      $item = New-Object System.Windows.Controls.ListBoxItem
-      $item.Content = $template.Name
-      $item.Tag = $template
-      [void]$h.LstTemplates.Items.Add($item)
 
-    }
-  }
 
   ### BEGIN: Build-ParameterPanel (fixed ordering + suppressed .Add output)
-  function Build-ParameterPanel {
-    param($template)
 
-    # Clear previous UI
-    $h.PnlParameters.Children.Clear()
-    if ($script:ParameterControls) { $script:ParameterControls.Clear() }
 
-    # No parameters
-    if (-not $template -or -not $template.Parameters -or $template.Parameters.Count -eq 0) {
-      $noParamsText = New-Object System.Windows.Controls.TextBlock
-      $noParamsText.Text = "This template has no parameters"
-      $noParamsText.Foreground = [System.Windows.Media.Brushes]::Gray
-      $noParamsText.Margin = New-Object System.Windows.Thickness(0, 10, 0, 0)
-      [void]$h.PnlParameters.Children.Add($noParamsText)
-      return
-    }
 
-    foreach ($paramName in $template.Parameters.Keys) {
-      $paramDef = $template.Parameters[$paramName]
-
-      # Create parameter group container
-      $paramGrid = New-Object System.Windows.Controls.Grid
-      $paramGrid.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
-
-      # Rows
-      $row1 = New-Object System.Windows.Controls.RowDefinition
-      $row1.Height = [System.Windows.GridLength]::Auto
-      $row2 = New-Object System.Windows.Controls.RowDefinition
-      $row2.Height = [System.Windows.GridLength]::Auto
-      $row3 = New-Object System.Windows.Controls.RowDefinition
-      $row3.Height = [System.Windows.GridLength]::Auto
-      [void]$paramGrid.RowDefinitions.Add($row1)
-      [void]$paramGrid.RowDefinitions.Add($row2)
-      [void]$paramGrid.RowDefinitions.Add($row3)
-
-      # Label
-      $label = New-Object System.Windows.Controls.TextBlock
-      $labelText = $paramName
-      if ($paramDef.Required) { $labelText += " *" }
-      $label.Text = $labelText
-      $label.FontWeight = [System.Windows.FontWeights]::SemiBold
-      $label.Foreground = [System.Windows.Media.Brushes]::Black
-      [System.Windows.Controls.Grid]::SetRow($label, 0)
-      [void]$paramGrid.Children.Add($label)
-
-      # Description (optional)
-      if ($paramDef.Description) {
-        $desc = New-Object System.Windows.Controls.TextBlock
-        $desc.Text = $paramDef.Description
-        $desc.FontSize = 11
-        $desc.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(107, 114, 128))
-        $desc.Margin = New-Object System.Windows.Thickness(0, 2, 0, 4)
-        $desc.TextWrapping = [System.Windows.TextWrapping]::Wrap
-        [System.Windows.Controls.Grid]::SetRow($desc, 1)
-        [void]$paramGrid.Children.Add($desc)
-      }
-
-      # Input control based on type
-      $control = $null
-      $paramType = if ($paramDef.Type) { $paramDef.Type.ToLower() } else { 'string' }
-
-      switch ($paramType) {
-        'bool' {
-          $control = New-Object System.Windows.Controls.CheckBox
-          $control.IsChecked = $false
-          $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
-        }
-        'int' {
-          $control = New-Object System.Windows.Controls.TextBox
-          $control.Height = 28
-          $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
-        }
-        'datetime' {
-          $control = New-Object System.Windows.Controls.DatePicker
-          $control.Height = 28
-          $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
-          $control.SelectedDate = Get-Date
-        }
-        'array' {
-          $control = New-Object System.Windows.Controls.TextBox
-          $control.Height = 60
-          $control.AcceptsReturn = $true
-          $control.TextWrapping = [System.Windows.TextWrapping]::Wrap
-          $control.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
-          $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
-        }
-        default {
-          $control = New-Object System.Windows.Controls.TextBox
-          $control.Height = 28
-          $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
-        }
-      }
-
-      [System.Windows.Controls.Grid]::SetRow($control, 2)
-      [void]$paramGrid.Children.Add($control)
-
-      # Track control (if you use this elsewhere)
-      if (-not $script:ParameterControls) { $script:ParameterControls = @{} }
-      $script:ParameterControls[$paramName] = @{
-        Control  = $control
-        Type     = $paramType
-        Required = $paramDef.Required
-      }
-
-      # Add param group to the panel
-      [void]$h.PnlParameters.Children.Add($paramGrid)
-    }
-  }
   ### END: Build-ParameterPanel (fixed ordering + suppressed .Add output)
 
 
-  function Get-ParameterValues {
-    $params = @{}
-    $valid = $true
 
-    foreach ($paramName in $script:ParameterControls.Keys) {
-      $paramInfo = $script:ParameterControls[$paramName]
-      $control = $paramInfo.Control
-      $type = $paramInfo.Type
-      $required = $paramInfo.Required
-      $value = $null
 
-      switch ($type) {
-        'bool' {
-          $value = $control.IsChecked
-        }
-        'int' {
-          if ($control.Text) {
-            try {
-              $value = [int]$control.Text
-            }
-            catch {
-              $valid = $false
-            }
-          }
-        }
-        'datetime' {
-          if ($control.SelectedDate) {
-            $value = $control.SelectedDate
-          }
-        }
-        'array' {
-          if ($control.Text) {
-            # Split by newlines
-            $value = $control.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-          }
-        }
-        default {
-          $value = $control.Text
 
-          # Special handling for AccessToken
-          if ($paramName -eq 'AccessToken' -and $value -eq '***TOKEN***') {
-            $value = $script:AppState.AccessToken
-          }
-        }
-      }
 
-      # Validate required parameters
-      if ($required -and (-not $value -or $value -eq '')) {
-        $control.BorderBrush = [System.Windows.Media.Brushes]::Red
-        $valid = $false
-      }
-      else {
-        $control.BorderBrush = [System.Windows.Media.Brushes]::LightGray
-      }
 
-      if ($value) {
-        $params[$paramName] = $value
-      }
-    }
 
-    if (-not $valid) {
-      return $null
-    }
 
-    return $params
-  }
-
-  function Refresh-ArtifactList {
-    try {
-      $artifacts = Get-GcArtifactIndex
-
-      $displayItems = $artifacts | Sort-Object -Property Timestamp -Descending | Select-Object -First 20 | ForEach-Object {
-        [PSCustomObject]@{
-          DisplayName  = $_.ReportName
-          DisplayTime  = "$($_.Timestamp) - $($_.Status)"
-          BundlePath   = $_.BundlePath
-          RunId        = $_.RunId
-          ArtifactData = $_
-        }
-      }
-
-      # Clear ItemsSource binding and use Items collection directly for proper WPF display
-      $h.LstArtifacts.ItemsSource = $null
-      $h.LstArtifacts.Items.Clear()
-      foreach ($item in $displayItems) {
-        $h.LstArtifacts.Items.Add($item) | Out-Null
-      }
-    }
-    catch {
-      Write-Warning "Failed to load artifact index: $_"
-    }
-  }
 
   # Template search
   $h.TxtTemplateSearch.Add_TextChanged({
-      Refresh-TemplateList
+      Refresh-TemplateList -h $h -Templates $templates
     })
 
   $h.TxtTemplateSearch.Add_GotFocus({
@@ -7165,8 +7259,7 @@ function New-ReportsExportsView {
       if ($selectedItem -and $selectedItem.Tag) {
         $template = $selectedItem.Tag
         $h.TxtTemplateDescription.Text = $template.Description
-        Build-ParameterPanel -template $template
-
+        Build-ParameterPanel -h $h -Template $template
         # Reset current report
         $script:CurrentReportBundle = $null
         $h.BtnOpenInBrowser.IsEnabled = $false
@@ -7252,7 +7345,6 @@ function New-ReportsExportsView {
 
           # Refresh artifact list
           Refresh-ArtifactList
-
           Show-Snackbar "Report completed successfully!" -Action "Open" -ActionCallback {
             Start-Process $bundle.BundlePath
           }
@@ -7458,7 +7550,7 @@ function New-ReportsExportsView {
 
   # Artifact hub actions
   $h.BtnRefreshArtifacts.Add_Click({
-      Refresh-ArtifactList
+      Refresh-ArtifactList -h $h
       Set-Status "Artifact list refreshed"
     })
 
@@ -7526,7 +7618,7 @@ function New-ReportsExportsView {
 
               # Remove from index (would need to rebuild index or filter it)
               # For now, just refresh the list
-              Refresh-ArtifactList
+              Refresh-ArtifactList -h $h
               Set-Status "Artifact moved to trash"
               Show-Snackbar "Artifact deleted"
             }
@@ -7555,9 +7647,8 @@ function New-ReportsExportsView {
     })
 
   # Initialize view
-  Refresh-TemplateList
-  Refresh-ArtifactList
-
+  Refresh-TemplateList -h $h -Templates $templates
+  Refresh-ArtifactList -h $h
   # Select first template by default
   if ($h.LstTemplates.Items.Count -gt 0) {
     $h.LstTemplates.SelectedIndex = 0
