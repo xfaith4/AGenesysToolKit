@@ -7118,7 +7118,12 @@ function New-ReportsExportsView {
         }
       }
       
-      $h.LstArtifacts.ItemsSource = $displayItems
+      # Clear ItemsSource binding and use Items collection directly for proper WPF display
+      $h.LstArtifacts.ItemsSource = $null
+      $h.LstArtifacts.Items.Clear()
+      foreach ($item in $displayItems) {
+        $h.LstArtifacts.Items.Add($item) | Out-Null
+      }
     } catch {
       Write-Warning "Failed to load artifact index: $_"
     }
