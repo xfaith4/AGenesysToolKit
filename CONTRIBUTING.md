@@ -26,8 +26,12 @@ Thank you for your interest in contributing to AGenesysToolKit! This document pr
 
 1. **Fork and Clone**
    ```powershell
+   # Fork the repository on GitHub first, then clone your fork
    git clone https://github.com/YOUR-USERNAME/AGenesysToolKit.git
    cd AGenesysToolKit
+   
+   # Add upstream remote for syncing with main repository
+   git remote add upstream https://github.com/xfaith4/AGenesysToolKit.git
    ```
 
 2. **Run Smoke Tests**

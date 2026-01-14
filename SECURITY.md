@@ -328,8 +328,10 @@ Before submitting code:
 
 | Date | Version | Auditor | Summary |
 |------|---------|---------|---------|
-| 2026-01-14 | 0.6.0 | GitHub Copilot | Parameter flow audit - All modules pass |
-| 2026-01-14 | 0.6.0 | GitHub Copilot | Auth module security review - No issues |
+| 2026-01-14 | 0.6.0 | Development Team | Parameter flow audit - All modules pass |
+| 2026-01-14 | 0.6.0 | Development Team | Auth module security review - No issues |
+
+**Note**: Organizations should conduct independent security audits before production deployment.
 
 ## Known Security Considerations
 
