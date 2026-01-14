@@ -48,10 +48,10 @@ function Set-ControlEnabled {
 function Convert-XamlToControl {
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory=$true)][string]$Xaml
+    [Parameter(Mandatory = $true)][string]$Xaml
   )
 
-  Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase | Out-Null
+  Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase | Out-Null
 
   $sr = New-Object System.IO.StringReader($Xaml)
   $xr = [System.Xml.XmlReader]::Create($sr)
@@ -67,7 +67,7 @@ function Convert-XamlToControl {
 function Get-NamedElements {
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory=$true)]$Root
+    [Parameter(Mandatory = $true)]$Root
   )
 
   $map = [ordered]@{}
@@ -82,7 +82,7 @@ function Get-NamedElements {
 
     $count = 0
     try { $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($node) } catch { $count = 0 }
-    for ($i=0; $i -lt $count; $i++) {
+    for ($i = 0; $i -lt $count; $i++) {
       $child = $null
       try { $child = [System.Windows.Media.VisualTreeHelper]::GetChild($node, $i) } catch {}
       if ($child) { _WalkVisual $child }
@@ -106,7 +106,7 @@ function Get-NamedElements {
 
   # Logical first (captures templated content better), then visual (catches the rest)
   _WalkLogical $Root
-  _WalkVisual  $Root
+  _WalkVisual $Root
 
   return [pscustomobject]$map
 }
@@ -121,8 +121,8 @@ foreach ($name in $required) {
 function Refresh-TemplateList {
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory=$true)]$h,
-    [Parameter(Mandatory=$true)][object[]]$Templates
+    [Parameter(Mandatory = $true)]$h,
+    [Parameter(Mandatory = $true)][object[]]$Templates
   )
 
   $searchText = ($h.TxtTemplateSearch.Text ?? '').ToString().Trim().ToLowerInvariant()
@@ -139,7 +139,7 @@ function Refresh-TemplateList {
   foreach ($t in $filtered) {
     $item = New-Object System.Windows.Controls.ListBoxItem
     $item.Content = $t.Name
-    $item.Tag     = $t
+    $item.Tag = $t
     [void]$h.LstTemplates.Items.Add($item)
   }
 }
@@ -147,8 +147,8 @@ function Refresh-TemplateList {
 function Build-ParameterPanel {
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory=$true)]$h,
-    [Parameter(Mandatory=$true)]$Template
+    [Parameter(Mandatory = $true)]$h,
+    [Parameter(Mandatory = $true)]$Template
   )
 
   $h.PnlParameters.Children.Clear()
@@ -158,7 +158,7 @@ function Build-ParameterPanel {
     $noParamsText = New-Object System.Windows.Controls.TextBlock
     $noParamsText.Text = "This template has no parameters"
     $noParamsText.Foreground = [System.Windows.Media.Brushes]::Gray
-    $noParamsText.Margin = New-Object System.Windows.Thickness(0,10,0,0)
+    $noParamsText.Margin = New-Object System.Windows.Thickness(0, 10, 0, 0)
     [void]$h.PnlParameters.Children.Add($noParamsText)
     return
   }
@@ -167,7 +167,7 @@ function Build-ParameterPanel {
     $paramDef = $Template.Parameters[$paramName]
 
     $paramGrid = New-Object System.Windows.Controls.Grid
-    $paramGrid.Margin = New-Object System.Windows.Thickness(0,0,0,12)
+    $paramGrid.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
 
     $row1 = New-Object System.Windows.Controls.RowDefinition; $row1.Height = [System.Windows.GridLength]::Auto
     $row2 = New-Object System.Windows.Controls.RowDefinition; $row2.Height = [System.Windows.GridLength]::Auto
@@ -187,8 +187,8 @@ function Build-ParameterPanel {
       $desc = New-Object System.Windows.Controls.TextBlock
       $desc.Text = $paramDef.Description
       $desc.FontSize = 11
-      $desc.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(107,114,128))
-      $desc.Margin = New-Object System.Windows.Thickness(0,2,0,4)
+      $desc.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(107, 114, 128))
+      $desc.Margin = New-Object System.Windows.Thickness(0, 2, 0, 4)
       $desc.TextWrapping = [System.Windows.TextWrapping]::Wrap
       [System.Windows.Controls.Grid]::SetRow($desc, 1)
       [void]$paramGrid.Children.Add($desc)
@@ -201,17 +201,17 @@ function Build-ParameterPanel {
       'bool' {
         $control = New-Object System.Windows.Controls.CheckBox
         $control.IsChecked = $false
-        $control.Margin = New-Object System.Windows.Thickness(0,4,0,0)
+        $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
       }
       'int' {
         $control = New-Object System.Windows.Controls.TextBox
         $control.Height = 28
-        $control.Margin = New-Object System.Windows.Thickness(0,4,0,0)
+        $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
       }
       'datetime' {
         $control = New-Object System.Windows.Controls.DatePicker
         $control.Height = 28
-        $control.Margin = New-Object System.Windows.Thickness(0,4,0,0)
+        $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
         $control.SelectedDate = Get-Date
       }
       'array' {
@@ -220,12 +220,12 @@ function Build-ParameterPanel {
         $control.AcceptsReturn = $true
         $control.TextWrapping = [System.Windows.TextWrapping]::Wrap
         $control.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
-        $control.Margin = New-Object System.Windows.Thickness(0,4,0,0)
+        $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
       }
       default {
         $control = New-Object System.Windows.Controls.TextBox
         $control.Height = 28
-        $control.Margin = New-Object System.Windows.Thickness(0,4,0,0)
+        $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
       }
     }
 
@@ -247,71 +247,71 @@ function Build-ParameterPanel {
 
 ### BEGIN: Get-ParameterValues (script-scope)
 function Get-ParameterValues {
-    $params = @{}
-    $valid = $true
+  $params = @{}
+  $valid = $true
 
-    foreach ($paramName in $script:ParameterControls.Keys) {
-      $paramInfo = $script:ParameterControls[$paramName]
-      $control = $paramInfo.Control
-      $type = $paramInfo.Type
-      $required = $paramInfo.Required
-      $value = $null
+  foreach ($paramName in $script:ParameterControls.Keys) {
+    $paramInfo = $script:ParameterControls[$paramName]
+    $control = $paramInfo.Control
+    $type = $paramInfo.Type
+    $required = $paramInfo.Required
+    $value = $null
 
-      switch ($type) {
-        'bool' {
-          $value = $control.IsChecked
-        }
-        'int' {
-          if ($control.Text) {
-            try {
-              $value = [int]$control.Text
-            }
-            catch {
-              $valid = $false
-            }
+    switch ($type) {
+      'bool' {
+        $value = $control.IsChecked
+      }
+      'int' {
+        if ($control.Text) {
+          try {
+            $value = [int]$control.Text
           }
-        }
-        'datetime' {
-          if ($control.SelectedDate) {
-            $value = $control.SelectedDate
-          }
-        }
-        'array' {
-          if ($control.Text) {
-            # Split by newlines
-            $value = $control.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-          }
-        }
-        default {
-          $value = $control.Text
-
-          # Special handling for AccessToken
-          if ($paramName -eq 'AccessToken' -and $value -eq '***TOKEN***') {
-            $value = $script:AppState.AccessToken
+          catch {
+            $valid = $false
           }
         }
       }
-
-      # Validate required parameters
-      if ($required -and (-not $value -or $value -eq '')) {
-        $control.BorderBrush = [System.Windows.Media.Brushes]::Red
-        $valid = $false
+      'datetime' {
+        if ($control.SelectedDate) {
+          $value = $control.SelectedDate
+        }
       }
-      else {
-        $control.BorderBrush = [System.Windows.Media.Brushes]::LightGray
+      'array' {
+        if ($control.Text) {
+          # Split by newlines
+          $value = $control.Text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+        }
       }
+      default {
+        $value = $control.Text
 
-      if ($value) {
-        $params[$paramName] = $value
+        # Special handling for AccessToken
+        if ($paramName -eq 'AccessToken' -and $value -eq '***TOKEN***') {
+          $value = $script:AppState.AccessToken
+        }
       }
     }
 
-    if (-not $valid) {
-      return $null
+    # Validate required parameters
+    if ($required -and (-not $value -or $value -eq '')) {
+      $control.BorderBrush = [System.Windows.Media.Brushes]::Red
+      $valid = $false
+    }
+    else {
+      $control.BorderBrush = [System.Windows.Media.Brushes]::LightGray
     }
 
-    return $params
+    if ($value) {
+      $params[$paramName] = $value
+    }
   }
+
+  if (-not $valid) {
+    return $null
+  }
+
+  return $params
+}
 ### END: Get-ParameterValues (script-scope)
 
 function Refresh-ArtifactList {
@@ -1772,7 +1772,7 @@ $BtnCancelJob.Add_Click({
         Set-Status "Cancel not available for: $($job.Name)"
         return
       }
-}
+    }
   })
 
 # -----------------------------
@@ -6690,6 +6690,7 @@ function New-SubscriptionsView {
 
   $view = Convert-XamlToControl $xaml
   $h = Get-NamedElements -Root $view
+  $script:BackstageHandles = $h
 
   # Ensure pinned list is bound to shared collection (keeps app-wide pin state)
   $h.LstPinned.ItemsSource = $script:AppState.PinnedEvents
@@ -6704,7 +6705,8 @@ function New-SubscriptionsView {
       if ($res -and $res.entities -and $res.entities.Count -gt 0) {
         return $res.entities[0].id
       }
-    } catch {
+    }
+    catch {
       Set-Status "Queue lookup failed for '$Name': $_"
     }
     return $null
@@ -6714,8 +6716,8 @@ function New-SubscriptionsView {
     param([Parameter(Mandatory)][object]$Raw)
 
     $topic = $Raw.topicName
-    $body  = $Raw.eventBody
-    $meta  = $Raw.metadata
+    $body = $Raw.eventBody
+    $meta = $Raw.metadata
 
     $convId = $null
     if ($topic -match '^v2\.conversations\.([^\.]+)') { $convId = $matches[1] }
@@ -6766,7 +6768,7 @@ function New-SubscriptionsView {
 
     $item = New-Object System.Windows.Controls.ListBoxItem
     $item.Content = $summary
-    $item.Tag     = $Evt
+    $item.Tag = $Evt
     [void]$h.LstEvents.Items.Insert(0, $item)
 
     # Trim list for UI performance (keep the newest 500)
@@ -6809,7 +6811,8 @@ function New-SubscriptionsView {
         $body = $evt.raw.eventBody
         if ($body -and ($body.transcript -or $body.text -or $body.suggestions)) {
           $h.TxtTranscript.Text = ($body | ConvertTo-Json -Depth 6)
-        } else {
+        }
+        else {
           $h.TxtTranscript.Text = ($evt.raw | ConvertTo-Json -Depth 8)
         }
       }
@@ -6867,7 +6870,8 @@ function New-SubscriptionsView {
               $topic = Resolve-GcTopicWithId -TopicTemplate $t -Id $queueId
               Add-GcSubscription -Provider $provider -TopicName $topic | Out-Null
             }
-          } else {
+          }
+          else {
             Set-Status "Queue not found: $queueName"
           }
         }
@@ -6909,11 +6913,12 @@ function New-SubscriptionsView {
         $script:AppState.IsStreaming = $true
 
         $h.BtnStart.IsEnabled = $false
-        $h.BtnStop.IsEnabled  = $true
+        $h.BtnStop.IsEnabled = $true
 
         Set-Status "Subscription started."
         Refresh-HeaderStats
-      } catch {
+      }
+      catch {
         Set-Status "Failed to start subscription: $_"
         [System.Windows.MessageBox]::Show(
           "Failed to start subscription: $_",
@@ -6934,11 +6939,12 @@ function New-SubscriptionsView {
         }
 
         $h.BtnStart.IsEnabled = $true
-        $h.BtnStop.IsEnabled  = $false
+        $h.BtnStop.IsEnabled = $false
 
         Set-Status "Subscription stopped."
         Refresh-HeaderStats
-      } catch {
+      }
+      catch {
         Set-Status "Stop failed: $_"
       }
     })
@@ -7019,7 +7025,8 @@ function New-SubscriptionsView {
         try {
           $subscriptionEvents = $eventBuffer
           Export-GcConversationPacket -ConversationId $conversationId -Region $region -AccessToken $accessToken -OutputDirectory $artifactsDir -SubscriptionEvents $subscriptionEvents -CreateZip
-        } catch {
+        }
+        catch {
           throw $_
         }
       } -Args @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer, $script:AppState.RepositoryRoot) `
