@@ -4479,9 +4479,9 @@ function New-FlowsView {
   # Load button handler
   $h.BtnFlowLoad.Add_Click({
     Set-Status "Loading flows..."
-    $h.BtnFlowLoad.IsEnabled = $false
-    $h.BtnFlowExportJson.IsEnabled = $false
-    $h.BtnFlowExportCsv.IsEnabled = $false
+    if ($h.BtnFlowLoad) { $h.BtnFlowLoad.IsEnabled = $false }
+    if ($h.BtnFlowExportJson) { $h.BtnFlowExportJson.IsEnabled = $false }
+    if ($h.BtnFlowExportCsv) { $h.BtnFlowExportCsv.IsEnabled = $false }
 
     Start-AppJob -Name "Load Flows" -Type "Query" -ScriptBlock {
       # Query flows using Genesys Cloud API
@@ -4498,7 +4498,7 @@ function New-FlowsView {
     } -OnCompleted {
       param($job)
 
-      $h.BtnFlowLoad.IsEnabled = $true
+      if ($h.BtnFlowLoad) { $h.BtnFlowLoad.IsEnabled = $true }
 
       if ($job.Result) {
         $flows = $job.Result
@@ -4516,16 +4516,16 @@ function New-FlowsView {
           }
         }
 
-        $h.GridFlows.ItemsSource = $displayData
-        $h.TxtFlowCount.Text = "($($flows.Count) flows)"
-        $h.BtnFlowExportJson.IsEnabled = $true
-        $h.BtnFlowExportCsv.IsEnabled = $true
+        if ($h.GridFlows) { $h.GridFlows.ItemsSource = $displayData }
+        if ($h.TxtFlowCount) { $h.TxtFlowCount.Text = "($($flows.Count) flows)" }
+        if ($h.BtnFlowExportJson) { $h.BtnFlowExportJson.IsEnabled = $true }
+        if ($h.BtnFlowExportCsv) { $h.BtnFlowExportCsv.IsEnabled = $true }
 
         Set-Status "Loaded $($flows.Count) flows."
       } else {
         Set-Status "Failed to load flows. Check job logs."
-        $h.GridFlows.ItemsSource = @()
-        $h.TxtFlowCount.Text = "(0 flows)"
+        if ($h.GridFlows) { $h.GridFlows.ItemsSource = @() }
+        if ($h.TxtFlowCount) { $h.TxtFlowCount.Text = "(0 flows)" }
       }
     }
   })
@@ -4589,7 +4589,7 @@ function New-FlowsView {
   $h.TxtFlowSearch.Add_TextChanged({
     if (-not $script:FlowsData -or $script:FlowsData.Count -eq 0) { return }
 
-    $searchText = $h.TxtFlowSearch.Text.ToLower()
+    $searchText = if ($h.TxtFlowSearch) { $h.TxtFlowSearch.Text.ToLower() } else { "" }
     if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search flows...") {
       $displayData = $script:FlowsData | ForEach-Object {
         [PSCustomObject]@{
@@ -4601,8 +4601,8 @@ function New-FlowsView {
           ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
         }
       }
-      $h.GridFlows.ItemsSource = $displayData
-      $h.TxtFlowCount.Text = "($($script:FlowsData.Count) flows)"
+      if ($h.GridFlows) { $h.GridFlows.ItemsSource = $displayData }
+      if ($h.TxtFlowCount) { $h.TxtFlowCount.Text = "($($script:FlowsData.Count) flows)" }
       return
     }
 
@@ -4622,20 +4622,20 @@ function New-FlowsView {
       }
     }
 
-    $h.GridFlows.ItemsSource = $displayData
-    $h.TxtFlowCount.Text = "($($filtered.Count) flows)"
+    if ($h.GridFlows) { $h.GridFlows.ItemsSource = $displayData }
+    if ($h.TxtFlowCount) { $h.TxtFlowCount.Text = "($($filtered.Count) flows)" }
   })
 
   # Clear search placeholder on focus
   $h.TxtFlowSearch.Add_GotFocus({
-    if ($h.TxtFlowSearch.Text -eq "Search flows...") {
+    if ($h.TxtFlowSearch -and $h.TxtFlowSearch.Text -eq "Search flows...") {
       $h.TxtFlowSearch.Text = ""
     }
   })
 
   # Restore search placeholder on lost focus if empty
   $h.TxtFlowSearch.Add_LostFocus({
-    if ([string]::IsNullOrWhiteSpace($h.TxtFlowSearch.Text)) {
+    if ($h.TxtFlowSearch -and [string]::IsNullOrWhiteSpace($h.TxtFlowSearch.Text)) {
       $h.TxtFlowSearch.Text = "Search flows..."
     }
   })

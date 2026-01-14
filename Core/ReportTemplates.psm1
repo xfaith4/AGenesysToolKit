@@ -76,6 +76,19 @@ function Get-GcReportTemplates {
         Disconnects = @{ Type = 'Int'; Required = $false; Description = 'Disconnect count' }
       }
       InvokeScript = ${function:Invoke-SubscriptionSessionSummaryReport}
+    },
+    
+    [PSCustomObject]@{
+      Name = 'Executive Daily Summary'
+      Description = 'Professional 1-day executive report with peak concurrency, media volumes, and abandon rates'
+      Parameters = @{
+        Region = @{ Type = 'String'; Required = $true; Description = 'Genesys Cloud region' }
+        AccessToken = @{ Type = 'String'; Required = $true; Description = 'OAuth access token' }
+        TargetDate = @{ Type = 'DateTime'; Required = $false; Description = 'Date to report on (defaults to yesterday)' }
+        BrandingTitle = @{ Type = 'String'; Required = $false; Description = 'Custom branding title for report' }
+        BrandingColor = @{ Type = 'String'; Required = $false; Description = 'Custom branding color (hex)' }
+      }
+      InvokeScript = ${function:Invoke-ExecutiveDailySummaryReport}
     }
   )
 }
@@ -487,6 +500,392 @@ function Invoke-SubscriptionSessionSummaryReport {
   }
 }
 
+function Invoke-ExecutiveDailySummaryReport {
+  <#
+  .SYNOPSIS
+    Executes the Executive Daily Summary report.
+  
+  .DESCRIPTION
+    Generates a professional 1-day executive report with:
+    - Peak concurrent conversations by media type (1-min intervals)
+    - Total media type volumes
+    - Total abandon rate
+    - Customizable branding/theme
+  
+  .PARAMETER Region
+    Genesys Cloud region
+  
+  .PARAMETER AccessToken
+    OAuth access token
+  
+  .PARAMETER TargetDate
+    Date to report on (defaults to yesterday)
+  
+  .PARAMETER BrandingTitle
+    Custom branding title for report
+  
+  .PARAMETER BrandingColor
+    Custom branding color (hex)
+  
+  .OUTPUTS
+    Hashtable with Rows, Summary, and Warnings
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]
+    [string]$Region,
+    
+    [Parameter(Mandatory)]
+    [string]$AccessToken,
+    
+    [datetime]$TargetDate,
+    [string]$BrandingTitle = "Contact Center Operations",
+    [string]$BrandingColor = "#0066CC"
+  )
+  
+  # Helper function to map media types to standard categories
+  function Get-StandardMediaType {
+    param([string]$MediaType)
+    
+    $type = if ($MediaType) { $MediaType.ToLower() } else { 'other' }
+    
+    switch -Regex ($type) {
+      '^voice$|^call$' { return 'voice' }
+      '^chat$|^webchat$' { return 'chat' }
+      '^email$' { return 'email' }
+      '^message$|^sms$' { return 'message' }
+      '^callback$' { return 'callback' }
+      default { return 'other' }
+    }
+  }
+  
+  $warnings = @()
+  $rows = @()
+  $summary = [ordered]@{}
+  
+  try {
+    # Default to yesterday if no date specified
+    if (-not $TargetDate) {
+      $TargetDate = (Get-Date).AddDays(-1).Date
+    }
+    
+    # Set time range for the target day
+    $startTime = $TargetDate.ToString('yyyy-MM-ddT00:00:00.000Z')
+    $endTime = $TargetDate.AddDays(1).ToString('yyyy-MM-ddT00:00:00.000Z')
+    
+    $summary['ReportDate'] = $TargetDate.ToString('yyyy-MM-dd')
+    $summary['BrandingTitle'] = $BrandingTitle
+    $summary['BrandingColor'] = $BrandingColor
+    $summary['GeneratedAt'] = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    
+    # Build analytics query for conversation details with pagination support
+    $queryBody = @{
+      interval = $startTime + "/" + $endTime
+      order = "asc"
+      orderBy = "conversationStart"
+      segmentFilters = @(
+        @{
+          type = "and"
+          predicates = @(
+            @{
+              type = "dimension"
+              dimension = "conversationEnd"
+              operator = "exists"
+            }
+          )
+        }
+      )
+    }
+    
+    Write-Output "Fetching conversation data for $($TargetDate.ToString('yyyy-MM-dd'))..."
+    
+    # Query conversation details - this handles pagination internally
+    $conversations = @()
+    try {
+      $result = Invoke-GcAnalyticsConversationDetailsQuery `
+        -Body $queryBody `
+        -AccessToken $AccessToken `
+        -InstanceName $Region `
+        -TimeoutSeconds 300 `
+        -All
+      
+      if ($result -and $result.conversations) {
+        $conversations = $result.conversations
+      }
+    } catch {
+      $warnings += "Failed to fetch conversation data: $_"
+      $summary['Status'] = 'Partial Data'
+    }
+    
+    $summary['TotalConversations'] = $conversations.Count
+    
+    # Initialize media type counters
+    $mediaTypeVolumes = @{
+      voice = 0
+      chat = 0
+      email = 0
+      message = 0
+      callback = 0
+      other = 0
+    }
+    
+    # Track concurrent conversations by minute and media type
+    $concurrencyByMinute = @{}
+    
+    # Process conversations
+    foreach ($conv in $conversations) {
+      # Count media types
+      if ($conv.participants) {
+        foreach ($participant in $conv.participants) {
+          if ($participant.sessions) {
+            foreach ($session in $participant.sessions) {
+              # Map media type to standard category
+              $standardMediaType = Get-StandardMediaType -MediaType $session.mediaType
+              $mediaTypeVolumes[$standardMediaType]++
+              
+              # Calculate concurrent conversations by minute
+              if ($session.segments) {
+                foreach ($segment in $session.segments) {
+                  if ($segment.segmentStart) {
+                    try {
+                      $segmentStart = [datetime]::Parse($segment.segmentStart)
+                      # Use 5 minutes as default duration if no end time (reasonable estimate for active session)
+                      $segmentEnd = if ($segment.segmentEnd) { [datetime]::Parse($segment.segmentEnd) } else { $segmentStart.AddMinutes(5) }
+                      
+                      # Round to minute boundaries
+                      $currentMinute = $segmentStart.Date.AddHours($segmentStart.Hour).AddMinutes($segmentStart.Minute)
+                      $endMinute = $segmentEnd.Date.AddHours($segmentEnd.Hour).AddMinutes($segmentEnd.Minute)
+                      
+                      # Track concurrency for each minute
+                      while ($currentMinute -le $endMinute) {
+                        $minuteKey = $currentMinute.ToString('yyyy-MM-dd HH:mm')
+                        
+                        if (-not $concurrencyByMinute.ContainsKey($minuteKey)) {
+                          $concurrencyByMinute[$minuteKey] = @{
+                            voice = 0
+                            chat = 0
+                            email = 0
+                            message = 0
+                            callback = 0
+                            other = 0
+                          }
+                        }
+                        
+                        # Increment counter for this media type
+                        $concurrencyByMinute[$minuteKey][$standardMediaType]++
+                        
+                        $currentMinute = $currentMinute.AddMinutes(1)
+                      }
+                    } catch {
+                      # Skip segments with invalid timestamps
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    # Calculate peak concurrency for each media type
+    $peakConcurrency = @{
+      voice = 0
+      chat = 0
+      email = 0
+      message = 0
+      callback = 0
+      other = 0
+    }
+    
+    $peakTimes = @{
+      voice = ''
+      chat = ''
+      email = ''
+      message = ''
+      callback = ''
+      other = ''
+    }
+    
+    foreach ($minute in $concurrencyByMinute.Keys) {
+      foreach ($mediaType in $peakConcurrency.Keys) {
+        if ($concurrencyByMinute[$minute][$mediaType] -gt $peakConcurrency[$mediaType]) {
+          $peakConcurrency[$mediaType] = $concurrencyByMinute[$minute][$mediaType]
+          $peakTimes[$mediaType] = $minute
+        }
+      }
+    }
+    
+    # Add summary metrics
+    $summary['PeakConcurrentVoice'] = $peakConcurrency['voice']
+    $summary['PeakConcurrentChat'] = $peakConcurrency['chat']
+    $summary['PeakConcurrentEmail'] = $peakConcurrency['email']
+    $summary['PeakConcurrentMessage'] = $peakConcurrency['message']
+    $summary['PeakConcurrentCallback'] = $peakConcurrency['callback']
+    
+    $summary['TotalVoiceVolume'] = $mediaTypeVolumes['voice']
+    $summary['TotalChatVolume'] = $mediaTypeVolumes['chat']
+    $summary['TotalEmailVolume'] = $mediaTypeVolumes['email']
+    $summary['TotalMessageVolume'] = $mediaTypeVolumes['message']
+    $summary['TotalCallbackVolume'] = $mediaTypeVolumes['callback']
+    
+    # Calculate abandon rate
+    $abandonedCount = 0
+    $offeredCount = 0
+    
+    foreach ($conv in $conversations) {
+      if ($conv.participants) {
+        foreach ($participant in $conv.participants) {
+          if ($participant.purpose -eq 'customer' -or $participant.purpose -eq 'external') {
+            $offeredCount++
+            
+            # Check if abandoned (customer disconnected before agent answered)
+            # A call is NOT abandoned if there was an agent interaction
+            if ($participant.sessions) {
+              $hadAgentInteraction = $false
+              foreach ($session in $participant.sessions) {
+                if ($session.segments) {
+                  foreach ($segment in $session.segments) {
+                    # Check for agent interaction indicators
+                    # - If segment has media and was connected to agent
+                    # - If there's a talking duration or hold time
+                    if ($segment.segmentType -eq 'interact' -or 
+                        $segment.segmentType -eq 'hold' -or
+                        ($segment.properties -and $segment.properties.talkingDurationMilliseconds)) {
+                      $hadAgentInteraction = $true
+                      break
+                    }
+                  }
+                }
+                if ($hadAgentInteraction) { break }
+              }
+              
+              # If no agent interaction, consider it abandoned
+              if (-not $hadAgentInteraction) {
+                $abandonedCount++
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    $abandonRate = if ($offeredCount -gt 0) { 
+      [math]::Round(($abandonedCount / $offeredCount) * 100, 2) 
+    } else { 
+      0 
+    }
+    
+    $summary['TotalAbandoned'] = $abandonedCount
+    $summary['TotalOffered'] = $offeredCount
+    $summary['AbandonRate'] = "$abandonRate%"
+    
+    # Build rows for detailed view
+    $rows += [PSCustomObject]@{
+      Metric = 'Peak Concurrent - Voice'
+      Value = $peakConcurrency['voice']
+      Time = $peakTimes['voice']
+      Category = 'Concurrency'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Peak Concurrent - Chat'
+      Value = $peakConcurrency['chat']
+      Time = $peakTimes['chat']
+      Category = 'Concurrency'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Peak Concurrent - Email'
+      Value = $peakConcurrency['email']
+      Time = $peakTimes['email']
+      Category = 'Concurrency'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Peak Concurrent - Message'
+      Value = $peakConcurrency['message']
+      Time = $peakTimes['message']
+      Category = 'Concurrency'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Peak Concurrent - Callback'
+      Value = $peakConcurrency['callback']
+      Time = $peakTimes['callback']
+      Category = 'Concurrency'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Total Voice Volume'
+      Value = $mediaTypeVolumes['voice']
+      Time = 'All Day'
+      Category = 'Volume'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Total Chat Volume'
+      Value = $mediaTypeVolumes['chat']
+      Time = 'All Day'
+      Category = 'Volume'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Total Email Volume'
+      Value = $mediaTypeVolumes['email']
+      Time = 'All Day'
+      Category = 'Volume'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Total Message Volume'
+      Value = $mediaTypeVolumes['message']
+      Time = 'All Day'
+      Category = 'Volume'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Total Callback Volume'
+      Value = $mediaTypeVolumes['callback']
+      Time = 'All Day'
+      Category = 'Volume'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Abandon Rate'
+      Value = $abandonRate
+      Time = 'All Day'
+      Category = 'Performance'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Total Abandoned'
+      Value = $abandonedCount
+      Time = 'All Day'
+      Category = 'Performance'
+    }
+    
+    $rows += [PSCustomObject]@{
+      Metric = 'Total Offered'
+      Value = $offeredCount
+      Time = 'All Day'
+      Category = 'Performance'
+    }
+    
+    $summary['Status'] = 'OK'
+    
+  } catch {
+    $warnings += "Error executing report: $_"
+    $summary['Status'] = 'Failed'
+  }
+  
+  return @{
+    Rows = $rows
+    Summary = $summary
+    Warnings = $warnings
+  }
+}
+
 function Invoke-GcReportTemplate {
   <#
   .SYNOPSIS
@@ -611,6 +1010,7 @@ Export-ModuleMember -Function @(
   'Invoke-ConversationInspectPacketReport',
   'Invoke-ErrorsFailuresSnapshotReport',
   'Invoke-SubscriptionSessionSummaryReport',
+  'Invoke-ExecutiveDailySummaryReport',
   'Invoke-GcReportTemplate'
 )
 
