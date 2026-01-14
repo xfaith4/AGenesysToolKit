@@ -469,6 +469,86 @@ $bundle = Invoke-GcReportTemplate `
 
 ---
 
+## Using the Reports & Exports UI
+
+### Accessing the Module
+
+1. Launch the app:
+   ```powershell
+   pwsh ./App/GenesysCloudTool_UX_Prototype.ps1
+   ```
+
+2. Navigate to **Reports & Exports** in the main navigation
+
+3. The Reports & Exports view consists of three main panels:
+   - **LEFT**: Template picker with search
+   - **MIDDLE**: Dynamic parameter panel and preview
+   - **RIGHT**: Export actions and artifact hub
+
+### Generating a Report
+
+**Step 1: Select a Template**
+- Browse available templates in the left panel
+- Use the search box to filter templates by name or description
+- Click on a template to select it
+- View template details and description below the list
+
+**Step 2: Configure Parameters**
+- The middle panel automatically generates input controls based on the template's parameter schema
+- Required parameters are marked with an asterisk (*)
+- Common parameters like Region and AccessToken are auto-filled from your session
+- Parameter types include:
+  - Text fields (string)
+  - Number fields (int)
+  - Checkboxes (bool)
+  - Date pickers (datetime)
+  - Multi-line text (array)
+
+**Step 3: Run the Report**
+- Click **Run Report** button
+- The report executes asynchronously in the background
+- Monitor progress in the app's status bar
+- Wait for completion (usually 5-30 seconds depending on data size)
+
+**Step 4: Preview and Export**
+- Once complete, the HTML preview appears in the middle panel
+- Click **Open in Browser** to view the full HTML report in your default browser
+- Use export buttons in the right panel:
+  - **Export HTML** — Opens the HTML report
+  - **Export JSON** — Opens the raw JSON data
+  - **Export CSV** — Opens the CSV data file
+  - **Export Excel** — Opens the Excel workbook (if ImportExcel is installed)
+  - **Copy Artifact Path** — Copies the bundle path to clipboard
+  - **Open Containing Folder** — Opens the artifact folder in file explorer
+
+### Managing Presets
+
+**Save a Preset:**
+1. Configure parameters for a template
+2. Click **Save Preset** button
+3. Preset is saved to `App/artifacts/presets/` with timestamp
+4. Presets are template-specific
+
+**Load a Preset:**
+1. Select a template
+2. Click **Load Preset** button
+3. The most recent preset for that template is loaded
+4. All parameter values are restored
+
+### Artifact Hub
+
+The **Artifact Hub** in the right panel shows the 20 most recent exports:
+- Sorted by timestamp (newest first)
+- Shows report name, timestamp, and status
+- Right-click or context menu provides actions:
+  - **Open HTML Report** — Opens the report in browser
+  - **Open Folder** — Opens the artifact folder
+  - **Copy Path** — Copies path to clipboard
+  - **Delete** — Moves artifact to `artifacts/_trash/`
+- Double-click an artifact to open its HTML report
+
+---
+
 ## How to Demo
 
 ### Prerequisites
@@ -486,39 +566,35 @@ $bundle = Invoke-GcReportTemplate `
 
 **Steps:**
 
-1. Launch the app:
-   ```powershell
-   pwsh ./App/GenesysCloudTool_UX_Prototype_v2_1.ps1
-   ```
+1. Launch the app and log in via OAuth
 
-2. Log in via OAuth (or paste token manually).
+2. Navigate to **Operations → Topic Subscriptions**
 
-3. Navigate to **Operations → Topic Subscriptions**.
+3. Start a subscription and let events stream in
 
-4. Start a subscription and let events stream in.
+4. Note a conversation ID from the event stream (e.g., `c-12345...`)
 
-5. Note a conversation ID from the event stream (e.g., `c-12345...`).
+5. Navigate to **Reports & Exports**
 
-6. Navigate to **Operations → Reports & Exports**.
+6. Select **Conversation Inspect Packet** template
 
-7. Select **Report Builder** tab.
+7. Enter the conversation ID in the parameter field (Region and AccessToken auto-filled)
 
-8. Choose template: **Conversation Inspect Packet**.
+8. Click **Run Report**
 
-9. Enter the conversation ID.
+9. Wait for completion (async job runs in background)
 
-10. Click **Run Report**.
+10. Preview appears automatically in the middle panel
 
-11. Wait for completion (async job).
+11. Click export buttons to access HTML, JSON, CSV, or XLSX files
 
-12. Click **Export** to generate artifacts.
-
-13. Click **Open HTML** to view the report card.
+12. Check the Artifact Hub to see the new export listed
 
 **Expected Result:**
 - Artifact bundle created under `App/artifacts/Conversation Inspect Packet/<runId>/`
-- HTML report opens showing conversation summary, timeline events, and warnings
+- HTML preview shows conversation summary, timeline events, and warnings
 - CSV and JSON files available for further analysis
+- Export appears in Artifact Hub immediately
 
 ---
 
@@ -528,26 +604,22 @@ $bundle = Invoke-GcReportTemplate `
 
 **Steps:**
 
-1. After running several operations (some with failures), navigate to **Reports & Exports**.
+1. After running several operations, navigate to **Reports & Exports**
 
-2. Select **Report Builder** tab.
+2. Select **Errors & Failures Snapshot** template
 
-3. Choose template: **Errors & Failures Snapshot**.
+3. (Optional) Adjust the "Since" parameter to filter errors by time
 
-4. Set "Since" filter to 1 hour ago (or leave default).
+4. Click **Run Report**
 
-5. Click **Run Report**.
+5. Review the HTML preview showing error summary and details
 
-6. Review summary showing total errors, failed jobs, and subscription errors.
-
-7. Click **Export** to generate artifacts.
-
-8. Open **data.csv** in Excel to analyze errors.
+6. Click **Export CSV** to open the data in a spreadsheet application
 
 **Expected Result:**
 - Artifact bundle with all recent errors
 - CSV file with columns: Timestamp, Source, Category, Name, Error
-- HTML report shows error summary and warnings
+- HTML preview shows error summary and warnings
 
 ---
 
@@ -555,28 +627,37 @@ $bundle = Invoke-GcReportTemplate `
 
 **Goal:** Document a live monitoring session with metrics.
 
+### Demo Scenario 3: Export Subscription Session Summary
+
+**Goal:** Document a live monitoring session with metrics.
+
 **Steps:**
 
-1. Start a subscription session (Operations → Topic Subscriptions).
+1. Start a subscription session (**Operations → Topic Subscriptions**)
 
-2. Let it run for a few minutes, collecting events.
+2. Let it run for a few minutes, collecting events
 
-3. Navigate to **Reports & Exports → Report Builder**.
+3. Navigate to **Reports & Exports**
 
-4. Choose template: **Subscription Session Summary**.
+4. Select **Subscription Session Summary** template
 
-5. Session start time, topics, and events are auto-populated.
+5. Configure parameters:
+   - SessionStart: (enter session start time)
+   - Topics: (list of subscribed topics)
+   - Events: (event buffer from app state - may need to reference the app's EventBuffer)
 
-6. Click **Run Report**.
+6. Click **Run Report**
 
-7. Click **Export**.
+7. Preview appears showing session duration, event counts by topic, and sample payloads
 
-8. Open HTML report to see session duration, event counts by topic, and sample payloads.
+8. Use export buttons to access the data in your preferred format
 
 **Expected Result:**
 - Artifact bundle with session summary
-- HTML report shows session metadata and topic breakdown
+- HTML preview shows session metadata and topic breakdown
 - CSV file with topic groups and event counts
+
+**Note:** This template requires access to the app's internal EventBuffer. It's primarily designed for use from within the app after a subscription session, rather than manual parameter entry.
 
 ---
 
@@ -690,6 +771,44 @@ Send-EmailWithAttachment `
 
 6. **Archive Old Exports** — Periodically archive or delete old artifact bundles to prevent disk space issues.
 
+7. **Use Presets for Repeated Reports** — Save parameter configurations as presets to quickly regenerate reports with the same settings.
+
+8. **Check the Artifact Hub** — Before re-running a report, check the Artifact Hub to see if a recent export already exists.
+
+---
+
+## Preset Format
+
+Presets are stored in `App/artifacts/presets/` as JSON files with the following structure:
+
+```json
+{
+  "TemplateName": "Conversation Inspect Packet",
+  "SavedAt": "2026-01-14T03:30:22.1234567Z",
+  "Parameters": {
+    "ConversationId": "c-12345678-abcd-1234-5678-123456789abc",
+    "Region": "usw2.pure.cloud",
+    "SubscriptionEvents": []
+  }
+}
+```
+
+**Fields:**
+- `TemplateName` — The name of the report template
+- `SavedAt` — ISO 8601 timestamp when preset was saved
+- `Parameters` — Hashtable of parameter names and values
+
+**File Naming:**
+Presets are automatically named using the pattern: `<TemplateName>_<Timestamp>.json`
+
+Example: `Conversation_Inspect_Packet_20260114-033022.json`
+
+**Loading Presets:**
+The UI currently loads the first preset found for the selected template. Future enhancements may add preset selection UI.
+
+**Manual Preset Creation:**
+You can manually create presets by placing JSON files in the presets directory following the format above.
+
 ---
 
 ## Support & Feedback
@@ -708,10 +827,20 @@ For issues, questions, or feature requests, please:
 
 ## Changelog
 
+### v1.1.0 (2026-01-14)
+
+- Added production-quality Reports & Exports UI module
+- Template picker with search and filtering
+- Dynamic parameter generation based on template schema
+- Preset save/load functionality
+- HTML preview with WebBrowser control
+- Artifact Hub with recent exports and context menu actions
+- Safe delete (moves to `_trash` folder)
+
 ### v1.0.0 (2026-01-13)
 
 - Initial release
-- 3 built-in report templates
+- 4 built-in report templates
 - HTML + JSON + CSV + XLSX export formats
 - Artifact index and history tracking
 - Cross-platform support (Windows, macOS, Linux)
