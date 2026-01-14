@@ -1,0 +1,115 @@
+name: CI - Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Display PowerShell version
+      shell: pwsh
+      run: |
+        Write-Host "PowerShell Version:" -ForegroundColor Cyan
+        $PSVersionTable
+        
+    - name: Run smoke tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Smoke Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/smoke.ps1
+        
+    - name: Run JobRunner tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running JobRunner Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-jobrunner.ps1
+        
+    - name: Run parameter flow tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Parameter Flow Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-parameter-flow.ps1
+        
+    - name: Test results summary
+      shell: pwsh
+      if: always()
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Test Suite Complete" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "✓ Smoke tests completed" -ForegroundColor Green
+        Write-Host "✓ JobRunner tests completed" -ForegroundColor Green
+        Write-Host "✓ Parameter flow tests completed" -ForegroundColor Green
+
+  lint:
+    name: Lint PowerShell Code
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install PSScriptAnalyzer
+      shell: pwsh
+      run: |
+        Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+        
+    - name: Lint Core modules
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Linting PowerShell Modules" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        
+        $ErrorCount = 0
+        $WarningCount = 0
+        
+        Get-ChildItem ./Core/*.psm1 | ForEach-Object {
+            Write-Host "`nAnalyzing: $($_.Name)" -ForegroundColor Cyan
+            
+            $results = Invoke-ScriptAnalyzer -Path $_.FullName -Settings ./PSScriptAnalyzerSettings.psd1
+            
+            if ($results) {
+                foreach ($result in $results) {
+                    if ($result.Severity -eq 'Error') {
+                        Write-Host "  [ERROR] $($result.RuleName): $($result.Message)" -ForegroundColor Red
+                        Write-Host "    Line $($result.Line): $($result.Extent.Text)" -ForegroundColor Gray
+                        $ErrorCount++
+                    } elseif ($result.Severity -eq 'Warning') {
+                        Write-Host "  [WARN] $($result.RuleName): $($result.Message)" -ForegroundColor Yellow
+                        $WarningCount++
+                    }
+                }
+            } else {
+                Write-Host "  [PASS] No issues found" -ForegroundColor Green
+            }
+        }
+        
+        Write-Host "`n========================================" -ForegroundColor Cyan
+        Write-Host "Linting Summary" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Errors: $ErrorCount" -ForegroundColor $(if ($ErrorCount -eq 0) { 'Green' } else { 'Red' })
+        Write-Host "Warnings: $WarningCount" -ForegroundColor $(if ($WarningCount -eq 0) { 'Green' } else { 'Yellow' })
+        
+        if ($ErrorCount -gt 0) {
+            Write-Host "`n❌ Linting failed with $ErrorCount errors" -ForegroundColor Red
+            exit 1
+        } else {
+            Write-Host "`n✓ Linting passed" -ForegroundColor Green
+        }
