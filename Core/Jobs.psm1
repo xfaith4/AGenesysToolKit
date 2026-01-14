@@ -7,6 +7,8 @@ function Wait-GcAsyncJob {
   param(
     [Parameter(Mandatory)][string]$StatusPath,
     [Parameter(Mandatory)][string]$JobId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName,
 
     [int]$TimeoutSeconds = 300,
     [int]$PollMs = 1500
@@ -14,7 +16,7 @@ function Wait-GcAsyncJob {
 
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
-    $st = Invoke-GcRequest -Method GET -Path ($StatusPath -f $JobId)
+    $st = Invoke-GcRequest -Method GET -Path ($StatusPath -f $JobId) -AccessToken $AccessToken -InstanceName $InstanceName
 
     # Be flexible: Genesys often uses status values like "FULFILLED", "RUNNING", etc.
     $status = $st.status
@@ -34,33 +36,48 @@ function Wait-GcAsyncJob {
 function Start-GcAnalyticsConversationDetailsJob {
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory)]$Body
+    [Parameter(Mandatory)]$Body,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
   )
-  Invoke-GcRequest -Method POST -Path '/api/v2/analytics/conversations/details/jobs' -Body $Body
+  Invoke-GcRequest -Method POST -Path '/api/v2/analytics/conversations/details/jobs' -Body $Body -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Get-GcAnalyticsConversationDetailsJobAvailability {
   [CmdletBinding()]
-  param()
-  Invoke-GcRequest -Method GET -Path '/api/v2/analytics/conversations/details/jobs/availability'
+  param(
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
+  Invoke-GcRequest -Method GET -Path '/api/v2/analytics/conversations/details/jobs/availability' -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Get-GcAnalyticsConversationDetailsJobStatus {
   [CmdletBinding()]
-  param([Parameter(Mandatory)][string]$JobId)
-  Invoke-GcRequest -Method GET -Path ("/api/v2/analytics/conversations/details/jobs/{0}" -f $JobId)
+  param(
+    [Parameter(Mandatory)][string]$JobId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
+  Invoke-GcRequest -Method GET -Path ("/api/v2/analytics/conversations/details/jobs/{0}" -f $JobId) -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Stop-GcAnalyticsConversationDetailsJob {
   [CmdletBinding()]
-  param([Parameter(Mandatory)][string]$JobId)
-  Invoke-GcRequest -Method DELETE -Path ("/api/v2/analytics/conversations/details/jobs/{0}" -f $JobId)
+  param(
+    [Parameter(Mandatory)][string]$JobId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
+  Invoke-GcRequest -Method DELETE -Path ("/api/v2/analytics/conversations/details/jobs/{0}" -f $JobId) -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Get-GcAnalyticsConversationDetailsJobResults {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$JobId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName,
 
     # Default to ALL: fetch all pages of results unless constrained.
     [switch]$All = $true,
@@ -72,6 +89,7 @@ function Get-GcAnalyticsConversationDetailsJobResults {
   # Results endpoint paging varies; use the core paging primitive.
   Invoke-GcPagedRequest -Method GET `
     -Path ("/api/v2/analytics/conversations/details/jobs/{0}/results" -f $JobId) `
+    -AccessToken $AccessToken -InstanceName $InstanceName `
     -All:$All -PageSize $PageSize -MaxItems $MaxItems -MaxPages $MaxPages
 }
 
@@ -80,6 +98,8 @@ function Invoke-GcAnalyticsConversationDetailsQuery {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)]$Body,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName,
     [int]$TimeoutSeconds = 600,
     [switch]$All = $true,
     [int]$PageSize = 100,
@@ -87,12 +107,12 @@ function Invoke-GcAnalyticsConversationDetailsQuery {
     [int]$MaxPages = 0
   )
 
-  $job = Start-GcAnalyticsConversationDetailsJob -Body $Body
+  $job = Start-GcAnalyticsConversationDetailsJob -Body $Body -AccessToken $AccessToken -InstanceName $InstanceName
   $jobId = $job.id
   if (-not $jobId) { throw "No job.id returned from Start-GcAnalyticsConversationDetailsJob." }
 
-  Wait-GcAsyncJob -StatusPath '/api/v2/analytics/conversations/details/jobs/{0}' -JobId $jobId -TimeoutSeconds $TimeoutSeconds | Out-Null
-  Get-GcAnalyticsConversationDetailsJobResults -JobId $jobId -All:$All -PageSize $PageSize -MaxItems $MaxItems -MaxPages $MaxPages
+  Wait-GcAsyncJob -StatusPath '/api/v2/analytics/conversations/details/jobs/{0}' -JobId $jobId -AccessToken $AccessToken -InstanceName $InstanceName -TimeoutSeconds $TimeoutSeconds | Out-Null
+  Get-GcAnalyticsConversationDetailsJobResults -JobId $jobId -AccessToken $AccessToken -InstanceName $InstanceName -All:$All -PageSize $PageSize -MaxItems $MaxItems -MaxPages $MaxPages
 }
 
 # ----------------------------
@@ -101,32 +121,49 @@ function Invoke-GcAnalyticsConversationDetailsQuery {
 
 function Start-GcAnalyticsUserDetailsJob {
   [CmdletBinding()]
-  param([Parameter(Mandatory)]$Body)
-  Invoke-GcRequest -Method POST -Path '/api/v2/analytics/users/details/jobs' -Body $Body
+  param(
+    [Parameter(Mandatory)]$Body,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
+  Invoke-GcRequest -Method POST -Path '/api/v2/analytics/users/details/jobs' -Body $Body -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Get-GcAnalyticsUserDetailsJobAvailability {
   [CmdletBinding()]
-  param()
-  Invoke-GcRequest -Method GET -Path '/api/v2/analytics/users/details/jobs/availability'
+  param(
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
+  Invoke-GcRequest -Method GET -Path '/api/v2/analytics/users/details/jobs/availability' -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Get-GcAnalyticsUserDetailsJobStatus {
   [CmdletBinding()]
-  param([Parameter(Mandatory)][string]$JobId)
-  Invoke-GcRequest -Method GET -Path ("/api/v2/analytics/users/details/jobs/{0}" -f $JobId)
+  param(
+    [Parameter(Mandatory)][string]$JobId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
+  Invoke-GcRequest -Method GET -Path ("/api/v2/analytics/users/details/jobs/{0}" -f $JobId) -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Stop-GcAnalyticsUserDetailsJob {
   [CmdletBinding()]
-  param([Parameter(Mandatory)][string]$JobId)
-  Invoke-GcRequest -Method DELETE -Path ("/api/v2/analytics/users/details/jobs/{0}" -f $JobId)
+  param(
+    [Parameter(Mandatory)][string]$JobId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
+  Invoke-GcRequest -Method DELETE -Path ("/api/v2/analytics/users/details/jobs/{0}" -f $JobId) -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Get-GcAnalyticsUserDetailsJobResults {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$JobId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName,
     [switch]$All = $true,
     [int]$PageSize = 100,
     [int]$MaxItems = 0,
@@ -135,6 +172,7 @@ function Get-GcAnalyticsUserDetailsJobResults {
 
   Invoke-GcPagedRequest -Method GET `
     -Path ("/api/v2/analytics/users/details/jobs/{0}/results" -f $JobId) `
+    -AccessToken $AccessToken -InstanceName $InstanceName `
     -All:$All -PageSize $PageSize -MaxItems $MaxItems -MaxPages $MaxPages
 }
 
@@ -142,6 +180,8 @@ function Invoke-GcAnalyticsUserDetailsQuery {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)]$Body,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName,
     [int]$TimeoutSeconds = 600,
     [switch]$All = $true,
     [int]$PageSize = 100,
@@ -149,12 +189,12 @@ function Invoke-GcAnalyticsUserDetailsQuery {
     [int]$MaxPages = 0
   )
 
-  $job = Start-GcAnalyticsUserDetailsJob -Body $Body
+  $job = Start-GcAnalyticsUserDetailsJob -Body $Body -AccessToken $AccessToken -InstanceName $InstanceName
   $jobId = $job.id
   if (-not $jobId) { throw "No job.id returned from Start-GcAnalyticsUserDetailsJob." }
 
-  Wait-GcAsyncJob -StatusPath '/api/v2/analytics/users/details/jobs/{0}' -JobId $jobId -TimeoutSeconds $TimeoutSeconds | Out-Null
-  Get-GcAnalyticsUserDetailsJobResults -JobId $jobId -All:$All -PageSize $PageSize -MaxItems $MaxItems -MaxPages $MaxPages
+  Wait-GcAsyncJob -StatusPath '/api/v2/analytics/users/details/jobs/{0}' -JobId $jobId -AccessToken $AccessToken -InstanceName $InstanceName -TimeoutSeconds $TimeoutSeconds | Out-Null
+  Get-GcAnalyticsUserDetailsJobResults -JobId $jobId -AccessToken $AccessToken -InstanceName $InstanceName -All:$All -PageSize $PageSize -MaxItems $MaxItems -MaxPages $MaxPages
 }
 
 # ----------------------------
@@ -163,36 +203,48 @@ function Invoke-GcAnalyticsUserDetailsQuery {
 
 function Start-GcUsageAggregatesQueryJob {
   [CmdletBinding()]
-  param([Parameter(Mandatory)]$Body)
+  param(
+    [Parameter(Mandatory)]$Body,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
 
-  Invoke-GcRequest -Method POST -Path '/api/v2/usage/aggregates/query/jobs' -Body $Body
+  Invoke-GcRequest -Method POST -Path '/api/v2/usage/aggregates/query/jobs' -Body $Body -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Get-GcUsageAggregatesQueryJob {
   [CmdletBinding()]
-  param([Parameter(Mandatory)][string]$JobId)
+  param(
+    [Parameter(Mandatory)][string]$JobId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
+  )
 
-  Invoke-GcRequest -Method GET -Path ("/api/v2/usage/aggregates/query/jobs/{0}" -f $JobId)
+  Invoke-GcRequest -Method GET -Path ("/api/v2/usage/aggregates/query/jobs/{0}" -f $JobId) -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Start-GcClientUsageAggregatesQueryJob {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$ClientId,
-    [Parameter(Mandatory)]$Body
+    [Parameter(Mandatory)]$Body,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
   )
 
-  Invoke-GcRequest -Method POST -Path ("/api/v2/usage/client/{0}/aggregates/query/jobs" -f $ClientId) -Body $Body
+  Invoke-GcRequest -Method POST -Path ("/api/v2/usage/client/{0}/aggregates/query/jobs" -f $ClientId) -Body $Body -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Get-GcClientUsageAggregatesQueryJob {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$ClientId,
-    [Parameter(Mandatory)][string]$JobId
+    [Parameter(Mandatory)][string]$JobId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
   )
 
-  Invoke-GcRequest -Method GET -Path ("/api/v2/usage/client/{0}/aggregates/query/jobs/{1}" -f $ClientId, $JobId)
+  Invoke-GcRequest -Method GET -Path ("/api/v2/usage/client/{0}/aggregates/query/jobs/{1}" -f $ClientId, $JobId) -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 # ----------------------------
@@ -205,11 +257,13 @@ function Start-GcAgentChecklistInferenceJob {
     [Parameter(Mandatory)][string]$ConversationId,
     [Parameter(Mandatory)][string]$CommunicationId,
     [Parameter(Mandatory)][string]$AgentChecklistId,
-    [Parameter(Mandatory)]$Body
+    [Parameter(Mandatory)]$Body,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
   )
 
   $path = "/api/v2/conversations/$ConversationId/communications/$CommunicationId/agentchecklists/$AgentChecklistId/jobs"
-  Invoke-GcRequest -Method POST -Path $path -Body $Body
+  Invoke-GcRequest -Method POST -Path $path -Body $Body -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 function Get-GcAgentChecklistInferenceJobStatus {
@@ -218,11 +272,13 @@ function Get-GcAgentChecklistInferenceJobStatus {
     [Parameter(Mandatory)][string]$ConversationId,
     [Parameter(Mandatory)][string]$CommunicationId,
     [Parameter(Mandatory)][string]$AgentChecklistId,
-    [Parameter(Mandatory)][string]$JobId
+    [Parameter(Mandatory)][string]$JobId,
+    [Parameter(Mandatory)][string]$AccessToken,
+    [Parameter(Mandatory)][string]$InstanceName
   )
 
   $path = "/api/v2/conversations/$ConversationId/communications/$CommunicationId/agentchecklists/$AgentChecklistId/jobs/$JobId"
-  Invoke-GcRequest -Method GET -Path $path
+  Invoke-GcRequest -Method GET -Path $path -AccessToken $AccessToken -InstanceName $InstanceName
 }
 
 Export-ModuleMember -Function Wait-GcAsyncJob, `
