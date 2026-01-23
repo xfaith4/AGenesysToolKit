@@ -96,8 +96,8 @@ try {
 }
 Write-Host ""
 
-# Test 4: Default redirect URI port
-Write-Host "Test 4: Default Redirect URI Port" -ForegroundColor Cyan
+# Test 4: Default redirect URI
+Write-Host "Test 4: Default Redirect URI" -ForegroundColor Cyan
 Write-Host "----------------------------------------" -ForegroundColor Cyan
 try {
     # Reset to defaults
@@ -106,11 +106,11 @@ try {
     
     $config = Get-GcAuthConfig
     
-    if ($config.RedirectUri -eq 'http://localhost:8400/oauth/callback') {
-        Write-Host "  [PASS] Default redirect URI uses port 8400" -ForegroundColor Green
+    if ($config.RedirectUri -eq 'http://localhost:8085/callback') {
+        Write-Host "  [PASS] Default redirect URI is correct" -ForegroundColor Green
     } else {
         Write-Host "  [FAIL] Default redirect URI is: $($config.RedirectUri)" -ForegroundColor Red
-        Write-Host "  Expected: http://localhost:8400/oauth/callback" -ForegroundColor Gray
+        Write-Host "  Expected: http://localhost:8085/callback" -ForegroundColor Gray
     }
 } catch {
     Write-Host "  [FAIL] $($_.Exception.Message)" -ForegroundColor Red

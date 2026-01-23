@@ -102,9 +102,29 @@ function ConvertFrom-GcXaml {
 # -----------------------------
 
 # Initialize Auth Configuration (user should customize these)
+#
+# USER SETTINGS (customize)
+# - Set $EnableToolkitTrace = $true to write detailed tracing to App/artifacts/trace-*.log
+# - Set $EnableToolkitTraceBodies = $true to include HTTP request bodies in the trace (may include sensitive data)
+$EnableToolkitTrace = $false
+$EnableToolkitTraceBodies = $false
+try {
+  if ($EnableToolkitTrace) {
+    [Environment]::SetEnvironmentVariable('GC_TOOLKIT_TRACE', '1', 'Process')
+    if ($EnableToolkitTraceBodies) {
+      [Environment]::SetEnvironmentVariable('GC_TOOLKIT_TRACE_BODY', '1', 'Process')
+    } else {
+      [Environment]::SetEnvironmentVariable('GC_TOOLKIT_TRACE_BODY', $null, 'Process')
+    }
+  } else {
+    [Environment]::SetEnvironmentVariable('GC_TOOLKIT_TRACE', $null, 'Process')
+    [Environment]::SetEnvironmentVariable('GC_TOOLKIT_TRACE_BODY', $null, 'Process')
+  }
+} catch { }
+
 Set-GcAuthConfig `
   -Region 'usw2.pure.cloud' `
-  -ClientId 'clientid' `
+  -ClientId 'YOUR_CLIENT_ID_HERE' `
   -RedirectUri 'http://localhost:8085/callback' `
   -Scopes @('conversations', 'analytics', 'notifications', 'users')
 
@@ -147,11 +167,6 @@ $script:GcTraceEnvVar = 'GC_TOOLKIT_TRACE'
 $script:GcTraceLogEnvVar = 'GC_TOOLKIT_TRACE_LOG'
 $script:GcTraceLogPath = Join-Path -Path $script:ArtifactsDir -ChildPath ("trace-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 try { [Environment]::SetEnvironmentVariable($script:GcTraceLogEnvVar, $script:GcTraceLogPath, 'Process') } catch { }
-try {
-  if (-not (Test-Path -LiteralPath $script:GcTraceLogPath)) {
-    ("[{0}] Trace initialized (script={1})" -f (Get-Date).ToString('o'), $PSCommandPath) | Out-File -FilePath $script:GcTraceLogPath -Encoding utf8
-  }
-} catch { }
 
 function Test-GcTraceEnabled {
   try {
@@ -1379,6 +1394,48 @@ function Start-TokenTest {
         $extraText = "`n`n" + ($extraDetails -join "`n")
       }
 
+      # Special-case: client-credentials tokens cannot call /api/v2/users/me, but the token can still be valid.
+      $responseCode = $null
+      $responseMessage = $null
+      try {
+        if ($responseBody) {
+          $bodyObj = $null
+          try { $bodyObj = ([string]$responseBody | ConvertFrom-Json -ErrorAction Stop) } catch { $bodyObj = $null }
+          if ($bodyObj) {
+            try { $responseCode = [string]$bodyObj.code } catch { }
+            try { $responseMessage = [string]$bodyObj.message } catch { }
+          }
+        }
+      } catch { }
+
+      $isClientCredentialsToken = $false
+      if ($statusCode -eq 400 -and (
+        $responseCode -eq 'not.a.user' -or
+        ($responseMessage -and $responseMessage -match 'requires a user context') -or
+        ($errorMsg -and $errorMsg -match 'not\\.a\\.user')
+      )) {
+        $isClientCredentialsToken = $true
+      }
+
+      if ($isClientCredentialsToken) {
+        $script:AppState.Auth = "Token OK (client credentials)"
+        $script:AppState.TokenStatus = "Token valid (client credentials)"
+        Set-TopContext
+
+        [System.Windows.MessageBox]::Show(
+          "This access token is a Client Credentials token (no user context).`n`nIt is valid, but it cannot call /api/v2/users/me.`nMany UI workflows require a user-context token (Authorization Code + PKCE).`n`nTo proceed, use OAuth Login (user) or paste a user access token.",
+          "Client Credentials Token",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
+
+        Set-Status "Token test: OK (client credentials). Some features require user-context OAuth."
+
+        $BtnTestToken.Content = "Test Token"
+        $BtnTestToken.IsEnabled = $true
+        return
+      }
+
       # Analyze error and provide user-friendly message
       $userMessage = "Token test failed."
       $detailMessage = $errorMsg
@@ -1471,7 +1528,7 @@ function Show-SetTokenDialog {
     <Border Grid.Row="0" Background="#FF111827" CornerRadius="6" Padding="12" Margin="0,0,0,16">
       <StackPanel>
         <TextBlock Text="Manual Token Entry" FontSize="14" FontWeight="SemiBold" Foreground="White"/>
-        <TextBlock Text="Paste an access token for testing or manual authentication"
+        <TextBlock Text="Paste a user access token (Authorization Code) for testing or manual authentication"
                    FontSize="11" Foreground="#FFA0AEC0" Margin="0,4,0,0"/>
       </StackPanel>
     </Border>
@@ -8364,9 +8421,26 @@ $BtnLogin.Add_Click({
   Write-GcDiag ("OAuth config snapshot: Region='{0}' ClientId='{1}' RedirectUri='{2}' Scopes='{3}' HasClientSecret={4}" -f $authConfig.Region, $authConfig.ClientId, $authConfig.RedirectUri, ($authConfig.Scopes -join ' '), (-not [string]::IsNullOrWhiteSpace($authConfig.ClientSecret)))
 
   # Check if client ID is configured
-  if ($authConfig.ClientId -eq 'YOUR_CLIENT_ID_HERE' -or -not $authConfig.ClientId) {
+  $clientIdTrim = ''
+  try { $clientIdTrim = [string]($authConfig.ClientId ?? '') } catch { $clientIdTrim = [string]$authConfig.ClientId }
+  $clientIdTrim = $clientIdTrim.Trim()
+  $isPlaceholderClientId = (-not $clientIdTrim) -or ($clientIdTrim -in @('YOUR_CLIENT_ID_HERE','your-client-id','clientid','client-id'))
+  if ($isPlaceholderClientId) {
     [System.Windows.MessageBox]::Show(
       "Please configure your OAuth Client ID in the script.`n`nSet-GcAuthConfig -ClientId 'your-client-id' -Region 'your-region'",
+      "Configuration Required",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Warning
+    )
+    return
+  }
+
+  $redirectUriTrim = ''
+  try { $redirectUriTrim = [string]($authConfig.RedirectUri ?? '') } catch { $redirectUriTrim = [string]$authConfig.RedirectUri }
+  $redirectUriTrim = $redirectUriTrim.Trim()
+  if (-not $redirectUriTrim) {
+    [System.Windows.MessageBox]::Show(
+      "Please configure your OAuth Redirect URI in the script (must match your Genesys OAuth client).`n`nExample:`nhttp://localhost:8085/callback",
       "Configuration Required",
       [System.Windows.MessageBoxButton]::OK,
       [System.Windows.MessageBoxImage]::Warning

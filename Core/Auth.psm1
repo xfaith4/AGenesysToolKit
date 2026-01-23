@@ -438,62 +438,76 @@ function Start-GcAuthCodeFlow {
     $authUrl += "&scope=$([Uri]::EscapeDataString($scopes))"
   }
 
-  Write-Verbose "Opening authorization URL: $authUrl"
+  Write-GcAuthDiag -Level INFO -Message "Opening authorization URL" -Data @{
+    AuthUrl = $authUrl
+  }
+  Write-Output "OAuth: Opening browser for login..."
 
   # Start local HTTP listener
   try {
-    $listenerPrefix = $null
-    try {
-      $ru = [Uri]$redirectUri
-      $path = $ru.AbsolutePath
+    $prefixSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $ru = $null
+    try { $ru = [Uri]$redirectUri } catch { $ru = $null }
+
+    if ($ru) {
+      $scheme = $ru.Scheme
+      $host   = $ru.Host
+      $port   = $ru.Port
+      $path   = $ru.AbsolutePath
       if ([string]::IsNullOrEmpty($path)) { $path = '/' }
 
-      # Listen on the directory portion to avoid trailing-slash mismatches.
-      $dirPath = $path
-      if (-not $dirPath.EndsWith('/')) {
-        $lastSlash = $dirPath.LastIndexOf('/')
-        if ($lastSlash -ge 0) {
-          $dirPath = $dirPath.Substring(0, $lastSlash + 1)
-        } else {
-          $dirPath = '/'
-        }
-      }
+      # Root prefix (accepts /callback and anything below)
+      $rootPrefix = "{0}://{1}:{2}/" -f $scheme, $host, $port
+      [void]$prefixSet.Add($rootPrefix)
 
-      $listenerPrefix = "{0}://{1}:{2}{3}" -f $ru.Scheme, $ru.Host, $ru.Port, $dirPath
-      if (-not $listenerPrefix.EndsWith('/')) { $listenerPrefix += '/' }
-    } catch {
-      $listenerPrefix = ($redirectUri.TrimEnd('/') + '/')
+      # Exact path prefix (some environments behave better with exact match)
+      $exactPath = $path
+      if (-not $exactPath.EndsWith('/')) { $exactPath += '/' }
+      $exactPrefix = "{0}://{1}:{2}{3}" -f $scheme, $host, $port, $exactPath
+      [void]$prefixSet.Add($exactPrefix)
+
+      # If a localhost redirect URI is configured, listen on loopback IPs too.
+      if ($host -eq 'localhost') {
+        [void]$prefixSet.Add(("{0}://127.0.0.1:{1}/" -f $scheme, $port))
+        [void]$prefixSet.Add(("{0}://127.0.0.1:{1}{2}" -f $scheme, $port, $exactPath))
+        try { [void]$prefixSet.Add(("{0}://[::1]:{1}/" -f $scheme, $port)) } catch { }
+        try { [void]$prefixSet.Add(("{0}://[::1]:{1}{2}" -f $scheme, $port, $exactPath)) } catch { }
+      }
+    } else {
+      # Best-effort fallback
+      [void]$prefixSet.Add(($redirectUri.TrimEnd('/') + '/'))
     }
 
     $listener = New-Object System.Net.HttpListener
-    $listener.Prefixes.Add($listenerPrefix)
+    foreach ($p in $prefixSet) {
+      try { [void]$listener.Prefixes.Add($p) } catch { }
+    }
     $listener.Start()
 
     Write-GcAuthDiag -Level INFO -Message "HTTP listener started" -Data @{
-      Prefix  = $listenerPrefix
+      Prefixes = @($listener.Prefixes)
       TimeoutSeconds = $TimeoutSeconds
     }
+    Write-Output ("OAuth: Waiting for callback on {0}" -f $redirectUri)
+    Write-Output ("OAuth: Listener prefixes: {0}" -f (@($listener.Prefixes) -join ' | '))
 
-    Write-Host "Starting OAuth flow. Opening browser..."
     Start-Process $authUrl
 
     # Wait for callback
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $authCode = $null
     $receivedState = $null
+    $oauthError = $null
+    $oauthErrorDescription = $null
 
     while ((Get-Date) -lt $deadline -and $listener.IsListening) {
-      $contextTask = $listener.GetContextAsync()
+      # Use Begin/End pattern for broad compatibility (PS 5.1 + 7+).
+      $iar = $listener.BeginGetContext($null, $null)
+      $signaled = $false
+      try { $signaled = $iar.AsyncWaitHandle.WaitOne(1000) } catch { $signaled = $false }
+      if (-not $signaled) { continue }
 
-      if ($null -eq $contextTask) {
-        throw "HttpListener.GetContextAsync() returned null (unexpected)."
-      }
-
-      # Poll with timeout
-      $waitResult = $contextTask.Wait(1000)
-      if (-not $waitResult) { continue }
-
-      $context = $contextTask.GetAwaiter().GetResult()
+      $context = $listener.EndGetContext($iar)
       $request = $context.Request
       $response = $context.Response
 
@@ -505,18 +519,27 @@ function Start-GcAuthCodeFlow {
         HasQuery  = (-not [string]::IsNullOrEmpty($query))
       }
 
-      if ($query -match 'code=([^&]+)') {
-        $authCode = [Uri]::UnescapeDataString($matches[1])
-      }
-      if ($query -match 'state=([^&]+)') {
-        $receivedState = [Uri]::UnescapeDataString($matches[1])
-      }
+      try { $authCode = $request.QueryString['code'] } catch { }
+      try { $receivedState = $request.QueryString['state'] } catch { }
+      try { $oauthError = $request.QueryString['error'] } catch { }
+      try { $oauthErrorDescription = $request.QueryString['error_description'] } catch { }
 
       # Send response to browser
-      $responseHtml = if ($authCode) {
-        "<html><body><h1>Authentication Successful</h1><p>You can close this window.</p></body></html>"
+      $responseHtml = $null
+      if ($oauthError) {
+        $desc = ''
+        if ($oauthErrorDescription) {
+          $desc = [string]$oauthErrorDescription
+          $desc = $desc.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;')
+        }
+        $err = [string]$oauthError
+        $err = $err.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;')
+        $responseHtml = "<html><body><h1>Authentication Failed</h1><p>Error: $err</p><pre>$desc</pre><p>You can close this window.</p></body></html>"
+      } elseif ($authCode) {
+        $responseHtml = "<html><body><h1>Authentication Successful</h1><p>You can close this window.</p></body></html>"
       } else {
-        "<html><body><h1>Authentication Failed</h1><p>No authorization code received.</p></body></html>"
+        # Likely a favicon or preflight; keep listening.
+        $responseHtml = "<html><body><h1>OAuth Callback Listener</h1><p>Waiting for authorization code...</p></body></html>"
       }
 
       $buffer = [Text.Encoding]::UTF8.GetBytes($responseHtml)
@@ -526,16 +549,27 @@ function Start-GcAuthCodeFlow {
       $output.Write($buffer, 0, $buffer.Length)
       $output.Close()
 
-      $listener.Stop()
-      break
+      if ($oauthError -or $authCode) {
+        $listener.Stop()
+        break
+      }
     }
 
     if (-not $authCode) {
+      if ($oauthError) {
+        Write-GcAuthDiag -Level ERROR -Message "OAuth callback returned error" -Data @{
+          Error = $oauthError
+          ErrorDescription = $oauthErrorDescription
+        }
+        Write-Error ("OAuth error returned from provider: {0} {1}" -f $oauthError, $oauthErrorDescription)
+        return $null
+      }
+
       Write-GcAuthDiag -Level ERROR -Message "No authorization code received before timeout" -Data @{
         TimeoutSeconds = $TimeoutSeconds
         RedirectUri    = $redirectUri
       }
-      Write-Error "Failed to receive authorization code within timeout period."
+      Write-Error ("Failed to receive authorization code within timeout period. Verify your OAuth client configuration: redirect URI must exactly match '{0}' and the browser must be able to reach it." -f $redirectUri)
       return $null
     }
 
