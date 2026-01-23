@@ -432,6 +432,7 @@ function Start-AppJob {
   # Add to app state jobs collection
   $script:AppState.Jobs.Add($job) | Out-Null
   Add-GcJobLog -Job $job -Message "Queued."
+  Write-GcTrace -Level 'JOB' -Message ("Queued job: Name='{0}' Type='{1}'" -f $Name, $Type)
 
   # Start the job
   Start-GcJob -Job $job -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -OnComplete $OnCompleted
@@ -1748,12 +1749,16 @@ function Refresh-JobsList {
 }
 
 function Open-Backstage([ValidateSet('Jobs','Artifacts')]$Tab = 'Jobs') {
+  Write-GcTrace -Level 'UI' -Message ("Open Backstage Tab='{0}'" -f $Tab)
   if ($Tab -eq 'Jobs') { $BackstageTabs.SelectedIndex = 0 } else { $BackstageTabs.SelectedIndex = 1 }
   Refresh-JobsList
   Refresh-ArtifactsList
   $BackstageOverlay.Visibility = 'Visible'
 }
-function Close-Backstage { $BackstageOverlay.Visibility = 'Collapsed' }
+function Close-Backstage {
+  Write-GcTrace -Level 'UI' -Message "Close Backstage"
+  $BackstageOverlay.Visibility = 'Collapsed'
+}
 
 $BtnCloseBackstage.Add_Click({ Close-Backstage })
 
@@ -8130,6 +8135,7 @@ function Populate-Modules([string]$workspace) {
 }
 
 function Set-ContentForModule([string]$workspace, [string]$module) {
+  Write-GcTrace -Level 'NAV' -Message ("Workspace='{0}' Module='{1}'" -f $workspace, $module)
   $script:AppState.Workspace = $workspace
   $script:AppState.Module    = $module
 
@@ -8310,6 +8316,19 @@ $offlineSeedMenuItem = New-Object System.Windows.Controls.MenuItem
 $offlineSeedMenuItem.Header = "Offline Demo: Seed Sample Events"
 $offlineSeedMenuItem.Add_Click({ Add-OfflineDemoSampleEvents -Count 18 })
 $loginContextMenu.Items.Add($offlineSeedMenuItem) | Out-Null
+
+$traceLogMenuItem = New-Object System.Windows.Controls.MenuItem
+$traceLogMenuItem.Header = "Open Trace Log"
+$traceLogMenuItem.Add_Click({
+  try {
+    if ($script:GcTraceLogPath -and (Test-Path -LiteralPath $script:GcTraceLogPath)) {
+      Start-Process -FilePath $script:GcTraceLogPath | Out-Null
+    } else {
+      Start-Process -FilePath $script:ArtifactsDir | Out-Null
+    }
+  } catch { }
+})
+$loginContextMenu.Items.Add($traceLogMenuItem) | Out-Null
 
 $BtnLogin.ContextMenu = $loginContextMenu
 ### END: Manual Token Entry

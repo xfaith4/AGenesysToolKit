@@ -5,6 +5,9 @@ Set-StrictMode -Version Latest
 # Module-level AppState reference (set by calling application)
 $script:AppState = $null
 $script:OfflineDemoEnvVar = 'GC_TOOLKIT_OFFLINE_DEMO'
+$script:TraceEnvVar = 'GC_TOOLKIT_TRACE'
+$script:TraceLogEnvVar = 'GC_TOOLKIT_TRACE_LOG'
+$script:TraceBodyEnvVar = 'GC_TOOLKIT_TRACE_BODY'
 
 function Test-GcOfflineDemoEnabled {
   try {
@@ -14,6 +17,76 @@ function Test-GcOfflineDemoEnabled {
     }
   } catch { }
   return $false
+}
+
+function Test-GcToolkitTraceEnabled {
+  try {
+    $v = [Environment]::GetEnvironmentVariable($script:TraceEnvVar)
+    return ($v -and ($v -match '^(1|true|yes|on)$'))
+  } catch { }
+  return $false
+}
+
+function Test-GcToolkitTraceBodyEnabled {
+  # For safety: only log request bodies when explicitly enabled, or in OfflineDemo.
+  try {
+    if (Test-GcOfflineDemoEnabled) { return $true }
+    $v = [Environment]::GetEnvironmentVariable($script:TraceBodyEnvVar)
+    return ($v -and ($v -match '^(1|true|yes|on)$'))
+  } catch { }
+  return $false
+}
+
+function Get-GcToolkitTraceLogPath {
+  try {
+    $p = [Environment]::GetEnvironmentVariable($script:TraceLogEnvVar)
+    if (-not [string]::IsNullOrWhiteSpace($p)) { return $p }
+  } catch { }
+  return $null
+}
+
+function ConvertTo-GcTraceSnippet {
+  [CmdletBinding()]
+  param(
+    [AllowNull()] [object] $Value,
+    [int] $MaxChars = 1200
+  )
+
+  if ($null -eq $Value) { return '<null>' }
+
+  $text = $null
+  if ($Value -is [string]) {
+    $text = $Value
+  } else {
+    try { $text = ($Value | ConvertTo-Json -Compress -Depth 15) } catch { $text = ($Value | Out-String) }
+  }
+
+  if ($null -eq $text) { return '<null>' }
+  $text = [string]$text
+  $text = $text -replace "[\r\n]+", " "
+  if ($text.Length -gt $MaxChars) { $text = $text.Substring(0, $MaxChars) + '…' }
+  return $text
+}
+
+function Write-GcToolkitTrace {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string] $Message,
+    [ValidateSet('INFO','WARN','ERROR','DEBUG')][string] $Level = 'INFO'
+  )
+
+  if (-not (Test-GcToolkitTraceEnabled)) { return }
+
+  $ts = (Get-Date).ToString('HH:mm:ss.fff')
+  $line = "[{0}] [{1}] {2}" -f $ts, $Level, $Message
+
+  try {
+    $path = Get-GcToolkitTraceLogPath
+    if ($path) { Add-Content -LiteralPath $path -Value $line -Encoding utf8 }
+  } catch { }
+
+  # Always also emit to Verbose so developers can opt-in to console output.
+  try { Write-Verbose $line } catch { }
 }
 
 function Set-GcAppState {
@@ -264,9 +337,16 @@ function Invoke-GcRequest {
   }
 
   $resolvedPath = Resolve-GcEndpoint -Path $Path -PathParams $PathParams
+  $qs  = ConvertTo-GcQueryString -Query $Query
+  $uri = Join-GcUri -BaseUri $BaseUri -RelativePath $resolvedPath -QueryString $qs
 
   # Offline demo: serve responses from local sample data (no network).
   if (Test-GcOfflineDemoEnabled) {
+    Write-GcToolkitTrace -Level INFO -Message ("OFFLINE {0} {1}" -f $Method, $uri)
+    if (Test-GcToolkitTraceBodyEnabled -and $Method -in @('POST','PUT','PATCH') -and $null -ne $Body) {
+      Write-GcToolkitTrace -Level DEBUG -Message ("OFFLINE body: {0}" -f (ConvertTo-GcTraceSnippet -Value $Body))
+    }
+
     $sampleModulePath = Join-Path -Path $PSScriptRoot -ChildPath 'SampleData.psm1'
     if (-not (Get-Module -Name SampleData)) {
       if (Test-Path $sampleModulePath) {
@@ -296,10 +376,8 @@ function Invoke-GcRequest {
     $h['Content-Type'] = "application/json; charset=utf-8"
   }
 
-  $qs  = ConvertTo-GcQueryString -Query $Query
-  $uri = Join-GcUri -BaseUri $BaseUri -RelativePath $resolvedPath -QueryString $qs
-
   Write-Verbose ("GC {0} {1}" -f $Method, $uri)
+  Write-GcToolkitTrace -Level INFO -Message ("HTTP {0} {1}" -f $Method, $uri)
 
   $irmParams = @{
     Uri     = $uri
@@ -316,17 +394,25 @@ function Invoke-GcRequest {
     }
   }
 
+  if (Test-GcToolkitTraceBodyEnabled -and $Method -in @('POST','PUT','PATCH') -and $irmParams.ContainsKey('Body')) {
+    Write-GcToolkitTrace -Level DEBUG -Message ("HTTP body: {0}" -f (ConvertTo-GcTraceSnippet -Value $irmParams['Body']))
+  }
+
   $attempt = 0
   while ($true) {
     try {
-      return Invoke-RestMethod @irmParams
+      $result = Invoke-RestMethod @irmParams
+      Write-GcToolkitTrace -Level INFO -Message ("HTTP OK {0} {1}" -f $Method, $uri)
+      return $result
     } catch {
       $attempt++
 
       if ($attempt -gt $RetryCount) {
+        Write-GcToolkitTrace -Level ERROR -Message ("HTTP FAIL {0} {1} :: {2}" -f $Method, $uri, $_.Exception.Message)
         throw
       }
 
+      Write-GcToolkitTrace -Level WARN -Message ("HTTP RETRY {0}/{1} {2} :: {3}" -f $attempt, $RetryCount, $uri, $_.Exception.Message)
       Write-Verbose ("Retry {0}/{1} after error: {2}" -f $attempt, $RetryCount, $_.Exception.Message)
       Start-Sleep -Seconds $RetryDelaySeconds
     }

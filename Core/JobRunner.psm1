@@ -4,6 +4,29 @@ Set-StrictMode -Version Latest
 
 # Job state tracking
 $script:RunningJobs = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
+$script:TraceEnvVar = 'GC_TOOLKIT_TRACE'
+$script:TraceLogEnvVar = 'GC_TOOLKIT_TRACE_LOG'
+
+function Test-GcToolkitTraceEnabled {
+  try {
+    $v = [Environment]::GetEnvironmentVariable($script:TraceEnvVar)
+    return ($v -and ($v -match '^(1|true|yes|on)$'))
+  } catch { }
+  return $false
+}
+
+function Write-GcToolkitTraceLine {
+  param(
+    [Parameter(Mandatory)][string]$Line
+  )
+
+  if (-not (Test-GcToolkitTraceEnabled)) { return }
+
+  try {
+    $path = [Environment]::GetEnvironmentVariable($script:TraceLogEnvVar)
+    if ($path) { Add-Content -LiteralPath $path -Value $Line -Encoding utf8 }
+  } catch { }
+}
 
 function New-GcJobContext {
   <#
@@ -89,6 +112,15 @@ function Add-GcJobLog {
   } else {
     $Job.Logs += $logEntry
   }
+
+  # Also persist to a trace file when enabled (helps with OfflineDemo debugging).
+  try {
+    $tsFile = (Get-Date).ToString('HH:mm:ss.fff')
+    $jobName = ''
+    try { $jobName = [string]$Job.Name } catch { $jobName = '' }
+    $jobTag = if ($jobName) { "JOB:$jobName" } else { "JOB" }
+    Write-GcToolkitTraceLine -Line ("[{0}] [{1}] {2}" -f $tsFile, $jobTag, $Message)
+  } catch { }
 }
 
 function Start-GcJob {
@@ -223,6 +255,36 @@ function Start-GcJob {
         try {
           # Get results
           $Job.Result = $Job.PowerShell.EndInvoke($asyncResult)
+
+          # Capture job output strings as log lines (many jobs use Write-Output for tracing).
+          try {
+            $out = @($Job.Result)
+            $stringOut = @($out | Where-Object { $_ -is [string] })
+            if ($stringOut.Count -gt 0) {
+              $max = 250
+              $emit = $stringOut | Select-Object -First $max
+              foreach ($line in $emit) { Add-GcJobLog -Job $Job -Message $line }
+              if ($stringOut.Count -gt $max) {
+                Add-GcJobLog -Job $Job -Message ("(output truncated: {0} lines; showing first {1})" -f $stringOut.Count, $max)
+              }
+            }
+          } catch { }
+
+          # Capture verbose/information streams when toolkit tracing is enabled.
+          if (Test-GcToolkitTraceEnabled) {
+            try {
+              if ($Job.PowerShell.Streams.Verbose.Count -gt 0) {
+                foreach ($v in $Job.PowerShell.Streams.Verbose) { Add-GcJobLog -Job $Job -Message ("VERBOSE: {0}" -f $v) }
+              }
+              if ($Job.PowerShell.Streams.Information.Count -gt 0) {
+                foreach ($i in $Job.PowerShell.Streams.Information) {
+                  $msg = $null
+                  try { $msg = [string]$i.MessageData } catch { $msg = $i.ToString() }
+                  Add-GcJobLog -Job $Job -Message ("INFO: {0}" -f $msg)
+                }
+              }
+            } catch { }
+          }
           
           # Check for errors
           if ($Job.PowerShell.Streams.Error.Count -gt 0) {
@@ -275,6 +337,35 @@ function Start-GcJob {
     # Fallback: block until complete (non-UI scenarios)
     try {
       $Job.Result = $ps.EndInvoke($asyncResult)
+
+      # Capture job output strings as log lines (many jobs use Write-Output for tracing).
+      try {
+        $out = @($Job.Result)
+        $stringOut = @($out | Where-Object { $_ -is [string] })
+        if ($stringOut.Count -gt 0) {
+          $max = 250
+          $emit = $stringOut | Select-Object -First $max
+          foreach ($line in $emit) { Add-GcJobLog -Job $Job -Message $line }
+          if ($stringOut.Count -gt $max) {
+            Add-GcJobLog -Job $Job -Message ("(output truncated: {0} lines; showing first {1})" -f $stringOut.Count, $max)
+          }
+        }
+      } catch { }
+
+      if (Test-GcToolkitTraceEnabled) {
+        try {
+          if ($ps.Streams.Verbose.Count -gt 0) {
+            foreach ($v in $ps.Streams.Verbose) { Add-GcJobLog -Job $Job -Message ("VERBOSE: {0}" -f $v) }
+          }
+          if ($ps.Streams.Information.Count -gt 0) {
+            foreach ($i in $ps.Streams.Information) {
+              $msg = $null
+              try { $msg = [string]$i.MessageData } catch { $msg = $i.ToString() }
+              Add-GcJobLog -Job $Job -Message ("INFO: {0}" -f $msg)
+            }
+          }
+        } catch { }
+      }
       
       # Check for errors
       if ($ps.Streams.Error.Count -gt 0) {
