@@ -1,11 +1,16 @@
 # Genesys Cloud Tool — Real Implementation v3.0
 # Money path flow: Login → Start Subscription → Stream events → Open Timeline → Export Packet
 
+param(
+  [switch]$OfflineDemo
+)
+
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
 # Import core modules
 $scriptRoot = Split-Path -Parent $PSCommandPath
-$coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
+$repoRoot = Split-Path -Parent $scriptRoot
+$coreRoot = Join-Path -Path $repoRoot -ChildPath 'Core'
 
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Auth.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'JobRunner.psm1') -Force
@@ -105,9 +110,11 @@ Set-GcAuthConfig `
 
 $script:AppState = [ordered]@{
   Region       = 'usw2.pure.cloud'
+  Org          = ''
   Auth         = 'Not logged in'
   TokenStatus  = 'No token'
   AccessToken  = $null  # STEP 1: Set a token here for testing: $script:AppState.AccessToken = "YOUR_TOKEN_HERE"
+  RepositoryRoot = $repoRoot
 
   Workspace    = 'Operations'
   Module       = 'Topic Subscriptions'
@@ -545,6 +552,7 @@ $script:TimelineJobScriptBlock = {
 
     return @{
       ConversationId = $conversationId
+      ConversationData = $conversationData
       Timeline = $timeline
       SubscriptionEvents = $relevantSubEvents
     }
@@ -911,6 +919,140 @@ function Set-TopContext {
 }
 
 function Set-Status([string]$msg) { $TxtStatus.Text = $msg }
+
+$script:OfflineDemoEnvVar = 'GC_TOOLKIT_OFFLINE_DEMO'
+$script:OfflineDemoPreviousState = $null
+
+function Test-OfflineDemoEnabled {
+  try {
+    $v = [Environment]::GetEnvironmentVariable($script:OfflineDemoEnvVar)
+    return ($v -and ($v -match '^(1|true|yes|on)$'))
+  } catch {
+    return $false
+  }
+}
+
+function Set-OfflineDemoMode {
+  param(
+    [Parameter(Mandatory)][bool]$Enabled
+  )
+
+  if ($Enabled) {
+    if (-not $script:OfflineDemoPreviousState) {
+      $script:OfflineDemoPreviousState = [pscustomobject]@{
+        Region      = $script:AppState.Region
+        Org         = $script:AppState.Org
+        Auth        = $script:AppState.Auth
+        TokenStatus = $script:AppState.TokenStatus
+        AccessToken = $script:AppState.AccessToken
+      }
+    }
+
+    [Environment]::SetEnvironmentVariable($script:OfflineDemoEnvVar, '1', 'Process')
+
+    $script:AppState.Region = 'offline.local'
+    if (-not $script:AppState.AccessToken) { $script:AppState.AccessToken = 'offline-demo' }
+    $script:AppState.Auth = 'Offline demo'
+    $script:AppState.TokenStatus = 'Offline demo'
+    $script:AppState.Org = 'Demo Org (Offline)'
+
+    # Make a known conversation available for quick timeline demos
+    $script:AppState.FocusConversationId = 'c-demo-001'
+
+    try {
+      if ($BtnLogin) { $BtnLogin.Content = 'Offline (Disable)' }
+      if ($BtnTestToken) { $BtnTestToken.IsEnabled = $true }
+    } catch { }
+
+    try { Set-TopContext } catch { }
+    try { Set-Status "Offline demo enabled (sample data)." } catch { }
+    return
+  }
+
+  [Environment]::SetEnvironmentVariable($script:OfflineDemoEnvVar, $null, 'Process')
+
+  if ($script:OfflineDemoPreviousState) {
+    $script:AppState.Region = $script:OfflineDemoPreviousState.Region
+    $script:AppState.Org = $script:OfflineDemoPreviousState.Org
+    $script:AppState.Auth = $script:OfflineDemoPreviousState.Auth
+    $script:AppState.TokenStatus = $script:OfflineDemoPreviousState.TokenStatus
+    $script:AppState.AccessToken = $script:OfflineDemoPreviousState.AccessToken
+    $script:OfflineDemoPreviousState = $null
+  } else {
+    $script:AppState.AccessToken = $null
+    $script:AppState.Auth = 'Not logged in'
+    $script:AppState.TokenStatus = 'No token'
+    $script:AppState.Org = ''
+  }
+
+  try {
+    if ($BtnLogin) { $BtnLogin.Content = if ($script:AppState.AccessToken) { 'Logout' } else { 'Login.' } }
+    if ($BtnTestToken) { $BtnTestToken.IsEnabled = [bool]$script:AppState.AccessToken }
+  } catch { }
+
+  try { Set-TopContext } catch { }
+  try { Set-Status "Offline demo disabled." } catch { }
+}
+
+function Add-OfflineDemoSampleEvents {
+  param(
+    [int]$Count = 18
+  )
+
+  $convIds = @('c-demo-001','c-demo-002','c-demo-003')
+  $topics = @(
+    'audiohook.transcription.final',
+    'audiohook.agentassist.suggestion',
+    'audiohook.error'
+  )
+  $snips = @(
+    "Caller: I forgot my password and can't log in.",
+    "Agent Assist: Suggest verifying identity (DOB + ZIP).",
+    "Agent Assist: Surface KB: Password Reset - Standard Flow.",
+    "ERROR: WebRTC jitter spike detected (offline demo)."
+  )
+
+  for ($i = 0; $i -lt $Count; $i++) {
+    $cid = $convIds[$i % $convIds.Count]
+    $topic = $topics[$i % $topics.Count]
+    $sev = if ($topic -eq 'audiohook.error') { 'error' } elseif ($topic -like '*agentassist*') { 'warn' } else { 'info' }
+    $text = $snips[$i % $snips.Count]
+    $ts = (Get-Date).AddMilliseconds(-1 * (250 * $i))
+
+    $raw = @{
+      eventId = [guid]::NewGuid().ToString()
+      timestamp = $ts.ToString('o')
+      topicName = $topic
+      eventBody = @{
+        conversationId = $cid
+        text = $text
+        severity = $sev
+        queueName = 'Support - Voice'
+      }
+    }
+
+    $cachedJson = ''
+    try { $cachedJson = ($raw | ConvertTo-Json -Compress -Depth 10).ToLower() } catch { }
+
+    $evt = [pscustomobject]@{
+      ts = $ts
+      severity = $sev
+      topic = $topic
+      conversationId = $cid
+      queueId = $null
+      queueName = 'Support - Voice'
+      text = $text
+      raw = $raw
+      _cachedRawJson = $cachedJson
+    }
+
+    try { $script:AppState.EventBuffer.Insert(0, $evt) } catch { $script:AppState.EventBuffer.Add($evt) | Out-Null }
+    $script:AppState.StreamCount++
+  }
+
+  Refresh-HeaderStats
+  Set-Status ("Seeded {0} offline demo events. Try Conversation Timeline with {1}." -f $Count, $convIds[0])
+}
 
 function Refresh-HeaderStats {
   $jobCount = $script:AppState.Jobs.Count
@@ -1615,7 +1757,9 @@ function Show-TimelineWindow {
     [Parameter(Mandatory)]
     [object[]]$TimelineEvents,
 
-    [object[]]$SubscriptionEvents = @()
+    [object[]]$SubscriptionEvents = @(),
+
+    [object]$ConversationData
   )
 
   $xamlString = @"
@@ -1636,6 +1780,7 @@ function Show-TimelineWindow {
       <StackPanel>
         <TextBlock Text="Conversation Timeline" FontSize="16" FontWeight="SemiBold" Foreground="White"/>
         <TextBlock x:Name="TxtConvInfo" Text="Conversation ID: $ConversationId" FontSize="12" Foreground="#FFA0AEC0" Margin="0,4,0,0"/>
+        <TextBlock x:Name="TxtConvMeta" Text="" FontSize="11" Foreground="#FFCBD5E1" Margin="0,6,0,0" TextWrapping="Wrap"/>
       </StackPanel>
     </Border>
 
@@ -1655,24 +1800,32 @@ function Show-TimelineWindow {
             <RowDefinition Height="*"/>
           </Grid.RowDefinitions>
 
-          <TextBlock Grid.Row="0" Text="Timeline Events" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,10"/>
+          <TextBlock Grid.Row="0" Text="Timeline" FontSize="14" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,10"/>
 
-          <DataGrid x:Name="DgTimeline" Grid.Row="1"
-                    AutoGenerateColumns="False"
-                    IsReadOnly="True"
-                    SelectionMode="Single"
-                    GridLinesVisibility="None"
-                    HeadersVisibility="Column"
-                    CanUserResizeRows="False"
-                    CanUserSortColumns="True"
-                    AlternatingRowBackground="#FFF9FAFB"
-                    Background="White">
-            <DataGrid.Columns>
-              <DataGridTextColumn Header="Time" Binding="{Binding TimeFormatted}" Width="140" CanUserSort="True"/>
-              <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="120" CanUserSort="True"/>
-              <DataGridTextColumn Header="Label" Binding="{Binding Label}" Width="*" CanUserSort="True"/>
-            </DataGrid.Columns>
-          </DataGrid>
+          <TabControl Grid.Row="1" x:Name="TabTimeline">
+            <TabItem Header="Visual">
+              <ListBox x:Name="LstTimelineVisual" Background="White" BorderThickness="0" Margin="0,6,0,0"/>
+            </TabItem>
+            <TabItem Header="Grid">
+              <DataGrid x:Name="DgTimeline"
+                        AutoGenerateColumns="False"
+                        IsReadOnly="True"
+                        SelectionMode="Single"
+                        GridLinesVisibility="None"
+                        HeadersVisibility="Column"
+                        CanUserResizeRows="False"
+                        CanUserSortColumns="True"
+                        AlternatingRowBackground="#FFF9FAFB"
+                        Background="White"
+                        Margin="0,6,0,0">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Header="Time" Binding="{Binding TimeFormatted}" Width="170" CanUserSort="True"/>
+                  <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="120" CanUserSort="True"/>
+                  <DataGridTextColumn Header="Label" Binding="{Binding Label}" Width="*" CanUserSort="True"/>
+                </DataGrid.Columns>
+              </DataGrid>
+            </TabItem>
+          </TabControl>
         </Grid>
       </Border>
 
@@ -1708,20 +1861,118 @@ function Show-TimelineWindow {
     $window = ConvertFrom-GcXaml -XamlString $xamlString
 
     $dgTimeline = $window.FindName('DgTimeline')
+    $lstTimelineVisual = $window.FindName('LstTimelineVisual')
     $txtDetail = $window.FindName('TxtDetail')
     $txtConvInfo = $window.FindName('TxtConvInfo')
+    $txtConvMeta = $window.FindName('TxtConvMeta')
 
     # Update conversation info with event count
     $txtConvInfo.Text = "Conversation ID: $ConversationId  |  Events: $($TimelineEvents.Count)"
 
+    # Conversation metadata (best-effort)
+    if ($txtConvMeta) {
+      try {
+        if ($ConversationData) {
+          $start = $null
+          $end = $null
+          try {
+            if ($ConversationData.conversationStart) { $start = [datetime]::Parse($ConversationData.conversationStart) }
+            elseif ($ConversationData.startTime) { $start = [datetime]::Parse($ConversationData.startTime) }
+          } catch { }
+          try {
+            if ($ConversationData.conversationEnd) { $end = [datetime]::Parse($ConversationData.conversationEnd) }
+            elseif ($ConversationData.endTime) { $end = [datetime]::Parse($ConversationData.endTime) }
+          } catch { }
+
+          $duration = ''
+          if ($start -and $end) {
+            $span = $end.ToUniversalTime() - $start.ToUniversalTime()
+            $duration = ("Duration: {0:mm\\:ss}" -f $span)
+          }
+
+          $participants = 0
+          try { if ($ConversationData.participants) { $participants = $ConversationData.participants.Count } } catch { }
+
+          $queues = @()
+          try {
+            if ($ConversationData.participants) {
+              foreach ($p in $ConversationData.participants) {
+                foreach ($s in @($p.sessions)) {
+                  foreach ($seg in @($s.segments)) {
+                    if ($seg.queueName) { $queues += [string]$seg.queueName }
+                    elseif ($seg.queueId) { $queues += [string]$seg.queueId }
+                  }
+                }
+              }
+            }
+          } catch { }
+          $queues = @($queues | Where-Object { $_ } | Select-Object -Unique)
+
+          $media = @()
+          try {
+            if ($ConversationData.participants) {
+              foreach ($p in $ConversationData.participants) {
+                foreach ($s in @($p.sessions)) {
+                  if ($s.mediaType) { $media += [string]$s.mediaType }
+                }
+              }
+            }
+          } catch { }
+          $media = @($media | Where-Object { $_ } | Select-Object -Unique)
+
+          $metaParts = @()
+          if ($start) { $metaParts += ("Start: {0}" -f $start.ToString('yyyy-MM-dd HH:mm:ss')) }
+          if ($end)   { $metaParts += ("End: {0}" -f $end.ToString('yyyy-MM-dd HH:mm:ss')) }
+          if ($duration) { $metaParts += $duration }
+          $metaParts += ("Participants: {0}" -f $participants)
+          if ($queues.Count -gt 0) { $metaParts += ("Queues: {0}" -f ($queues -join ', ')) }
+          if ($media.Count -gt 0)  { $metaParts += ("Media: {0}" -f ($media -join ', ')) }
+
+          $txtConvMeta.Text = ($metaParts -join "  |  ")
+        } else {
+          $txtConvMeta.Text = ""
+        }
+      } catch {
+        $txtConvMeta.Text = ""
+      }
+    }
+
+    function Get-CategoryBrushLocal {
+      param([string]$Category)
+      switch ($Category) {
+        'Error'        { return (New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(220, 38, 38))) } # red-600
+        'Transcription'{ return (New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(37, 99, 235))) } # blue-600
+        'AgentAssist'  { return (New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(124, 58, 237))) } # violet-600
+        'MediaStats'   { return (New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(5, 150, 105))) }  # emerald-600
+        'System'       { return (New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(75, 85, 99))) }    # gray-600
+        'Live Events'  { return (New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(245, 158, 11))) }   # amber-500
+        default        { return (New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(17, 24, 39))) }     # gray-900
+      }
+    }
+
     # Prepare timeline events for display (add formatted time property)
     $displayEvents = @()
     foreach ($evt in $TimelineEvents) {
+      $preview = ''
+      try {
+        if ($evt.Details -and $evt.Details.PSObject.Properties.Name -contains 'text' -and $evt.Details.text) {
+          $preview = [string]$evt.Details.text
+        } elseif ($evt.Details -is [string]) {
+          $preview = $evt.Details
+        } elseif ($evt.Details) {
+          $preview = ($evt.Details | ConvertTo-Json -Compress -Depth 6)
+        }
+      } catch { $preview = '' }
+      if ($preview -and $preview.Length -gt 180) { $preview = $preview.Substring(0, 180) + '…' }
+
       $displayEvent = [PSCustomObject]@{
         Time = $evt.Time
         TimeFormatted = $evt.Time.ToString('yyyy-MM-dd HH:mm:ss.fff')
+        TimeShort = $evt.Time.ToString('HH:mm:ss.fff')
         Category = $evt.Category
+        CategoryBrush = (Get-CategoryBrushLocal -Category $evt.Category)
         Label = $evt.Label
+        DetailPreview = $preview
         Details = $evt.Details
         CorrelationKeys = $evt.CorrelationKeys
         OriginalEvent = $evt
@@ -1732,20 +1983,55 @@ function Show-TimelineWindow {
     # Bind events to DataGrid
     $dgTimeline.ItemsSource = $displayEvents
 
-    # Handle selection change to show details
-    $dgTimeline.Add_SelectionChanged({
-      if ($dgTimeline.SelectedItem) {
-        $selected = $dgTimeline.SelectedItem
-        $detailObj = [ordered]@{
-          Time = $selected.Time.ToString('o')
-          Category = $selected.Category
-          Label = $selected.Label
-          CorrelationKeys = $selected.CorrelationKeys
-          Details = $selected.Details
-        }
-        $txtDetail.Text = ($detailObj | ConvertTo-Json -Depth 10)
+    # Build a simple "visual" list with a custom template (uses the same displayEvents items)
+    if ($lstTimelineVisual) {
+      $lstTimelineVisual.ItemTemplate = $null
+      $visualTemplate = @"
+<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+  <Grid Margin="0,4,0,4">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="90"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
+
+    <TextBlock Grid.Column="0" Text="{Binding TimeShort}" Foreground="#FF6B7280" FontFamily="Consolas" FontSize="11" VerticalAlignment="Top" Margin="0,2,10,0"/>
+
+    <Border Grid.Column="1" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="8" Padding="10" Background="White">
+      <StackPanel>
+        <StackPanel Orientation="Horizontal">
+          <Border Background="{Binding CategoryBrush}" CornerRadius="10" Padding="8,2" Margin="0,0,10,0" VerticalAlignment="Center">
+            <TextBlock Text="{Binding Category}" Foreground="White" FontSize="11"/>
+          </Border>
+          <TextBlock Text="{Binding Label}" FontWeight="SemiBold" Foreground="#FF111827" TextWrapping="Wrap"/>
+        </StackPanel>
+        <TextBlock Text="{Binding DetailPreview}" Margin="0,6,0,0" Foreground="#FF6B7280" TextWrapping="Wrap"/>
+      </StackPanel>
+    </Border>
+  </Grid>
+</DataTemplate>
+"@
+      $lstTimelineVisual.ItemTemplate = ([System.Windows.Markup.XamlReader]::Parse($visualTemplate))
+      $lstTimelineVisual.ItemsSource = $displayEvents
+    }
+
+    $updateDetail = {
+      param($selected)
+      if (-not $selected) { return }
+      $detailObj = [ordered]@{
+        Time = $selected.Time.ToString('o')
+        Category = $selected.Category
+        Label = $selected.Label
+        CorrelationKeys = $selected.CorrelationKeys
+        Details = $selected.Details
       }
-    })
+      $txtDetail.Text = ($detailObj | ConvertTo-Json -Depth 10)
+    }.GetNewClosure()
+
+    # Handle selection change to show details (both views)
+    $dgTimeline.Add_SelectionChanged({ if ($dgTimeline.SelectedItem) { & $updateDetail $dgTimeline.SelectedItem } }.GetNewClosure())
+    if ($lstTimelineVisual) {
+      $lstTimelineVisual.Add_SelectionChanged({ if ($lstTimelineVisual.SelectedItem) { & $updateDetail $lstTimelineVisual.SelectedItem } }.GetNewClosure())
+    }
 
     # Show window
     $window.ShowDialog() | Out-Null
@@ -2694,18 +2980,30 @@ function New-ConversationLookupView {
     GridConversations   = $view.FindName('GridConversations')
   }
 
+  # Capture control references for event handlers (avoid dynamic scoping surprises)
+  $btnConvSearch       = $h.BtnConvSearch
+  $btnConvExportJson   = $h.BtnConvExportJson
+  $btnConvExportCsv    = $h.BtnConvExportCsv
+  $btnConvOpenTimeline = $h.BtnOpenTimeline
+  $cmbDateRange        = $h.CmbDateRange
+  $txtConvIdFilter     = $h.TxtConvIdFilter
+  $txtMaxResults       = $h.TxtMaxResults
+  $txtConvSearchFilter = $h.TxtConvSearchFilter
+  $txtConvCount        = $h.TxtConvCount
+  $gridConversations   = $h.GridConversations
+
   $script:ConversationsData = @()
 
-  $h.BtnConvSearch.Add_Click({
+  if ($btnConvSearch) { $btnConvSearch.Add_Click({
     Set-Status "Searching conversations..."
-    $h.BtnConvSearch.IsEnabled = $false
-    $h.BtnConvExportJson.IsEnabled = $false
-    $h.BtnConvExportCsv.IsEnabled = $false
-    $h.BtnOpenTimeline.IsEnabled = $false
+    if ($btnConvSearch) { $btnConvSearch.IsEnabled = $false }
+    if ($btnConvExportJson) { $btnConvExportJson.IsEnabled = $false }
+    if ($btnConvExportCsv) { $btnConvExportCsv.IsEnabled = $false }
+    if ($btnConvOpenTimeline) { $btnConvOpenTimeline.IsEnabled = $false }
 
     # Build date range
     $endTime = Get-Date
-    $startTime = switch ($h.CmbDateRange.SelectedIndex) {
+    $startTime = switch ($cmbDateRange.SelectedIndex) {
       0 { $endTime.AddHours(-1) }
       1 { $endTime.AddHours(-6) }
       2 { $endTime.AddHours(-24) }
@@ -2717,8 +3015,8 @@ function New-ConversationLookupView {
 
     # Get max results
     $maxResults = 500
-    if (-not [string]::IsNullOrWhiteSpace($h.TxtMaxResults.Text)) {
-      if ([int]::TryParse($h.TxtMaxResults.Text, [ref]$maxResults)) {
+    if (-not [string]::IsNullOrWhiteSpace($txtMaxResults.Text)) {
+      if ([int]::TryParse($txtMaxResults.Text, [ref]$maxResults)) {
         # Valid number
       } else {
         $maxResults = 500
@@ -2737,14 +3035,14 @@ function New-ConversationLookupView {
     }
 
     # Add conversation ID filter if provided
-    if (-not [string]::IsNullOrWhiteSpace($h.TxtConvIdFilter.Text)) {
+    if (-not [string]::IsNullOrWhiteSpace($txtConvIdFilter.Text)) {
       $queryBody.conversationFilters = @(
         @{
           type = "and"
           predicates = @(
             @{
               dimension = "conversationId"
-              value = $h.TxtConvIdFilter.Text
+              value = $txtConvIdFilter.Text
             }
           )
         }
@@ -2760,9 +3058,9 @@ function New-ConversationLookupView {
       Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1') -Force
 
       Search-GcConversations -Body $queryBody -AccessToken $accessToken -InstanceName $instanceName -MaxItems $maxItems
-    } -ArgumentList @($queryBody, $script:AppState.AccessToken, $script:AppState.Region, $maxResults) -OnCompleted {
+    } -ArgumentList @($queryBody, $script:AppState.AccessToken, $script:AppState.Region, $maxResults) -OnCompleted ({ 
       param($job)
-      $h.BtnConvSearch.IsEnabled = $true
+      if ($btnConvSearch) { $btnConvSearch.IsEnabled = $true }
 
       if ($job.Result) {
         $script:ConversationsData = $job.Result
@@ -2814,21 +3112,21 @@ function New-ConversationLookupView {
             RawData = $_
           }
         }
-        $h.GridConversations.ItemsSource = $displayData
-        $h.TxtConvCount.Text = "($($job.Result.Count) conversations)"
-        $h.BtnConvExportJson.IsEnabled = $true
-        $h.BtnConvExportCsv.IsEnabled = $true
-        $h.BtnOpenTimeline.IsEnabled = $true
+        if ($gridConversations) { $gridConversations.ItemsSource = $displayData }
+        if ($txtConvCount) { $txtConvCount.Text = "($($job.Result.Count) conversations)" }
+        if ($btnConvExportJson) { $btnConvExportJson.IsEnabled = $true }
+        if ($btnConvExportCsv) { $btnConvExportCsv.IsEnabled = $true }
+        if ($btnConvOpenTimeline) { $btnConvOpenTimeline.IsEnabled = $true }
         Set-Status "Found $($job.Result.Count) conversations."
       } else {
-        $h.GridConversations.ItemsSource = @()
-        $h.TxtConvCount.Text = "(0 conversations)"
+        if ($gridConversations) { $gridConversations.ItemsSource = @() }
+        if ($txtConvCount) { $txtConvCount.Text = "(0 conversations)" }
         Set-Status "Search failed or returned no results."
       }
-    }
-  })
+    }.GetNewClosure())
+  }.GetNewClosure()) }
 
-  $h.BtnConvExportJson.Add_Click({
+  if ($btnConvExportJson) { $btnConvExportJson.Add_Click({
     if (-not $script:ConversationsData -or $script:ConversationsData.Count -eq 0) {
       Set-Status "No data to export."
       return
@@ -2851,9 +3149,9 @@ function New-ConversationLookupView {
     } catch {
       Set-Status "Failed to export: $_"
     }
-  })
+  }.GetNewClosure()) }
 
-  $h.BtnConvExportCsv.Add_Click({
+  if ($btnConvExportCsv) { $btnConvExportCsv.Add_Click({
     if (-not $script:ConversationsData -or $script:ConversationsData.Count -eq 0) {
       Set-Status "No data to export."
       return
@@ -2868,7 +3166,7 @@ function New-ConversationLookupView {
     $filepath = Join-Path -Path $artifactsDir -ChildPath $filename
 
     try {
-      $h.GridConversations.ItemsSource | Select-Object ConversationId, StartTime, Duration, Participants, Media, Direction |
+      $gridConversations.ItemsSource | Select-Object ConversationId, StartTime, Duration, Participants, Media, Direction |
         Export-Csv -Path $filepath -NoTypeInformation -Encoding UTF8
       Set-Status "Exported $($script:ConversationsData.Count) conversations to $filename"
       Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
@@ -2877,10 +3175,10 @@ function New-ConversationLookupView {
     } catch {
       Set-Status "Failed to export: $_"
     }
-  })
+  }.GetNewClosure()) }
 
-  $h.BtnOpenTimeline.Add_Click({
-    $selected = $h.GridConversations.SelectedItem
+  if ($btnConvOpenTimeline) { $btnConvOpenTimeline.Add_Click({
+    $selected = $gridConversations.SelectedItem
     if (-not $selected) {
       Set-Status "Please select a conversation to view timeline."
       return
@@ -2897,14 +3195,14 @@ function New-ConversationLookupView {
 
     # Navigate to Conversation Timeline
     Show-WorkspaceAndModule -Workspace "Conversations" -Module "Conversation Timeline"
-  })
+  }.GetNewClosure()) }
 
-  $h.TxtConvSearchFilter.Add_TextChanged({
+  if ($txtConvSearchFilter) { $txtConvSearchFilter.Add_TextChanged({
     if (-not $script:ConversationsData -or $script:ConversationsData.Count -eq 0) { return }
 
-    $searchText = $h.TxtConvSearchFilter.Text.ToLower()
+    $searchText = $txtConvSearchFilter.Text.ToLower()
     if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "filter results...") {
-      $h.GridConversations.ItemsSource = $script:ConversationsData | ForEach-Object {
+      $gridConversations.ItemsSource = $script:ConversationsData | ForEach-Object {
         $startTime = if ($_.conversationStart) {
           try { [DateTime]::Parse($_.conversationStart).ToString('yyyy-MM-dd HH:mm:ss') }
           catch { $_.conversationStart }
@@ -2952,7 +3250,7 @@ function New-ConversationLookupView {
           RawData = $_
         }
       }
-      $h.TxtConvCount.Text = "($($script:ConversationsData.Count) conversations)"
+      $txtConvCount.Text = "($($script:ConversationsData.Count) conversations)"
       return
     }
 
@@ -3010,9 +3308,9 @@ function New-ConversationLookupView {
       }
     }
 
-    $h.GridConversations.ItemsSource = $displayData
-    $h.TxtConvCount.Text = "($($filtered.Count) conversations)"
-  })
+    $gridConversations.ItemsSource = $displayData
+    $txtConvCount.Text = "($($filtered.Count) conversations)"
+  }.GetNewClosure()) }
 
   $h.TxtConvSearchFilter.Add_GotFocus({
     if ($h.TxtConvSearchFilter.Text -eq "Filter results...") {
@@ -3132,7 +3430,8 @@ function New-ConversationTimelineView {
         Show-TimelineWindow `
           -ConversationId $result.ConversationId `
           -TimelineEvents $result.Timeline `
-          -SubscriptionEvents $result.SubscriptionEvents
+          -SubscriptionEvents $result.SubscriptionEvents `
+          -ConversationData $result.ConversationData
       } else {
         Set-Status "Failed to build timeline. See job logs for details."
         [System.Windows.MessageBox]::Show(
@@ -4852,17 +5151,34 @@ function New-DataActionsView {
           <TextBlock x:Name="TxtDataActionCount" Text="(0 actions)" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF6B7280"/>
         </StackPanel>
 
-        <DataGrid x:Name="GridDataActions" Grid.Row="1" Margin="0,10,0,0" AutoGenerateColumns="False" IsReadOnly="True"
-                  HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
-          <DataGrid.Columns>
-            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="250"/>
-            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="150"/>
-            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100"/>
-            <DataGridTextColumn Header="Integration" Binding="{Binding Integration}" Width="180"/>
-            <DataGridTextColumn Header="Modified" Binding="{Binding Modified}" Width="180"/>
-            <DataGridTextColumn Header="Modified By" Binding="{Binding ModifiedBy}" Width="*"/>
-          </DataGrid.Columns>
-        </DataGrid>
+        <Grid Grid.Row="1" Margin="0,10,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="2*"/>
+            <ColumnDefinition Width="12"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+
+          <DataGrid x:Name="GridDataActions" Grid.Column="0" AutoGenerateColumns="False" IsReadOnly="True"
+                    HeadersVisibility="Column" GridLinesVisibility="None" AlternatingRowBackground="#FFF9FAFB">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="220"/>
+              <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="130"/>
+              <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="90"/>
+              <DataGridTextColumn Header="Integration" Binding="{Binding Integration}" Width="180"/>
+              <DataGridTextColumn Header="Modified" Binding="{Binding Modified}" Width="170"/>
+              <DataGridTextColumn Header="Modified By" Binding="{Binding ModifiedBy}" Width="*"/>
+            </DataGrid.Columns>
+          </DataGrid>
+
+          <Border Grid.Column="2" CornerRadius="8" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="10">
+            <StackPanel>
+              <TextBlock Text="Action Detail" FontWeight="SemiBold" Foreground="#FF111827"/>
+              <TextBox x:Name="TxtDataActionDetail" Margin="0,10,0,0" AcceptsReturn="True" Height="520"
+                       VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11" TextWrapping="NoWrap"
+                       Text="{ } { &quot;hint&quot;: &quot;Select a data action to view the raw payload.&quot; }"/>
+            </StackPanel>
+          </Border>
+        </Grid>
       </Grid>
     </Border>
   </Grid>
@@ -4880,64 +5196,96 @@ function New-DataActionsView {
     TxtDataActionSearch      = $view.FindName('TxtDataActionSearch')
     TxtDataActionCount       = $view.FindName('TxtDataActionCount')
     GridDataActions          = $view.FindName('GridDataActions')
+    TxtDataActionDetail      = $view.FindName('TxtDataActionDetail')
   }
+
+  # Capture control references for event handlers (avoid dynamic scoping surprises)
+  $cmbCategory   = $h.CmbDataActionCategory
+  $cmbStatus     = $h.CmbDataActionStatus
+  $btnLoad       = $h.BtnDataActionLoad
+  $btnExportJson = $h.BtnDataActionExportJson
+  $btnExportCsv  = $h.BtnDataActionExportCsv
+  $txtSearch     = $h.TxtDataActionSearch
+  $txtCount      = $h.TxtDataActionCount
+  $grid          = $h.GridDataActions
+  $txtDetail     = $h.TxtDataActionDetail
 
   # Store data actions for export
   $script:DataActionsData = @()
 
   # Load button handler
-  $h.BtnDataActionLoad.Add_Click({
+  if ($btnLoad) { $btnLoad.Add_Click({
     Set-Status "Loading data actions..."
-    $h.BtnDataActionLoad.IsEnabled = $false
-    $h.BtnDataActionExportJson.IsEnabled = $false
-    $h.BtnDataActionExportCsv.IsEnabled = $false
+    $btnLoad.IsEnabled = $false
+    if ($btnExportJson) { $btnExportJson.IsEnabled = $false }
+    if ($btnExportCsv) { $btnExportCsv.IsEnabled = $false }
 
     Start-AppJob -Name "Load Data Actions" -Type "Query" -ScriptBlock {
-      # Query data actions using Genesys Cloud API
-      $maxItems = 500  # Limit to prevent excessive API calls
-      try {
-        $results = Invoke-GcPagedRequest -Path '/api/v2/integrations/actions' -Method GET `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
+      param($coreModulePath, $instanceName, $accessToken, $maxItems)
 
-        return $results
+      Import-Module (Join-Path -Path $coreModulePath -ChildPath 'HttpRequests.psm1') -Force
+
+      try {
+        return Invoke-GcPagedRequest -Path '/api/v2/integrations/actions' -Method GET `
+          -InstanceName $instanceName -AccessToken $accessToken -MaxItems $maxItems
       } catch {
         Write-Error "Failed to load data actions: $_"
         return @()
       }
-    } -OnCompleted {
+    } -ArgumentList @($coreRoot, $script:AppState.Region, $script:AppState.AccessToken, 500) -OnCompleted ({
       param($job)
 
-      $h.BtnDataActionLoad.IsEnabled = $true
+      if ($btnLoad) { $btnLoad.IsEnabled = $true }
 
-      if ($job.Result) {
-        $actions = $job.Result
+      $actions = @()
+      try { if ($job.Result) { $actions = @($job.Result) } } catch { $actions = @() }
+
+      if ($actions.Count -gt 0) {
         $script:DataActionsData = $actions
 
         # Transform to display format
         $displayData = $actions | ForEach-Object {
+          $status = 'Active'
+          try {
+            if ($_.enabled -is [bool] -and -not $_.enabled) { $status = 'Inactive' }
+          } catch { }
+
           [PSCustomObject]@{
             Name = if ($_.name) { $_.name } else { 'N/A' }
             Category = if ($_.category) { $_.category } else { 'N/A' }
-            Status = 'Enabled'
+            Status = $status
             Integration = if ($_.integrationId) { $_.integrationId } else { 'N/A' }
-            Modified = if ($_.modifiedDate) { $_.modifiedDate } else { '' }
+            Modified = if ($_.dateModified) { $_.dateModified } elseif ($_.modifiedDate) { $_.modifiedDate } else { '' }
             ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
+            RawData = $_
           }
         }
 
-        $h.GridDataActions.ItemsSource = $displayData
-        $h.TxtDataActionCount.Text = "($($actions.Count) actions)"
-        $h.BtnDataActionExportJson.IsEnabled = $true
-        $h.BtnDataActionExportCsv.IsEnabled = $true
+        if ($grid) { $grid.ItemsSource = $displayData }
+        if ($txtCount) { $txtCount.Text = "($($actions.Count) actions)" }
+        if ($btnExportJson) { $btnExportJson.IsEnabled = $true }
+        if ($btnExportCsv) { $btnExportCsv.IsEnabled = $true }
 
         Set-Status "Loaded $($actions.Count) data actions."
       } else {
         Set-Status "Failed to load data actions. Check job logs."
-        $h.GridDataActions.ItemsSource = @()
-        $h.TxtDataActionCount.Text = "(0 actions)"
+        if ($grid) { $grid.ItemsSource = @() }
+        if ($txtCount) { $txtCount.Text = "(0 actions)" }
       }
-    }
-  })
+    }.GetNewClosure())
+  }.GetNewClosure()) }
+
+  # Selection -> show raw payload
+  if ($grid -and $txtDetail) {
+    $grid.Add_SelectionChanged({
+      if (-not $grid.SelectedItem) { return }
+      $item = $grid.SelectedItem
+      $raw = $null
+      try { $raw = $item.RawData } catch { $raw = $null }
+      if (-not $raw) { $raw = $item }
+      try { $txtDetail.Text = ($raw | ConvertTo-Json -Depth 12) } catch { $txtDetail.Text = [string]$raw }
+    }.GetNewClosure())
+  }
 
   # Export JSON button handler
   $h.BtnDataActionExportJson.Add_Click({
@@ -4995,59 +5343,50 @@ function New-DataActionsView {
   })
 
   # Search text changed handler
-  $h.TxtDataActionSearch.Add_TextChanged({
+  if ($txtSearch) { $txtSearch.Add_TextChanged({
     if (-not $script:DataActionsData -or $script:DataActionsData.Count -eq 0) { return }
 
-    $searchText = $h.TxtDataActionSearch.Text.ToLower()
-    if ([string]::IsNullOrWhiteSpace($searchText) -or $searchText -eq "search actions...") {
-      $displayData = $script:DataActionsData | ForEach-Object {
-        [PSCustomObject]@{
-          Name = if ($_.name) { $_.name } else { 'N/A' }
-          Category = if ($_.category) { $_.category } else { 'N/A' }
-          Status = 'Enabled'
-          Integration = if ($_.integrationId) { $_.integrationId } else { 'N/A' }
-          Modified = if ($_.modifiedDate) { $_.modifiedDate } else { '' }
-          ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
-        }
+    $searchText = ''
+    try { $searchText = ($txtSearch.Text ?? '').ToLower() } catch { $searchText = '' }
+
+    $filtered = $script:DataActionsData
+    if (-not [string]::IsNullOrWhiteSpace($searchText) -and $searchText -ne "search actions...") {
+      $filtered = $script:DataActionsData | Where-Object {
+        $json = ($_ | ConvertTo-Json -Compress -Depth 6).ToLower()
+        $json -like "*$searchText*"
       }
-      $h.GridDataActions.ItemsSource = $displayData
-      $h.TxtDataActionCount.Text = "($($script:DataActionsData.Count) actions)"
-      return
     }
 
-    $filtered = $script:DataActionsData | Where-Object {
-      $json = ($_ | ConvertTo-Json -Compress -Depth 5).ToLower()
-      $json -like "*$searchText*"
-    }
+    $displayData = @($filtered) | ForEach-Object {
+      $status = 'Active'
+      try {
+        if ($_.enabled -is [bool] -and -not $_.enabled) { $status = 'Inactive' }
+      } catch { }
 
-    $displayData = $filtered | ForEach-Object {
       [PSCustomObject]@{
         Name = if ($_.name) { $_.name } else { 'N/A' }
         Category = if ($_.category) { $_.category } else { 'N/A' }
-        Status = 'Enabled'
+        Status = $status
         Integration = if ($_.integrationId) { $_.integrationId } else { 'N/A' }
-        Modified = if ($_.modifiedDate) { $_.modifiedDate } else { '' }
+        Modified = if ($_.dateModified) { $_.dateModified } elseif ($_.modifiedDate) { $_.modifiedDate } else { '' }
         ModifiedBy = if ($_.modifiedBy -and $_.modifiedBy.name) { $_.modifiedBy.name } else { 'N/A' }
+        RawData = $_
       }
     }
 
-    $h.GridDataActions.ItemsSource = $displayData
-    $h.TxtDataActionCount.Text = "($($filtered.Count) actions)"
-  })
+    if ($grid) { $grid.ItemsSource = $displayData }
+    if ($txtCount) { $txtCount.Text = "($(@($filtered).Count) actions)" }
+  }.GetNewClosure()) }
 
   # Clear search placeholder on focus
-  $h.TxtDataActionSearch.Add_GotFocus({
-    if ($h.TxtDataActionSearch.Text -eq "Search actions...") {
-      $h.TxtDataActionSearch.Text = ""
-    }
-  })
+  if ($txtSearch) { $txtSearch.Add_GotFocus({
+    if ($txtSearch.Text -eq "Search actions...") { $txtSearch.Text = "" }
+  }.GetNewClosure()) }
 
   # Restore search placeholder on lost focus if empty
-  $h.TxtDataActionSearch.Add_LostFocus({
-    if ([string]::IsNullOrWhiteSpace($h.TxtDataActionSearch.Text)) {
-      $h.TxtDataActionSearch.Text = "Search actions..."
-    }
-  })
+  if ($txtSearch) { $txtSearch.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($txtSearch.Text)) { $txtSearch.Text = "Search actions..." }
+  }.GetNewClosure()) }
 
   return $view
 }
@@ -6752,7 +7091,7 @@ function New-SubscriptionsView {
     Set-Status "Retrieving timeline for conversation $conv..."
 
     # Start background job to retrieve and build timeline (using shared scriptblock)
-    Start-AppJob -Name "Open Timeline — $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
+    Start-AppJob -Name "Open Timeline - $conv" -Type 'Timeline' -ScriptBlock $script:TimelineJobScriptBlock -ArgumentList @($conv, $script:AppState.Region, $script:AppState.AccessToken, $script:AppState.EventBuffer) `
     -OnCompleted {
       param($job)
 
@@ -6764,7 +7103,8 @@ function New-SubscriptionsView {
         Show-TimelineWindow `
           -ConversationId $result.ConversationId `
           -TimelineEvents $result.Timeline `
-          -SubscriptionEvents $result.SubscriptionEvents
+          -SubscriptionEvents $result.SubscriptionEvents `
+          -ConversationData $result.ConversationData
       } else {
         Set-Status "Failed to build timeline. See job logs for details."
         [System.Windows.MessageBox]::Show(
@@ -7862,10 +8202,31 @@ $pasteTokenMenuItem.Add_Click({
 })
 
 $loginContextMenu.Items.Add($pasteTokenMenuItem) | Out-Null
+
+$offlineEnableMenuItem = New-Object System.Windows.Controls.MenuItem
+$offlineEnableMenuItem.Header = "Offline Demo: Enable"
+$offlineEnableMenuItem.Add_Click({ Set-OfflineDemoMode -Enabled $true })
+$loginContextMenu.Items.Add($offlineEnableMenuItem) | Out-Null
+
+$offlineDisableMenuItem = New-Object System.Windows.Controls.MenuItem
+$offlineDisableMenuItem.Header = "Offline Demo: Disable"
+$offlineDisableMenuItem.Add_Click({ Set-OfflineDemoMode -Enabled $false })
+$loginContextMenu.Items.Add($offlineDisableMenuItem) | Out-Null
+
+$offlineSeedMenuItem = New-Object System.Windows.Controls.MenuItem
+$offlineSeedMenuItem.Header = "Offline Demo: Seed Sample Events"
+$offlineSeedMenuItem.Add_Click({ Add-OfflineDemoSampleEvents -Count 18 })
+$loginContextMenu.Items.Add($offlineSeedMenuItem) | Out-Null
+
 $BtnLogin.ContextMenu = $loginContextMenu
 ### END: Manual Token Entry
 
 $BtnLogin.Add_Click({
+  if (Test-OfflineDemoEnabled) {
+    Set-OfflineDemoMode -Enabled $false
+    return
+  }
+
   Write-GcDiag ("Login button clicked (HasToken={0}, Region='{1}')" -f [bool]$script:AppState.AccessToken, $script:AppState.Region)
   # Check if already logged in - if so, logout
   if ($script:AppState.AccessToken) {
@@ -8061,6 +8422,9 @@ $script:JobsRefreshTimer.Start()
 # -----------------------------
 # Initial view
 # -----------------------------
+if ($OfflineDemo) {
+  Set-OfflineDemoMode -Enabled $true
+}
 Set-TopContext
 Refresh-HeaderStats
 

@@ -4,6 +4,17 @@ Set-StrictMode -Version Latest
 
 # Module-level AppState reference (set by calling application)
 $script:AppState = $null
+$script:OfflineDemoEnvVar = 'GC_TOOLKIT_OFFLINE_DEMO'
+
+function Test-GcOfflineDemoEnabled {
+  try {
+    $v = [Environment]::GetEnvironmentVariable($script:OfflineDemoEnvVar)
+    if ($v -and ($v -match '^(1|true|yes|on)$')) {
+      return $true
+    }
+  } catch { }
+  return $false
+}
 
 function Set-GcAppState {
   <#
@@ -138,6 +149,25 @@ function Invoke-GcRequest {
   }
 
   $resolvedPath = Resolve-GcEndpoint -Path $Path -PathParams $PathParams
+
+  # Offline demo: serve responses from local sample data (no network).
+  if (Test-GcOfflineDemoEnabled) {
+    $sampleModulePath = Join-Path -Path $PSScriptRoot -ChildPath 'SampleData.psm1'
+    if (-not (Get-Module -Name SampleData)) {
+      if (Test-Path $sampleModulePath) {
+        Import-Module $sampleModulePath -Force -ErrorAction Stop
+      } else {
+        throw "Offline demo enabled but sample data module not found: $sampleModulePath"
+      }
+    }
+
+    $bodyObj = $Body
+    if ($Body -is [string]) {
+      try { $bodyObj = ($Body | ConvertFrom-Json -ErrorAction Stop) } catch { $bodyObj = $Body }
+    }
+
+    return Invoke-GcSampleRequest -Path ("/{0}" -f $resolvedPath.TrimStart('/')) -Method $Method -Query $Query -PathParams $PathParams -Body $bodyObj
+  }
 
   # Headers
   $h = @{}
@@ -327,12 +357,19 @@ function Invoke-GcPagedRequest {
   }
 
   # Pull pagination signals (mirrors your screenshot logic)
-  $nextPage   = $lastResponse.nextPage
-  $nextUri    = $lastResponse.nextUri
-  $pageCount  = $lastResponse.pageCount
-  $pageNumber = $lastResponse.pageNumber
-  $cursor     = $lastResponse.cursor
-  $nextCursor = $lastResponse.nextCursor
+  $nextPage   = $null
+  $nextUri    = $null
+  $pageCount  = $null
+  $pageNumber = $null
+  $cursor     = $null
+  $nextCursor = $null
+
+  try { $nextPage = $lastResponse.nextPage } catch { }
+  try { $nextUri = $lastResponse.nextUri } catch { }
+  try { $pageCount = $lastResponse.pageCount } catch { }
+  try { $pageNumber = $lastResponse.pageNumber } catch { }
+  try { $cursor = $lastResponse.cursor } catch { }
+  try { $nextCursor = $lastResponse.nextCursor } catch { }
 
   while ($true) {
 
@@ -410,12 +447,19 @@ function Invoke-GcPagedRequest {
     $pagesFetched++
 
     # refresh pagination signals (matches your pattern)
-    $nextPage   = $lastResponse.nextPage
-    $nextUri    = $lastResponse.nextUri
-    $pageCount  = $lastResponse.pageCount
-    $pageNumber = $lastResponse.pageNumber
-    $cursor     = $lastResponse.cursor
-    $nextCursor = $lastResponse.nextCursor
+    $nextPage   = $null
+    $nextUri    = $null
+    $pageCount  = $null
+    $pageNumber = $null
+    $cursor     = $null
+    $nextCursor = $null
+
+    try { $nextPage = $lastResponse.nextPage } catch { }
+    try { $nextUri = $lastResponse.nextUri } catch { }
+    try { $pageCount = $lastResponse.pageCount } catch { }
+    try { $pageNumber = $lastResponse.pageNumber } catch { }
+    try { $cursor = $lastResponse.cursor } catch { }
+    try { $nextCursor = $lastResponse.nextCursor } catch { }
   }
 
   if ($items.Count -gt 0) { return $items }

@@ -81,12 +81,17 @@ function Get-GcConversationDetails {
   )
   
   try {
+    $cmd = Get-Command -Name Invoke-GcRequest -ErrorAction SilentlyContinue
+    if ($cmd) {
+      return Invoke-GcRequest -Method GET -Path "/api/v2/conversations/$ConversationId" -InstanceName $Region -AccessToken $AccessToken
+    }
+
     $uri = "https://api.$Region/api/v2/conversations/$ConversationId"
     $headers = @{
       'Authorization' = "Bearer $AccessToken"
       'Content-Type'  = 'application/json'
     }
-    
+
     $conversation = Invoke-RestMethod -Uri $uri -Method GET -Headers $headers
     return $conversation
     
@@ -130,6 +135,31 @@ function Get-GcConversationAnalytics {
   )
   
   try {
+    $cmd = Get-Command -Name Invoke-GcRequest -ErrorAction SilentlyContinue
+    if ($cmd) {
+      $response = Invoke-GcRequest -Method POST -Path "/api/v2/analytics/conversations/details/query" -InstanceName $Region -AccessToken $AccessToken -Body @{
+        conversationFilters = @(
+          @{
+            type = 'and'
+            predicates = @(
+              @{
+                dimension = 'conversationId'
+                value = $ConversationId
+              }
+            )
+          }
+        )
+        order = 'asc'
+        orderBy = 'conversationStart'
+      }
+
+      if ($response.conversations -and $response.conversations.Count -gt 0) {
+        return $response.conversations[0]
+      }
+
+      return $null
+    }
+
     # Query analytics for the specific conversation
     $uri = "https://api.$Region/api/v2/analytics/conversations/details/query"
     $headers = @{
