@@ -10,6 +10,10 @@ Write-Host "Manual Token Entry Tests" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Import the shared normalization helpers used by the app.
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Import-Module (Join-Path -Path $repoRoot -ChildPath 'Core\HttpRequests.psm1') -Force
+
 # Test token sanitization function (extracted from dialog logic)
 function Test-TokenSanitization {
     param(
@@ -18,14 +22,7 @@ function Test-TokenSanitization {
         [string]$testName
     )
     
-    # Replicate the sanitization logic from Show-SetTokenDialog
-    $token = $inputToken -replace '[\r\n]+', ''  # Remove line breaks
-    $token = $token.Trim()  # Remove leading/trailing whitespace
-    
-    # Remove "Bearer " prefix if present (case-insensitive)
-    if ($token -imatch '^Bearer\s+(.+)$') {
-        $token = $matches[1].Trim()
-    }
+    $token = Normalize-GcAccessToken -TokenText $inputToken
     
     Write-Host "Test: $testName" -ForegroundColor Cyan
     if ($token -eq $expectedOutput) {
@@ -134,7 +131,35 @@ Write-Host "Region Validation Tests" -ForegroundColor Yellow
 Write-Host "========================================" -ForegroundColor Yellow
 Write-Host ""
 
-# Test region format validation
+# Test region normalization (expected output should be instance name, ex: usw2.pure.cloud)
+$regionCases = @(
+    @{ Input = 'mypurecloud.com'; Expected = 'mypurecloud.com'; Name = 'Plain region (mypurecloud.com)' },
+    @{ Input = 'usw2.pure.cloud'; Expected = 'usw2.pure.cloud'; Name = 'Plain region (usw2.pure.cloud)' },
+    @{ Input = 'api.usw2.pure.cloud'; Expected = 'usw2.pure.cloud'; Name = 'API host pasted' },
+    @{ Input = 'apps.usw2.pure.cloud'; Expected = 'usw2.pure.cloud'; Name = 'Apps host pasted' },
+    @{ Input = 'login.usw2.pure.cloud'; Expected = 'usw2.pure.cloud'; Name = 'Login host pasted' },
+    @{ Input = 'https://mypurecloud.com'; Expected = 'mypurecloud.com'; Name = 'Region URL pasted' },
+    @{ Input = 'https://api.usw2.pure.cloud'; Expected = 'usw2.pure.cloud'; Name = 'API URL pasted' },
+    @{ Input = 'https://apps.usw2.pure.cloud/directory/#/'; Expected = 'usw2.pure.cloud'; Name = 'Apps URL with path pasted' }
+)
+
+foreach ($case in $regionCases) {
+    $actual = Normalize-GcInstanceName -RegionText $case.Input
+    Write-Host "Test: $($case.Name)" -ForegroundColor Cyan
+    if ($actual -eq $case.Expected) {
+        Write-Host "  [PASS] Region normalized correctly ($actual)" -ForegroundColor Green
+        $passedTests++
+    } else {
+        Write-Host "  [FAIL] Region normalization mismatch" -ForegroundColor Red
+        Write-Host "    Input:    $($case.Input)" -ForegroundColor Gray
+        Write-Host "    Expected: $($case.Expected)" -ForegroundColor Gray
+        Write-Host "    Got:      $actual" -ForegroundColor Gray
+        $failedTests++
+    }
+}
+Write-Host ""
+
+# Keep a small "looks like a region" validation check (used by the dialog).
 $validRegions = @(
     'mypurecloud.com',
     'usw2.pure.cloud',
@@ -146,10 +171,8 @@ $validRegions = @(
 
 foreach ($region in $validRegions) {
     Write-Host "Test: Valid region format - $region" -ForegroundColor Cyan
-    # Basic validation: should not be empty, should not contain "api.", should not start with "https://"
-    $isValid = (-not [string]::IsNullOrWhiteSpace($region)) -and 
-               (-not $region.Contains('api.')) -and 
-               (-not $region.StartsWith('https://'))
+    # Basic validation: should not be empty, should contain a dot.
+    $isValid = (-not [string]::IsNullOrWhiteSpace($region)) -and ($region -match '\.')
     
     if ($isValid) {
         Write-Host "  [PASS] Region format is valid" -ForegroundColor Green
@@ -163,16 +186,16 @@ Write-Host ""
 
 # Test invalid region formats
 $invalidRegions = @(
-    'api.usw2.pure.cloud',
-    'https://mypurecloud.com',
-    'https://api.usw2.pure.cloud'
+    '',
+    '   ',
+    'not_a_domain',
+    'usw2 pure cloud'
 )
 
 foreach ($region in $invalidRegions) {
     Write-Host "Test: Invalid region format - $region" -ForegroundColor Cyan
-    $isValid = (-not [string]::IsNullOrWhiteSpace($region)) -and 
-               (-not $region.Contains('api.')) -and 
-               (-not $region.StartsWith('https://'))
+    $normalized = Normalize-GcInstanceName -RegionText $region
+    $isValid = (-not [string]::IsNullOrWhiteSpace($normalized)) -and ($normalized -match '\.')
     
     if (-not $isValid) {
         Write-Host "  [PASS] Correctly identified as invalid" -ForegroundColor Green

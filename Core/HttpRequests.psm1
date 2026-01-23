@@ -44,6 +44,121 @@ function Set-GcAppState {
   $script:AppState = $State.Value
 }
 
+function Normalize-GcInstanceName {
+  <#
+  .SYNOPSIS
+    Normalizes user-provided region/host input into a Genesys Cloud instance name.
+
+  .DESCRIPTION
+    Accepts values like:
+      - usw2.pure.cloud
+      - api.usw2.pure.cloud
+      - apps.usw2.pure.cloud
+      - https://api.usw2.pure.cloud
+      - https://apps.usw2.pure.cloud/some/path
+
+    Returns the instance name (ex: usw2.pure.cloud) suitable for building:
+      https://api.<instanceName>/
+  #>
+  [CmdletBinding()]
+  param(
+    [AllowNull()][AllowEmptyString()]
+    [string] $RegionText
+  )
+
+  if ([string]::IsNullOrWhiteSpace($RegionText)) { return $null }
+
+  $text = $RegionText.Trim()
+
+  # Strip common wrapping quotes when copying from JSON/CLI output.
+  if (($text.StartsWith('"') -and $text.EndsWith('"')) -or ($text.StartsWith("'") -and $text.EndsWith("'"))) {
+    if ($text.Length -ge 2) { $text = $text.Substring(1, $text.Length - 2) }
+  }
+
+  $host = $text
+
+  # If a full URL was provided, extract Host; otherwise, strip any path fragment.
+  if ($host -match '^[a-zA-Z][a-zA-Z0-9+\.-]*://') {
+    try {
+      $uri = [Uri]$host
+      if ($uri.Host) { $host = $uri.Host }
+    } catch { }
+  } else {
+    $host = ($host -split '/')[0]
+  }
+
+  # Strip :port if present.
+  if ($host -match '^(?<h>[^:]+):\d+$') {
+    $host = $matches['h']
+  }
+
+  # Remove invisible/whitespace characters that commonly sneak in during copy/paste.
+  $host = $host -replace "[\u200B-\u200D\uFEFF]", ""
+  $host = $host -replace "\s+", ""
+
+  $host = $host.Trim().Trim('.').ToLowerInvariant()
+
+  # Allow users to paste api./apps./login. URLs and normalize back to region.
+  if ($host -match '^(api|apps|login|signin|sso|auth)\.(?<rest>.+)$') {
+    $host = $matches['rest']
+  }
+
+  return $host
+}
+
+function Normalize-GcAccessToken {
+  <#
+  .SYNOPSIS
+    Normalizes user-provided access token input (manual paste).
+
+  .DESCRIPTION
+    Handles common paste formats:
+      - Raw token
+      - "Bearer <token>"
+      - "Authorization: Bearer <token>"
+      - JSON token response containing access_token
+    Removes whitespace/line breaks and zero-width characters.
+  #>
+  [CmdletBinding()]
+  param(
+    [AllowNull()][AllowEmptyString()]
+    [string] $TokenText
+  )
+
+  if ([string]::IsNullOrWhiteSpace($TokenText)) { return $null }
+
+  $raw = $TokenText.Trim()
+
+  # If user pasted a JSON token response, extract access_token.
+  if ($raw -match '(?i)\baccess_token\b' -and ($raw.TrimStart().StartsWith('{') -or $raw.TrimStart().StartsWith('['))) {
+    try {
+      $obj = $raw | ConvertFrom-Json -ErrorAction Stop
+      if ($obj -and $obj.access_token) {
+        $raw = [string]$obj.access_token
+      }
+    } catch { }
+  }
+
+  # Handle common header formats.
+  $raw = ($raw -replace '(?i)^\s*authorization\s*:\s*bearer\s+', '')
+  $raw = ($raw -replace '(?i)^\s*bearer\s*:\s*', '')
+  $raw = ($raw -replace '(?i)^\s*bearer\s+', '')
+
+  $raw = $raw.Trim()
+
+  # Strip wrapping quotes.
+  if (($raw.StartsWith('"') -and $raw.EndsWith('"')) -or ($raw.StartsWith("'") -and $raw.EndsWith("'"))) {
+    if ($raw.Length -ge 2) { $raw = $raw.Substring(1, $raw.Length - 2) }
+  }
+
+  # Remove whitespace/line breaks and zero-width chars introduced by copy/paste.
+  $raw = $raw -replace "[\u200B-\u200D\uFEFF]", ""
+  $raw = $raw -replace "\s+", ""
+
+  if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+  return $raw
+}
+
 function Resolve-GcEndpoint {
   [CmdletBinding()]
   param(
@@ -594,6 +709,6 @@ function Invoke-AppGcRequest {
   }
 }
 
-Export-ModuleMember -Function Invoke-GcRequest, Invoke-GcPagedRequest, Invoke-AppGcRequest, Set-GcAppState
+Export-ModuleMember -Function Invoke-GcRequest, Invoke-GcPagedRequest, Invoke-AppGcRequest, Set-GcAppState, Normalize-GcInstanceName, Normalize-GcAccessToken
 
 ### END: Core.HttpRequests.psm1

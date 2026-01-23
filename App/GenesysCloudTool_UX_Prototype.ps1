@@ -139,6 +139,46 @@ Set-GcAppState -State ([ref]$script:AppState)
 $script:ArtifactsDir = Join-Path -Path $PSScriptRoot -ChildPath 'artifacts'
 New-Item -ItemType Directory -Path $script:ArtifactsDir -Force | Out-Null
 
+# -----------------------------
+# Trace log (persistent diagnostics)
+# -----------------------------
+# Used by OfflineDemo + optional debug logging across runspaces/modules.
+$script:GcTraceEnvVar = 'GC_TOOLKIT_TRACE'
+$script:GcTraceLogEnvVar = 'GC_TOOLKIT_TRACE_LOG'
+$script:GcTraceLogPath = Join-Path -Path $script:ArtifactsDir -ChildPath ("trace-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+try { [Environment]::SetEnvironmentVariable($script:GcTraceLogEnvVar, $script:GcTraceLogPath, 'Process') } catch { }
+try {
+  if (-not (Test-Path -LiteralPath $script:GcTraceLogPath)) {
+    ("[{0}] Trace initialized (script={1})" -f (Get-Date).ToString('o'), $PSCommandPath) | Out-File -FilePath $script:GcTraceLogPath -Encoding utf8
+  }
+} catch { }
+
+function Test-GcTraceEnabled {
+  try {
+    $v = [Environment]::GetEnvironmentVariable($script:GcTraceEnvVar)
+    return ($v -and ($v -match '^(1|true|yes|on)$'))
+  } catch {
+    return $false
+  }
+}
+
+function Write-GcTrace {
+  param(
+    [Parameter(Mandatory)][string]$Message,
+    [string]$Level = 'INFO'
+  )
+
+  if (-not (Test-GcTraceEnabled)) { return }
+
+  $ts = (Get-Date).ToString('HH:mm:ss.fff')
+  $line = "[{0}] [{1}] {2}" -f $ts, $Level.ToUpperInvariant(), $Message
+
+  try {
+    $path = [Environment]::GetEnvironmentVariable($script:GcTraceLogEnvVar)
+    if ($path) { Add-Content -LiteralPath $path -Value $line -Encoding utf8 }
+  } catch { }
+}
+
 ### BEGIN: Compatibility Helpers (Convert-XamlToControl / Get-NamedElements)
 # Some older prompts and modules refer to these helper names. Provide them as thin wrappers.
 function Convert-XamlToControl {
@@ -945,10 +985,13 @@ function Set-OfflineDemoMode {
         Auth        = $script:AppState.Auth
         TokenStatus = $script:AppState.TokenStatus
         AccessToken = $script:AppState.AccessToken
+        Trace       = [Environment]::GetEnvironmentVariable($script:GcTraceEnvVar)
       }
     }
 
     [Environment]::SetEnvironmentVariable($script:OfflineDemoEnvVar, '1', 'Process')
+    # Enable persistent tracing by default in OfflineDemo to support "click around" debugging.
+    try { [Environment]::SetEnvironmentVariable($script:GcTraceEnvVar, '1', 'Process') } catch { }
 
     $script:AppState.Region = 'offline.local'
     if (-not $script:AppState.AccessToken) { $script:AppState.AccessToken = 'offline-demo' }
@@ -964,6 +1007,7 @@ function Set-OfflineDemoMode {
       if ($BtnTestToken) { $BtnTestToken.IsEnabled = $true }
     } catch { }
 
+    Write-GcTrace -Level 'INFO' -Message "Offline demo enabled"
     try { Set-TopContext } catch { }
     try { Set-Status "Offline demo enabled (sample data)." } catch { }
     return
@@ -977,6 +1021,7 @@ function Set-OfflineDemoMode {
     $script:AppState.Auth = $script:OfflineDemoPreviousState.Auth
     $script:AppState.TokenStatus = $script:OfflineDemoPreviousState.TokenStatus
     $script:AppState.AccessToken = $script:OfflineDemoPreviousState.AccessToken
+    try { [Environment]::SetEnvironmentVariable($script:GcTraceEnvVar, $script:OfflineDemoPreviousState.Trace, 'Process') } catch { }
     $script:OfflineDemoPreviousState = $null
   } else {
     $script:AppState.AccessToken = $null
@@ -990,6 +1035,7 @@ function Set-OfflineDemoMode {
     if ($BtnTestToken) { $BtnTestToken.IsEnabled = [bool]$script:AppState.AccessToken }
   } catch { }
 
+  Write-GcTrace -Level 'INFO' -Message "Offline demo disabled"
   try { Set-TopContext } catch { }
   try { Set-Status "Offline demo disabled." } catch { }
 }
@@ -1052,6 +1098,7 @@ function Add-OfflineDemoSampleEvents {
 
   Refresh-HeaderStats
   Set-Status ("Seeded {0} offline demo events. Try Conversation Timeline with {1}." -f $Count, $convIds[0])
+  Write-GcTrace -Level 'INFO' -Message ("Offline demo: seeded events Count={0} FocusConversationId={1}" -f $Count, $convIds[0])
 }
 
 function Refresh-HeaderStats {
@@ -1109,9 +1156,12 @@ function Write-GcDiag {
   param(
     [Parameter(Mandatory)][string]$Message
   )
-  if (-not $script:GcConsoleDiagnosticsEnabled) { return }
   $ts = (Get-Date).ToString('HH:mm:ss.fff')
-  Write-Host ("[{0}] [DIAG] {1}" -f $ts, $Message)
+  $line = ("[{0}] [DIAG] {1}" -f $ts, $Message)
+  if ($script:GcConsoleDiagnosticsEnabled) {
+    Write-Host $line
+  }
+  Write-GcTrace -Level 'DIAG' -Message $Message
 }
 
 function Start-TokenTest {
@@ -1134,6 +1184,19 @@ function Start-TokenTest {
   .EXAMPLE
     Start-TokenTest
   #>
+
+  # Normalize copy/pasted region/token formats before testing.
+  $normalizedRegion = Normalize-GcInstanceName -RegionText $script:AppState.Region
+  if ($normalizedRegion -and $normalizedRegion -ne $script:AppState.Region) {
+    Write-GcDiag ("Start-TokenTest: normalized Region '{0}' -> '{1}'" -f $script:AppState.Region, $normalizedRegion)
+    $script:AppState.Region = $normalizedRegion
+  }
+
+  $normalizedToken = Normalize-GcAccessToken -TokenText $script:AppState.AccessToken
+  if ($normalizedToken -and $script:AppState.AccessToken -and $normalizedToken -ne $script:AppState.AccessToken) {
+    Write-GcDiag ("Start-TokenTest: normalized Token {0} -> {1}" -f (Format-GcDiagSecret -Value $script:AppState.AccessToken), (Format-GcDiagSecret -Value $normalizedToken))
+    $script:AppState.AccessToken = $normalizedToken
+  }
 
   if (-not $script:AppState.AccessToken) {
     Write-GcDiag "Start-TokenTest: no token in AppState.AccessToken"
@@ -1290,31 +1353,57 @@ function Start-TokenTest {
     } else {
       # FAILURE: Token test failed
       $errorMsg = if ($job.Result) { $job.Result.Error } else { "Unknown error" }
+      $statusCode = $null
+      $requestUri = $null
+      $responseBody = $null
+      try {
+        if ($job.Result) {
+          $statusCode = $job.Result.StatusCode
+          $requestUri = $job.Result.RequestUri
+          $responseBody = $job.Result.ResponseBody
+        }
+      } catch { }
+
+      $extraDetails = New-Object System.Collections.Generic.List[string]
+      if ($requestUri) { $extraDetails.Add(("Request: {0}" -f $requestUri)) | Out-Null }
+      if ($statusCode) { $extraDetails.Add(("HTTP: {0}" -f $statusCode)) | Out-Null }
+      if ($responseBody) {
+        $body = [string]$responseBody
+        if ($body.Length -gt 2000) { $body = $body.Substring(0, 2000) + '…' }
+        $extraDetails.Add("Response body (first 2000 chars):") | Out-Null
+        $extraDetails.Add($body) | Out-Null
+      }
+      $extraText = ''
+      if ($extraDetails.Count -gt 0) {
+        $extraText = "`n`n" + ($extraDetails -join "`n")
+      }
 
       # Analyze error and provide user-friendly message
       $userMessage = "Token test failed."
       $detailMessage = $errorMsg
 
       # Check for common error scenarios
-      if ($errorMsg -match "400|Bad Request") {
+      if ($statusCode -eq 400 -or $errorMsg -match "400|Bad Request") {
         $userMessage = "Bad Request"
-        $detailMessage = "The API request was malformed. This usually indicates:`n• Token has invalid format or characters`n• Token contains line breaks or extra whitespace`n• Region format is incorrect`n`nRegion: $($script:AppState.Region)`nPlease verify the token was copied correctly without any line breaks.`n`nError: $errorMsg"
+        $detailMessage = "The API request was rejected as malformed (HTTP 400). Common causes:`n• Token includes hidden whitespace/line breaks or surrounding quotes`n• You pasted a full JSON token response instead of only access_token`n• Region/host was pasted as an apps/login/api URL`n`nRegion: $($script:AppState.Region)`nAPI Host: https://api.$($script:AppState.Region)`n`nError: $errorMsg$extraText"
       }
-      elseif ($errorMsg -match "401|Unauthorized") {
+      elseif ($statusCode -eq 401 -or $errorMsg -match "401|Unauthorized") {
         $userMessage = "Token Invalid or Expired"
-        $detailMessage = "The access token is not valid or has expired. Please log in again.`n`nError: $errorMsg"
+        $detailMessage = "The access token is not valid or has expired. Please log in again.`n`nRegion: $($script:AppState.Region)`nError: $errorMsg$extraText"
       }
       elseif ($errorMsg -match "Unable to connect|could not be resolved|Name or service not known") {
         $userMessage = "Connection Failed"
-        $detailMessage = "Cannot connect to region '$($script:AppState.Region)'. Please verify:`n• Region is correct (e.g., mypurecloud.com, usw2.pure.cloud)`n• Network connection is available`n`nError: $errorMsg"
+        $detailMessage = "Cannot connect to region '$($script:AppState.Region)'. Please verify:`n• Region is correct (e.g., mypurecloud.com, usw2.pure.cloud)`n• Network connection is available`n`nError: $errorMsg$extraText"
       }
-      elseif ($errorMsg -match "404|Not Found") {
+      elseif ($statusCode -eq 404 -or $errorMsg -match "404|Not Found") {
         $userMessage = "Endpoint Not Found"
-        $detailMessage = "API endpoint not found. This may indicate:`n• Wrong region configured`n• API version mismatch`n`nRegion: $($script:AppState.Region)`nError: $errorMsg"
+        $detailMessage = "API endpoint not found. This may indicate:`n• Wrong region configured`n• API version mismatch`n`nRegion: $($script:AppState.Region)`nError: $errorMsg$extraText"
       }
-      elseif ($errorMsg -match "403|Forbidden") {
+      elseif ($statusCode -eq 403 -or $errorMsg -match "403|Forbidden") {
         $userMessage = "Permission Denied"
-        $detailMessage = "Token is valid but lacks permission to access user information.`n`nError: $errorMsg"
+        $detailMessage = "Token is valid but lacks permission to access user information.`n`nRegion: $($script:AppState.Region)`nError: $errorMsg$extraText"
+      } else {
+        $detailMessage = "$errorMsg$extraText"
       }
 
       # Update AppState to reflect failure
@@ -1453,20 +1542,30 @@ function Show-SetTokenDialog {
       Write-GcDiag "Manual token entry: 'Set + Test' clicked"
 
       # Get and clean region input
-      $region = $txtRegion.Text.Trim()
-      Write-GcDiag ("Manual token entry: region(raw)='{0}'" -f $region)
+      $regionRaw = $txtRegion.Text
+      $region = Normalize-GcInstanceName -RegionText $regionRaw
+      Write-GcDiag ("Manual token entry: region(raw)='{0}' region(normalized)='{1}'" -f ($regionRaw ?? ''), ($region ?? ''))
 
       # Get token and perform comprehensive sanitization
-      # Remove all line breaks, carriage returns, and extra whitespace
-      $token = $txtToken.Text -replace '[\r\n]+', ''  # Remove line breaks
-      $token = $token.Trim()  # Remove leading/trailing whitespace
-      Write-GcDiag ("Manual token entry: token(raw/sanitized)={0}" -f (Format-GcDiagSecret -Value $token))
+      $tokenRaw = $txtToken.Text
+      $token = Normalize-GcAccessToken -TokenText $tokenRaw
+      Write-GcDiag ("Manual token entry: token(normalized)={0}" -f (Format-GcDiagSecret -Value $token))
 
       # Validate region input
       if ([string]::IsNullOrWhiteSpace($region)) {
         [System.Windows.MessageBox]::Show(
-          "Please enter a region (e.g., mypurecloud.com, usw2.pure.cloud)",
+          "Please enter a region (e.g., mypurecloud.com, usw2.pure.cloud). You can also paste an apps/login/api URL and it will be normalized.",
           "Region Required",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Warning
+        )
+        return
+      }
+
+      if (-not ($region -match '\.')) {
+        [System.Windows.MessageBox]::Show(
+          "The region value doesn't look like a domain name.`n`nExpected examples:`n• mypurecloud.com`n• usw2.pure.cloud`n`nGot: $region",
+          "Region Format Warning",
           [System.Windows.MessageBoxButton]::OK,
           [System.Windows.MessageBoxImage]::Warning
         )
@@ -1483,12 +1582,6 @@ function Show-SetTokenDialog {
         )
         return
       }
-
-      # Remove "Bearer " prefix if present (case-insensitive)
-      if ($token -imatch '^Bearer\s+(.+)$') {
-        $token = $matches[1].Trim()
-      }
-      Write-GcDiag ("Manual token entry: token(after Bearer strip)={0}" -f (Format-GcDiagSecret -Value $token))
 
       # Basic token format validation (should look like a JWT or similar)
       # JWT tokens have format: xxxxx.yyyyy.zzzzz (base64 parts separated by dots)
