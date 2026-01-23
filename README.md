@@ -42,7 +42,7 @@ Before running the application, you need to configure OAuth credentials. See [CO
 
 Quick summary:
 1. Create an OAuth client in Genesys Cloud (Admin → Integrations → OAuth)
-2. Edit `App/GenesysCloudTool_UX_Prototype_v2_1.ps1` and update the `Set-GcAuthConfig` section with your Client ID
+2. Edit `App/GenesysCloudTool_UX_Prototype.ps1` and update the `Set-GcAuthConfig` section with your Client ID
 3. Launch the application
 
 **Testing**: 
@@ -67,7 +67,7 @@ Verify the installation and core module loading:
 
 ```powershell
 # From repository root
-./App/GenesysCloudTool_UX_Prototype_v2_1.ps1
+./App/GenesysCloudTool_UX_Prototype.ps1
 ```
 
 ## Money Path Flow: End-to-End
@@ -105,7 +105,7 @@ Exported packets are saved to `artifacts/` directory and accessible via the Arti
   ArtifactGenerator.psm1  # Incident packet generator
 
 /App               # Application entry points
-  GenesysCloudTool_UX_Prototype_v2_1.ps1   # WPF UI application
+  GenesysCloudTool_UX_Prototype.ps1   # WPF UI application
 
 /docs              # Documentation
   ARCHITECTURE.md    # Core contracts, pagination policy, workspaces

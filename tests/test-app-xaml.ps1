@@ -8,14 +8,14 @@ $ErrorActionPreference = 'Stop'
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Testing GenesysCloudTool_UX_Prototype_v2_1.ps1 XAML Parsing" -ForegroundColor Cyan
+Write-Host "Testing GenesysCloudTool_UX_Prototype.ps1 XAML Parsing" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Get the script path
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $repoRoot = Split-Path -Parent $scriptRoot
-$appScript = Join-Path $repoRoot "App/GenesysCloudTool_UX_Prototype_v2_1.ps1"
+$appScript = Join-Path $repoRoot "App/GenesysCloudTool_UX_Prototype.ps1"
 
 Write-Host "Testing script: $appScript" -ForegroundColor Yellow
 Write-Host ""
@@ -59,14 +59,14 @@ catch {
     exit 1
 }
 
-# Test: Check for the specific fix (curly brace escape)
-Write-Host "Test: Verifying XAML curly brace escape fix..." -ForegroundColor Yellow
+# Test: Verify helper functions exist for safe XAML construction
+Write-Host "Test: Verifying XAML helper functions exist..." -ForegroundColor Yellow
 
-if ($scriptContent -match 'Text="\{\}\s*\{') {
-    Write-Host "[PASS] Found escaped curly brace in XAML Text attribute" -ForegroundColor Green
+if ($scriptContent -match 'function\s+ConvertFrom-GcXaml' -and $scriptContent -match 'function\s+Escape-GcXml') {
+    Write-Host "[PASS] ConvertFrom-GcXaml and Escape-GcXml are present" -ForegroundColor Green
     Write-Host ""
 } else {
-    Write-Host "[FAIL] Could not find the expected XAML fix" -ForegroundColor Red
+    Write-Host "[FAIL] Missing ConvertFrom-GcXaml or Escape-GcXml" -ForegroundColor Red
     exit 1
 }
 
@@ -90,7 +90,7 @@ Write-Host "Test Summary" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "✓ Script syntax is valid" -ForegroundColor Green
-Write-Host "✓ XAML curly brace escape fix is present" -ForegroundColor Green
+Write-Host "✓ XAML helper functions are present" -ForegroundColor Green
 Write-Host "✓ Ready for execution" -ForegroundColor Green
 Write-Host ""
 Write-Host "================================" -ForegroundColor Green

@@ -10,7 +10,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype_v2_1.ps1'
+$appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
 
 Write-Host "Testing: $appFile" -ForegroundColor Gray
 Write-Host ""

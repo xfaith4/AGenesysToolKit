@@ -32,7 +32,7 @@ $testsPassed = 0
 $testsFailed = 0
 
 # Load the main app script
-$appScript = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype_v2_1.ps1'
+$appScript = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
 $appContent = Get-Content -Path $appScript -Raw
 
 Write-Host "========================================" -ForegroundColor Cyan
