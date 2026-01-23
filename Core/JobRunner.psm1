@@ -260,6 +260,7 @@ function Start-GcJob {
           try {
             $out = @($Job.Result)
             $stringOut = @($out | Where-Object { $_ -is [string] })
+            $nonStringOut = @($out | Where-Object { $null -ne $_ -and $_ -isnot [string] })
             if ($stringOut.Count -gt 0) {
               $max = 250
               $emit = $stringOut | Select-Object -First $max
@@ -267,6 +268,10 @@ function Start-GcJob {
               if ($stringOut.Count -gt $max) {
                 Add-GcJobLog -Job $Job -Message ("(output truncated: {0} lines; showing first {1})" -f $stringOut.Count, $max)
               }
+            }
+            # If the pipeline produced progress strings plus a single structured result, keep the object as Job.Result.
+            if ($nonStringOut.Count -eq 1 -and ($stringOut.Count -gt 0)) {
+              $Job.Result = $nonStringOut[0]
             }
           } catch { }
 
@@ -342,6 +347,7 @@ function Start-GcJob {
       try {
         $out = @($Job.Result)
         $stringOut = @($out | Where-Object { $_ -is [string] })
+        $nonStringOut = @($out | Where-Object { $null -ne $_ -and $_ -isnot [string] })
         if ($stringOut.Count -gt 0) {
           $max = 250
           $emit = $stringOut | Select-Object -First $max
@@ -349,6 +355,10 @@ function Start-GcJob {
           if ($stringOut.Count -gt $max) {
             Add-GcJobLog -Job $Job -Message ("(output truncated: {0} lines; showing first {1})" -f $stringOut.Count, $max)
           }
+        }
+        # If the pipeline produced progress strings plus a single structured result, keep the object as Job.Result.
+        if ($nonStringOut.Count -eq 1 -and ($stringOut.Count -gt 0)) {
+          $Job.Result = $nonStringOut[0]
         }
       } catch { }
 

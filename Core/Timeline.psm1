@@ -275,14 +275,21 @@ function ConvertTo-GcTimeline {
                 segmentType = $segmentType
               }
             
-            # Extract disconnect/error codes
-            if ($segment.disconnectType) {
+            # Extract disconnect/error codes (some segment shapes omit disconnectType)
+            $disconnectType = $null
+            try {
+              if ($segment -and $segment.PSObject -and $segment.PSObject.Properties['disconnectType']) {
+                $disconnectType = $segment.disconnectType
+              }
+            } catch { $disconnectType = $null }
+
+            if ($disconnectType) {
               $timeline += New-GcTimelineEvent `
                 -Time $segmentStart `
                 -Category 'Error' `
-                -Label "Disconnect: $($segment.disconnectType)" `
+                -Label "Disconnect: $disconnectType" `
                 -Details @{ 
-                  disconnectType = $segment.disconnectType
+                  disconnectType = $disconnectType
                   segment = $segment
                 } `
                 -CorrelationKeys @{

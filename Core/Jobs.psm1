@@ -19,7 +19,12 @@ function Wait-GcAsyncJob {
     $st = Invoke-GcRequest -Method GET -Path ($StatusPath -f $JobId) -AccessToken $AccessToken -InstanceName $InstanceName
 
     # Be flexible: Genesys often uses status values like "FULFILLED", "RUNNING", etc.
-    $status = $st.status
+    $status = $null
+    try { $status = $st.status } catch { $status = $null }
+    if (-not $status) {
+      # Many Genesys async job resources use `state` instead of `status`.
+      try { $status = $st.state } catch { $status = $null }
+    }
     if ($status -match 'FULFILLED|COMPLETED|SUCCESS') { return $st }
     if ($status -match 'FAILED|ERROR') { throw "Async job failed: $($st | ConvertTo-Json -Depth 6)" }
 

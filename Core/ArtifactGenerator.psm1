@@ -83,24 +83,26 @@ function New-GcIncidentPacket {
     $files['timeline'] = $timelinePath
   }
   
-  # 3. events.ndjson (filter by conversationId if available)
+  # 3. events.ndjson (always created; filtered by conversationId if available)
+  $eventsPath = Join-Path -Path $packetDir -ChildPath 'events.ndjson'
   if ($SubscriptionEvents -and $SubscriptionEvents.Count -gt 0) {
-    $eventsPath = Join-Path -Path $packetDir -ChildPath 'events.ndjson'
-    
     # Filter subscription events for this conversation
-    $relevantEvents = @($SubscriptionEvents | Where-Object { 
-      $_.conversationId -eq $ConversationId 
+    $relevantEvents = @($SubscriptionEvents | Where-Object {
+      $_.conversationId -eq $ConversationId
     })
-    
+
     # If no events match conversationId, include all (backward compatibility)
     if ($relevantEvents.Count -eq 0) {
       $relevantEvents = @($SubscriptionEvents)
     }
-    
+
     $lines = $relevantEvents | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 10 }
     $lines | Set-Content -Path $eventsPath -Encoding UTF8
-    $files['events'] = $eventsPath
+  } else {
+    # Keep an empty placeholder so packet consumers can rely on the file existing.
+    "" | Set-Content -Path $eventsPath -Encoding UTF8
   }
+  $files['events'] = $eventsPath
   
   # 4. transcript.txt (best-effort extraction from subscription events and timeline)
   # Filter events for this conversation

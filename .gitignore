@@ -2,6 +2,7 @@
 artifacts/
 exports/
 output/
+App/artifacts/
 
 # Sensitive data
 *.token

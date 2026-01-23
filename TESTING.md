@@ -49,6 +49,26 @@ Get-ChildItem ./tests/smoke.ps1, ./tests/test-jobrunner.ps1, ./tests/test-parame
 
 ## Test Suites
 
+### OfflineDemo Workflow Tests (`test-offlinedemo-workflow.ps1`)
+
+**Purpose**: Validate all OfflineDemo-supported API flows (SampleData router) headlessly, and ensure trace logs are written locally for debugging.
+
+**Duration**: ~5–10 seconds
+
+**What it tests:**
+- Offline sample-data routing for key endpoints (users/me, audits, queues, flows, actions, recordings, quality)
+- Analytics conversation details async job flow (submit → wait → results)
+- Timeline reconstruction using offline conversation + analytics data
+- Trace log file creation for a test run
+
+**Running:**
+```powershell
+./tests/test-offlinedemo-workflow.ps1
+```
+
+**Artifacts:**
+- Trace log written under `./artifacts/offlinedemo-test-*.log` (gitignored)
+
 ### 1. Smoke Tests (`smoke.ps1`)
 
 **Purpose**: Verify all core modules load correctly and key functions exist.
@@ -144,6 +164,10 @@ These tests are available for specific scenarios:
 - **`test-reports-exports-ui.ps1`**: UI export functionality
 
 ## Manual Testing
+
+### OfflineDemo Manual Plan
+
+- `docs/OFFLINEDEMO_TEST_PLAN.md`
 
 ### Testing the Application UI
 
