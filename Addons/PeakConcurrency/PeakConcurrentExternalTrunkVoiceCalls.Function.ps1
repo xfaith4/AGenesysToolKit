@@ -1,3 +1,25 @@
+<#
+PeakConcurrentExternalTrunkVoiceCalls is now a single-function, single-input script:
+PeakConcurrentExternalTrunkVoiceCalls -Interval "startZ/endZ"
+It builds headers internally from $script:AccessToken, chunks with overlap, de-dupes by leg key, and computes peak concurrency via sweep-line.
+
+Your metric definition is enforced in compute (most defensible):
+
+Include: voice, Edge, sessionDnis starts tel:, mediaEndpointStats exists
+
+Exclude: callback, voicemail, wrapup/acw/aftercallwork segments
+
+You also have a PII-sanitizer PowerShell function that preserves structure and prefixes (tel: / sip:) with stable placeholders for test data.
+
+When you spin up the next chat, just paste:
+
+the interval-call pattern you want,
+
+any changes to the “include/exclude” definition,
+
+and (if you care) the style preference like “avoid $pid, prefer $partId”.
+#>
+
 #requires -Version 5.1
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -269,7 +291,7 @@ function Get-TrunkIntervalsFromConversations {
     if (-not $conv.participants) { continue }
 
     foreach ($p in $conv.participants) {
-      $pid = $p.participantId
+      $partid = $p.participantId
       if (-not $p.sessions) { continue }
 
       foreach ($s in $p.sessions) {
@@ -282,9 +304,9 @@ function Get-TrunkIntervalsFromConversations {
         if (-not $clipped) { continue }
 
         $intervals.Add([pscustomobject]@{
-          LegKey         = ("{0}|{1}|{2}" -f $convId, $pid, $s.sessionId)
+          LegKey         = ("{0}|{1}|{2}" -f $convId, $partid, $s.sessionId)
           ConversationId = $convId
-          ParticipantId  = $pid
+          ParticipantId  = $partid
           SessionId      = $s.sessionId
           EdgeId         = $s.edgeId
           SessionDnis    = $s.sessionDnis
