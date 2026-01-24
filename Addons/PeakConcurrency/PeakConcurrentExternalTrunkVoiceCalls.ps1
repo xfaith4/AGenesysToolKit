@@ -29,17 +29,8 @@ function PeakConcurrentExternalTrunkVoiceCalls {
   - Designed for PowerShell 5.1 and 7+.
 
 .EXAMPLE
-  $h = @{ Authorization = "Bearer $token" }
-  $jobBase = @{
-    interval = "placeholder"
-    order    = "asc"
-    paging   = @{ pageSize = 100; pageNumber = 1 }
-  }
 
-  PeakConcurrentExternalTrunkVoiceCalls `
-    -StartUtc "2024-02-16T00:00:00Z" -EndUtc "2024-02-17T00:00:00Z" `
-    -JobRequestBodyBase $jobBase `
-    -ExportSummaryJson -ExportIntervalsCsv
+  PeakConcurrentExternalTrunkVoiceCalls -interval "2026-01-23T10:00:00Z\2026-01-23T13:00:00Z" -ExportSummaryJson -ExportIntervalsCsv
 
 #>
 
@@ -219,10 +210,38 @@ function New-DetailsJob {
   )
 
   $uri = ($ApiBaseUri.TrimEnd('/') + "/api/v2/analytics/conversations/details/jobs")
-  $body = @{}
-  foreach ($k in $JobRequestBodyBase.Keys) { $body[$k] = $JobRequestBodyBase[$k] }
+  $body = @'
+  {
+  "segmentFilters": [
+    {
+      "type": "and",
+      "predicates": [
+        {
+          "dimension": "dnis",
+          "operator": "matches",
+          "value": "tel:"
+        }
+      ]
+    },
+    {
+      "type": "and",
+      "predicates": [
+        {
+          "dimension": "mediaType",
+          "operator": "matches",
+          "value": "voice"
+        }
+      ]
+    },
+    {
+      "type": "and"
+    }
+  ],
+  "interval": "$interval"
+  }
+'@
 
-  $body.interval = ("{0}/{1}" -f (Format-IsoUtc $QueryStart), (Format-IsoUtc $QueryEnd))
+
   $resp = Invoke-GcRequest -Method POST -Uri $uri -Body $body
   if (-not $resp.id) { throw "Job creation did not return an id." }
   return $resp.id
