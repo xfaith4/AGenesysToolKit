@@ -6,18 +6,10 @@ It builds headers internally from $script:AccessToken, chunks with overlap, de-d
 Your metric definition is enforced in compute (most defensible):
 
 Include: voice, Edge, sessionDnis starts tel:, mediaEndpointStats exists
-
 Exclude: callback, voicemail, wrapup/acw/aftercallwork segments
 
-You also have a PII-sanitizer PowerShell function that preserves structure and prefixes (tel: / sip:) with stable placeholders for test data.
-
-When you spin up the next chat, just paste:
-
-the interval-call pattern you want,
-
-any changes to the “include/exclude” definition,
-
-and (if you care) the style preference like “avoid $pid, prefer $partId”.
+This version hardens all ".Count" usage by normalizing potentially-scalar values to arrays via @(...),
+which avoids StrictMode failures when APIs return a single object instead of an array.
 #>
 
 #requires -Version 5.1
@@ -202,12 +194,18 @@ function Get-DetailsJobResults {
     elseif ($resp.entities)  { $items = $resp.entities }
     elseif ($resp.results)   { $items = $resp.results }
 
-    if ($items) { foreach ($c in $items) { $all.Add($c) | Out-Null } }
+    # Normalize to array to avoid StrictMode failures when API returns a single object
+    $itemsArr = @($items)
+
+    if ($itemsArr.Count -gt 0) {
+      foreach ($c in $itemsArr) { $all.Add($c) | Out-Null }
+    }
 
     if ($pageCount) {
       if ($page -ge $pageCount) { break }
     } else {
-      if (-not $items -or $items.Count -lt $PageSize) { break }
+      # Stop when we got less than a full page (or none)
+      if ($itemsArr.Count -lt $PageSize) { break }
     }
     $page++
   }
@@ -228,12 +226,14 @@ function Test-QualifyingTrunkSession {
   if ($Participant.purpose -eq 'voicemail') { return $false }
   if ($sdnis -match 'user=voicemail') { return $false }
 
-  if (-not $Session.mediaEndpointStats -or $Session.mediaEndpointStats.Count -lt 1) { return $false }
+  if (@($Session.mediaEndpointStats).Count -lt 1) { return $false }
 
-  if ($script:AllowedEdgeIds -and $script:AllowedEdgeIds.Count -gt 0) {
+  # Normalize AllowedEdgeIds to array-of-strings (handles $null, scalar string, or array)
+  $allowedEdgeIds = @($script:AllowedEdgeIds) | Where-Object { $_ -and $_.ToString().Trim() -ne '' }
+  if ($allowedEdgeIds.Count -gt 0) {
     $edgeId = $Session.edgeId
     if (-not $edgeId) { return $false }
-    if ($script:AllowedEdgeIds -notcontains $edgeId) { return $false }
+    if ($allowedEdgeIds -notcontains $edgeId) { return $false }
   }
 
   $true
@@ -241,8 +241,9 @@ function Test-QualifyingTrunkSession {
 
 function Get-SessionIntervalUtc {
   param([Parameter(Mandatory)][object]$Session)
-  $seg = $Session.segments
-  if (-not $seg -or $seg.Count -lt 1) { return $null }
+
+  $seg = @($Session.segments)
+  if ($seg.Count -lt 1) { return $null }
 
   $use = @()
   foreach ($s in $seg) {
@@ -286,15 +287,11 @@ function Get-TrunkIntervalsFromConversations {
   )
   $intervals = New-Object System.Collections.Generic.List[object]
 
-  foreach ($conv in $Conversations) {
+  foreach ($conv in @($Conversations)) {
     $convId = $conv.conversationId
-    if (-not $conv.participants) { continue }
-
-    foreach ($p in $conv.participants) {
+    foreach ($p in @($conv.participants)) {
       $partid = $p.participantId
-      if (-not $p.sessions) { continue }
-
-      foreach ($s in $p.sessions) {
+      foreach ($s in @($p.sessions)) {
         if (-not (Test-QualifyingTrunkSession -Participant $p -Session $s)) { continue }
 
         $si = Get-SessionIntervalUtc -Session $s
@@ -326,7 +323,7 @@ function DeDupe-Intervals {
   $map = @{}
   $dupCount = 0
 
-  foreach ($i in $Intervals) {
+  foreach ($i in @($Intervals)) {
     $k = $i.LegKey
     if (-not $map.ContainsKey($k)) { $map[$k] = $i; continue }
 
@@ -351,7 +348,7 @@ function Compute-Concurrency {
   )
 
   $events = New-Object System.Collections.Generic.List[object]
-  foreach ($i in $Intervals) {
+  foreach ($i in @($Intervals)) {
     $events.Add([pscustomobject]@{ Ts = $i.StartUtc; Delta =  1; LegKey = $i.LegKey }) | Out-Null
     $events.Add([pscustomobject]@{ Ts = $i.EndUtc;   Delta = -1; LegKey = $i.LegKey }) | Out-Null
   }
@@ -402,7 +399,8 @@ function PeakConcurrentExternalTrunkVoiceCalls {
 
   if (-not $script:ApiBaseUri) { throw 'ApiBaseUri is not set.' }
 
-  $parts = $Interval -split '[\/]' | Where-Object { $_ -and $_.Trim() -ne '' }
+  # Normalize split result to array
+  $parts = @($Interval -split '/' | Where-Object { $_ -and $_.Trim() })
   if ($parts.Count -ne 2) { throw 'Interval must be in the form "start/end" (ISO8601).' }
 
   $windowStart = ConvertTo-UtcDateTime $parts[0].Trim()
@@ -415,13 +413,13 @@ function PeakConcurrentExternalTrunkVoiceCalls {
   $chunks = New-TimeChunks -StartUtc $windowStart -EndUtc $windowEnd -Size $script:ChunkSize -Unit $script:ChunkUnit -OverlapMinutes $script:ChunkOverlapMinutes
   $allIntervals = New-Object System.Collections.Generic.List[object]
 
-  foreach ($c in $chunks) {
+  foreach ($c in @($chunks)) {
     $jobId = New-DetailsJob -Headers $headers -JobRequestBodyBase $jobBase -QueryStartUtc $c.QueryStart -QueryEndUtc $c.QueryEnd
     Wait-DetailsJob -Headers $headers -JobId $jobId
     $convs = Get-DetailsJobResults -Headers $headers -JobId $jobId -PageSize $script:PageSize
 
     $intervals = Get-TrunkIntervalsFromConversations -Conversations $convs -WindowStartUtc $windowStart -WindowEndUtc $windowEnd
-    foreach ($i in $intervals) { $allIntervals.Add($i) | Out-Null }
+    foreach ($i in @($intervals)) { $allIntervals.Add($i) | Out-Null }
   }
 
   $dedupe = DeDupe-Intervals -Intervals $allIntervals
