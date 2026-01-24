@@ -381,7 +381,7 @@ function Get-TrunkIntervalsFromConversations {
     if (-not $conv.participants) { continue }
 
     foreach ($p in $conv.participants) {
-      $pid = $p.participantId
+      $partid = $p.participantId
       if (-not $p.sessions) { continue }
 
       foreach ($s in $p.sessions) {
@@ -393,12 +393,12 @@ function Get-TrunkIntervalsFromConversations {
         $clipped = Clip-Interval -StartUtc $si.StartUtc -EndUtc $si.EndUtc -WindowStartUtc $WindowStartUtc -WindowEndUtc $WindowEndUtc
         if (-not $clipped) { continue }
 
-        $legKey = ("{0}|{1}|{2}" -f $convId, $pid, $s.sessionId)
+        $legKey = ("{0}|{1}|{2}" -f $convId, $partid, $s.sessionId)
 
         $intervals.Add([pscustomobject]@{
           LegKey         = $legKey
           ConversationId = $convId
-          ParticipantId  = $pid
+          ParticipantId  = $partid
           SessionId      = $s.sessionId
           EdgeId         = $s.edgeId
           Ani            = $s.ani
