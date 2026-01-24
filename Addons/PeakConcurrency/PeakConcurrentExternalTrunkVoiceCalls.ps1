@@ -1,5 +1,6 @@
+function PeakConcurrentExternalTrunkVoiceCalls {
 #requires -Version 5.1
-<#
+  <#
 .SYNOPSIS
   Computes peak concurrent external-trunk voice call volume (Edge trunk RTP legs) over a specified interval.
 
@@ -35,11 +36,8 @@
     paging   = @{ pageSize = 100; pageNumber = 1 }
   }
 
-  .\PeakConcurrentExternalTrunkVoiceCalls.Clean.ps1 `
-    -ApiBaseUri "https://api.usw2.pure.cloud" `
-    -Headers $h `
+  PeakConcurrentExternalTrunkVoiceCalls `
     -StartUtc "2024-02-16T00:00:00Z" -EndUtc "2024-02-17T00:00:00Z" `
-    -ChunkSize 1 -ChunkUnit Hours -ChunkOverlapMinutes 120 `
     -JobRequestBodyBase $jobBase `
     -ExportSummaryJson -ExportIntervalsCsv
 
@@ -639,3 +637,4 @@ Write-Host ("Intervals (final): {0} (collapsed duplicates: {1})" -f $summary.Res
 Write-Host ""
 
 return $summary
+}
