@@ -49,46 +49,11 @@
 param(
   [Parameter(Mandatory)]
   [ValidateNotNullOrEmpty()]
-  [string]$ApiBaseUri,
-
-  [Parameter()]
-  [hashtable]$Headers,
-
-  [Parameter()]
-  [ValidateNotNullOrEmpty()]
-  [string]$AccessToken,
-
-  [Parameter(Mandatory)]
-  [ValidateNotNullOrEmpty()]
   [string]$StartUtc,
 
   [Parameter(Mandatory)]
   [ValidateNotNullOrEmpty()]
   [string]$EndUtc,
-
-  [Parameter()]
-  [ValidateRange(1, 3650)]
-  [int]$ChunkSize = 1,
-
-  [Parameter()]
-  [ValidateSet('Minutes','Hours','Days')]
-  [string]$ChunkUnit = 'Hours',
-
-  [Parameter()]
-  [ValidateRange(0, 1440)]
-  [int]$ChunkOverlapMinutes = 120,
-
-  [Parameter()]
-  [ValidateRange(25, 1000)]
-  [int]$PageSize = 100,
-
-  [Parameter()]
-  [ValidateRange(1, 3600)]
-  [int]$PollIntervalSeconds = 2,
-
-  [Parameter()]
-  [ValidateRange(1, 7200)]
-  [int]$JobTimeoutSeconds = 900,
 
   [Parameter(Mandatory)]
   [ValidateNotNull()]
@@ -112,6 +77,13 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ApiBaseUri="https://api.usw2.pure.cloud"
+ [int]$ChunkSize = 1
+ [string]$ChunkUnit = 'Hours'
+ [int]$ChunkOverlapMinutes = 120
+ [int]$PageSize = 100
+ [int]$PollIntervalSeconds = 5
+ [int]$JobTimeoutSeconds = 900
 
 function Write-Log {
   param(
