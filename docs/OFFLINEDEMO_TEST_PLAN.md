@@ -60,6 +60,7 @@ This plan validates all features intended to work without a real Genesys Cloud o
 ### G. Routing & People
 
 - [ ] Load Queues and verify at least one queue appears.
+- [ ] Load Skills and verify at least one skill appears.
 - [ ] Load Users and verify at least one user appears.
 - [ ] Refresh Routing Snapshot and verify metrics populate.
 
@@ -80,4 +81,3 @@ This plan validates all features intended to work without a real Genesys Cloud o
 - Backstage → Jobs → select the failed job → copy the job logs
 - Trace file (right-click `Login…` → `Open Trace Log`)
 - If an artifact was expected but missing, note the module + button pressed + timestamp
-

@@ -4,29 +4,6 @@ Set-StrictMode -Version Latest
 
 # Job state tracking
 $script:RunningJobs = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
-$script:TraceEnvVar = 'GC_TOOLKIT_TRACE'
-$script:TraceLogEnvVar = 'GC_TOOLKIT_TRACE_LOG'
-
-function Test-GcToolkitTraceEnabled {
-  try {
-    $v = [Environment]::GetEnvironmentVariable($script:TraceEnvVar)
-    return ($v -and ($v -match '^(1|true|yes|on)$'))
-  } catch { }
-  return $false
-}
-
-function Write-GcToolkitTraceLine {
-  param(
-    [Parameter(Mandatory)][string]$Line
-  )
-
-  if (-not (Test-GcToolkitTraceEnabled)) { return }
-
-  try {
-    $path = [Environment]::GetEnvironmentVariable($script:TraceLogEnvVar)
-    if ($path) { Add-Content -LiteralPath $path -Value $Line -Encoding utf8 }
-  } catch { }
-}
 
 function New-GcJobContext {
   <#
@@ -115,11 +92,23 @@ function Add-GcJobLog {
 
   # Also persist to a trace file when enabled (helps with OfflineDemo debugging).
   try {
+    $traceEnabled = $false
+    try {
+      $v = [Environment]::GetEnvironmentVariable('GC_TOOLKIT_TRACE')
+      if ($v -and ($v -match '^(1|true|yes|on)$')) { $traceEnabled = $true }
+    } catch { $traceEnabled = $false }
+
+    if (-not $traceEnabled) { return }
+
     $tsFile = (Get-Date).ToString('HH:mm:ss.fff')
     $jobName = ''
     try { $jobName = [string]$Job.Name } catch { $jobName = '' }
     $jobTag = if ($jobName) { "JOB:$jobName" } else { "JOB" }
-    Write-GcToolkitTraceLine -Line ("[{0}] [{1}] {2}" -f $tsFile, $jobTag, $Message)
+    $line = ("[{0}] [{1}] {2}" -f $tsFile, $jobTag, $Message)
+
+    $path = $null
+    try { $path = [Environment]::GetEnvironmentVariable('GC_TOOLKIT_TRACE_LOG') } catch { $path = $null }
+    if ($path) { Add-Content -LiteralPath $path -Value $line -Encoding utf8 }
   } catch { }
 }
 
@@ -276,7 +265,13 @@ function Start-GcJob {
           } catch { }
 
           # Capture verbose/information streams when toolkit tracing is enabled.
-          if (Test-GcToolkitTraceEnabled) {
+          $traceEnabled = $false
+          try {
+            $v = [Environment]::GetEnvironmentVariable('GC_TOOLKIT_TRACE')
+            if ($v -and ($v -match '^(1|true|yes|on)$')) { $traceEnabled = $true }
+          } catch { $traceEnabled = $false }
+
+          if ($traceEnabled) {
             try {
               if ($Job.PowerShell.Streams.Verbose.Count -gt 0) {
                 foreach ($v in $Job.PowerShell.Streams.Verbose) { Add-GcJobLog -Job $Job -Message ("VERBOSE: {0}" -f $v) }
@@ -362,7 +357,13 @@ function Start-GcJob {
         }
       } catch { }
 
-      if (Test-GcToolkitTraceEnabled) {
+      $traceEnabled = $false
+      try {
+        $v = [Environment]::GetEnvironmentVariable('GC_TOOLKIT_TRACE')
+        if ($v -and ($v -match '^(1|true|yes|on)$')) { $traceEnabled = $true }
+      } catch { $traceEnabled = $false }
+
+      if ($traceEnabled) {
         try {
           if ($ps.Streams.Verbose.Count -gt 0) {
             foreach ($v in $ps.Streams.Verbose) { Add-GcJobLog -Job $Job -Message ("VERBOSE: {0}" -f $v) }

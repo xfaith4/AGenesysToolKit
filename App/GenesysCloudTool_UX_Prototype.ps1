@@ -391,6 +391,15 @@ function New-Artifact {
   }
 }
 
+function Set-ControlEnabled {
+  param(
+    $Control,
+    [Parameter(Mandatory)][bool]$Enabled
+  )
+  if ($null -eq $Control) { return }
+  try { $Control.IsEnabled = $Enabled } catch { }
+}
+
 function Start-AppJob {
   <#
   .SYNOPSIS
@@ -449,8 +458,73 @@ function Start-AppJob {
   Add-GcJobLog -Job $job -Message "Queued."
   Write-GcTrace -Level 'JOB' -Message ("Queued job: Name='{0}' Type='{1}'" -f $Name, $Type)
 
-  # Start the job
-  Start-GcJob -Job $job -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -OnComplete $OnCompleted
+  # Start the job in a fresh runspace that needs:
+  # - core modules imported (Invoke-GcRequest, Invoke-GcPagedRequest, Export-GcConversationPacket, etc.)
+  # - minimal AppState available for older job scriptblocks that reference $script:AppState.*
+  $coreRootForJob = $null
+  try { $coreRootForJob = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'Core' } catch { $coreRootForJob = $null }
+  if (-not $coreRootForJob) { $coreRootForJob = $coreRoot }
+
+  $appStateSnapshot = [pscustomobject]@{
+    Region         = $script:AppState.Region
+    AccessToken    = $script:AppState.AccessToken
+    RepositoryRoot = $script:AppState.RepositoryRoot
+  }
+  $artifactsDirSnapshot = $script:ArtifactsDir
+  $userScriptText = $ScriptBlock.ToString()
+  $userArgs = if ($null -eq $ArgumentList) { @() } else { @($ArgumentList) }
+
+  $wrappedScriptBlock = {
+    param(
+      [string]$coreRoot,
+      [object]$appState,
+      [string]$artifactsDir,
+      [string]$userScriptText,
+      [object[]]$userArgs
+    )
+
+    # Provide expected script-scope variables used by existing job scriptblocks.
+    $script:AppState = $appState
+    $script:ArtifactsDir = $artifactsDir
+
+    # Ensure core cmdlets exist in this runspace.
+    $modules = @(
+      'HttpRequests.psm1'
+      'RoutingPeople.psm1'
+      'ConversationsExtended.psm1'
+      'Timeline.psm1'
+      'ArtifactGenerator.psm1'
+      'ConfigExport.psm1'
+      'Analytics.psm1'
+      'Dependencies.psm1'
+      'Reporting.psm1'
+      'ReportTemplates.psm1'
+      'Jobs.psm1'
+      'Auth.psm1'
+      'Subscriptions.psm1'
+    )
+
+    foreach ($m in $modules) {
+      try {
+        $p = Join-Path -Path $coreRoot -ChildPath $m
+        if (Test-Path $p) { Import-Module $p -Force -ErrorAction Stop }
+      } catch { }
+    }
+
+    # Allow HttpRequests helpers to auto-inject Region/AccessToken when used.
+    try { Set-GcAppState -State ([ref]$script:AppState) } catch { }
+
+    $sb = [scriptblock]::Create($userScriptText)
+    & $sb @userArgs
+  }
+
+  Start-GcJob -Job $job -ScriptBlock $wrappedScriptBlock -ArgumentList @(
+    $coreRootForJob,
+    $appStateSnapshot,
+    $artifactsDirSnapshot,
+    $userScriptText,
+    $userArgs
+  ) -OnComplete $OnCompleted
 
   return $job
 }
@@ -461,12 +535,6 @@ function Start-AppJob {
 # Shared scriptblock for timeline retrieval to avoid duplication
 $script:TimelineJobScriptBlock = {
   param($conversationId, $region, $accessToken, $eventBuffer)
-
-  # Import required modules in runspace
-  $scriptRoot = Split-Path -Parent $PSCommandPath
-  $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-  Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
-  Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
 
   try {
     Write-Output "Querying analytics for conversation $conversationId..."
@@ -2372,7 +2440,7 @@ function New-OperationalEventLogsView {
     } -ArgumentList @($startTime, $endTime) -OnCompleted {
       param($job)
 
-      $h.BtnOpQuery.IsEnabled = $true
+      Set-ControlEnabled -Control $h.BtnOpQuery -Enabled $true
 
       if ($job.Result) {
         $events = $job.Result
@@ -2647,7 +2715,7 @@ function New-AuditLogsView {
     } -ArgumentList @($startTime, $endTime) -OnCompleted {
       param($job)
 
-      $h.BtnAuditQuery.IsEnabled = $true
+      Set-ControlEnabled -Control $h.BtnAuditQuery -Enabled $true
 
       if ($job.Result) {
         $audits = $job.Result
@@ -2667,8 +2735,8 @@ function New-AuditLogsView {
 
         $h.GridAuditLogs.ItemsSource = $displayData
         $h.TxtAuditCount.Text = "($($audits.Count) audits)"
-        $h.BtnAuditExportJson.IsEnabled = $true
-        $h.BtnAuditExportCsv.IsEnabled = $true
+        Set-ControlEnabled -Control $h.BtnAuditExportJson -Enabled $true
+        Set-ControlEnabled -Control $h.BtnAuditExportCsv -Enabled $true
 
         Set-Status "Loaded $($audits.Count) audit entries."
       } else {
@@ -3207,11 +3275,6 @@ function New-ConversationLookupView {
     Start-AppJob -Name "Search Conversations" -Type "Query" -ScriptBlock {
       param($queryBody, $accessToken, $instanceName, $maxItems)
 
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1') -Force
-
       Search-GcConversations -Body $queryBody -AccessToken $accessToken -InstanceName $instanceName -MaxItems $maxItems
     } -ArgumentList @($queryBody, $script:AppState.AccessToken, $script:AppState.Region, $maxResults) -OnCompleted ({ 
       param($job)
@@ -3654,11 +3717,6 @@ function New-ConversationTimelineView {
     Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
 
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
-
       try {
         # Export packet
         $packet = Export-GcConversationPacket `
@@ -3880,12 +3938,6 @@ function New-AnalyticsJobsView {
     # Submit job via background runner
     Start-AppJob -Name "Submit Analytics Job" -Type "Query" -ScriptBlock {
       param($queryBody, $accessToken, $instanceName, $maxItems)
-
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'Jobs.psm1') -Force
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
 
       # Helper function to call Invoke-GcRequest with context
       function Invoke-GcRequestWithContext {
@@ -4209,11 +4261,6 @@ function New-IncidentPacketView {
 
     Start-AppJob -Name "Export Incident Packet — $convId" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer, $createZip)
-
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
 
       try {
         # Build subscription events from buffer (if available)
@@ -5698,12 +5745,6 @@ function New-ConfigExportView {
     Start-AppJob -Name "Export Configuration" -Type "Export" -ScriptBlock {
       param($accessToken, $instanceName, $artifactsDir, $includeFlows, $includeQueues, $includeSkills, $includeDataActions, $createZip)
 
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ConfigExport.psm1') -Force
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
-
       Export-GcCompleteConfig `
         -AccessToken $accessToken `
         -InstanceName $instanceName `
@@ -6273,7 +6314,7 @@ function New-SkillsView {
       Get-GcSkills -AccessToken $script:AppState.AccessToken -InstanceName $script:AppState.Region
     } -OnCompleted {
       param($job)
-      $h.BtnSkillLoad.IsEnabled = $true
+      Set-ControlEnabled -Control $h.BtnSkillLoad -Enabled $true
 
       if ($job.Result) {
         $script:SkillsData = $job.Result
@@ -6286,8 +6327,8 @@ function New-SkillsView {
         }
         $h.GridSkills.ItemsSource = $displayData
         $h.TxtSkillCount.Text = "($($job.Result.Count) skills)"
-        $h.BtnSkillExportJson.IsEnabled = $true
-        $h.BtnSkillExportCsv.IsEnabled = $true
+        Set-ControlEnabled -Control $h.BtnSkillExportJson -Enabled $true
+        Set-ControlEnabled -Control $h.BtnSkillExportCsv -Enabled $true
         Set-Status "Loaded $($job.Result.Count) skills."
       } else {
         $h.GridSkills.ItemsSource = @()
@@ -6676,12 +6717,6 @@ function New-UsersPresenceView {
 
     Start-AppJob -Name "Load Users" -Type "Query" -ScriptBlock {
       param($accessToken, $instanceName)
-
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'RoutingPeople.psm1') -Force
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
 
       Get-GcUsers -AccessToken $accessToken -InstanceName $instanceName
     } -ArgumentList @($script:AppState.AccessToken, $script:AppState.Region) -OnCompleted {
@@ -7320,11 +7355,6 @@ function New-SubscriptionsView {
     Start-AppJob -Name "Export Incident Packet — $conv" -Type 'Export' -ScriptBlock {
       param($conversationId, $region, $accessToken, $artifactsDir, $eventBuffer)
 
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
-
       try {
         # Build subscription events from buffer
         $subscriptionEvents = $eventBuffer
@@ -7832,12 +7862,6 @@ function New-ReportsExportsView {
     
     Start-AppJob -Name "Run Report — $($template.Name)" -Type 'Report' -ScriptBlock {
       param($templateName, $params)
-      
-      # Import required modules in runspace
-      $scriptRoot = Split-Path -Parent $PSCommandPath
-      $coreRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'Core'
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'Reporting.psm1') -Force
-      Import-Module (Join-Path -Path $coreRoot -ChildPath 'ReportTemplates.psm1') -Force
       
       try {
         $bundle = Invoke-GcReportTemplate -TemplateName $templateName -Parameters $params

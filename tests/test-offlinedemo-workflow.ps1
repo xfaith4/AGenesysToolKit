@@ -32,6 +32,7 @@ Import-Module (Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Jobs.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Timeline.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'ArtifactGenerator.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'RoutingPeople.psm1') -Force
 
 $instanceName = 'offline.local'
 $accessToken = 'offline-demo'
@@ -122,6 +123,22 @@ Invoke-TestCase -Name "Offline routing queues + snapshot" -Body {
   }
   $obs = Invoke-GcRequest -Method POST -Path '/api/v2/analytics/queues/observations/query' -InstanceName $instanceName -AccessToken $accessToken -Body $body
   Assert-True -Condition ($obs.results.Count -ge 1) -Message "Expected observations results."
+}
+
+Invoke-TestCase -Name "Offline routing skills list + get by id (module + endpoint)" -Body {
+  $skills = Get-GcSkills -AccessToken $accessToken -InstanceName $instanceName
+  Assert-True -Condition ($skills.Count -ge 1) -Message "Expected at least one skill."
+  $skillId = [string]$skills[0].id
+  Assert-True -Condition (-not [string]::IsNullOrWhiteSpace($skillId)) -Message "Expected skill id."
+
+  $skill = Invoke-GcRequest -Method GET -Path "/api/v2/routing/skills/$skillId" -InstanceName $instanceName -AccessToken $accessToken
+  Assert-True -Condition ([string]$skill.id -eq $skillId) -Message "Expected skill id match."
+}
+
+Invoke-TestCase -Name "Offline users list (module)" -Body {
+  $users = Get-GcUsers -AccessToken $accessToken -InstanceName $instanceName
+  Assert-True -Condition ($users.Count -ge 1) -Message "Expected at least one user."
+  Assert-True -Condition (-not [string]::IsNullOrWhiteSpace([string]$users[0].id)) -Message "Expected user id."
 }
 
 Invoke-TestCase -Name "Offline recordings list + media" -Body {
