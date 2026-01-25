@@ -725,6 +725,197 @@ $script:WorkspaceModules = [ordered]@{
 }
 
 # -----------------------------
+# Addons (manifest-driven)
+# -----------------------------
+$script:AddonsByRoute = @{}
+
+function Get-GcAddonDefinitions {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$AddonsRoot)
+
+  if (-not (Test-Path -LiteralPath $AddonsRoot)) { return @() }
+
+  $files = @(
+    Get-ChildItem -Path $AddonsRoot -Recurse -File -Filter '*.addon.psd1' -ErrorAction SilentlyContinue
+  )
+
+  $out = New-Object System.Collections.Generic.List[object]
+  foreach ($f in $files) {
+    if ($f.FullName -match '[\\/]\_Template[\\/]') { continue }
+
+    $data = $null
+    try {
+      $data = Import-PowerShellDataFile -Path $f.FullName
+    } catch {
+      Write-GcTrace -Level 'ADDON' -Message ("Failed to read addon manifest: {0} ({1})" -f $f.FullName, $_.Exception.Message)
+      continue
+    }
+
+    $workspace = [string]$data.Workspace
+    $module = [string]$data.Module
+    $entryRel = [string]$data.EntryPoint
+    if (-not $workspace -or -not $module -or -not $entryRel) {
+      Write-GcTrace -Level 'ADDON' -Message ("Invalid addon manifest (missing Workspace/Module/EntryPoint): {0}" -f $f.FullName)
+      continue
+    }
+
+    $manifestDir = Split-Path -Parent $f.FullName
+    $entryPath = Join-Path -Path $manifestDir -ChildPath $entryRel
+
+    $out.Add([pscustomobject]@{
+      Id          = [string]$data.Id
+      Name        = [string]$data.Name
+      Version     = [string]$data.Version
+      Workspace   = $workspace
+      Module      = $module
+      Description = [string]$data.Description
+      ManifestPath = $f.FullName
+      EntryPointPath = $entryPath
+      ViewFactory = [string]$data.ViewFactory
+      Loaded      = $false
+    }) | Out-Null
+  }
+
+  @($out)
+}
+
+function Initialize-GcAddons {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$RepoRoot)
+
+  $script:AddonsByRoute = @{}
+  $addonsRoot = Join-Path -Path $RepoRoot -ChildPath 'Addons'
+
+  foreach ($a in @(Get-GcAddonDefinitions -AddonsRoot $addonsRoot)) {
+    if (-not $script:WorkspaceModules.Contains($a.Workspace)) {
+      Write-GcTrace -Level 'ADDON' -Message ("Addon '{0}' ignored: unknown workspace '{1}'." -f ($a.Name ?? $a.Id ?? $a.Module), $a.Workspace)
+      continue
+    }
+
+    $route = ("{0}::{1}" -f $a.Workspace, $a.Module)
+    if ($script:AddonsByRoute.ContainsKey($route)) {
+      Write-GcTrace -Level 'ADDON' -Message ("Addon route duplicate ignored: {0}" -f $route)
+      continue
+    }
+
+    # Surface addon as a module under its target workspace
+    $mods = @($script:WorkspaceModules[$a.Workspace])
+    if ($mods -notcontains $a.Module) {
+      $script:WorkspaceModules[$a.Workspace] = @($mods + $a.Module)
+    }
+
+    $script:AddonsByRoute[$route] = $a
+  }
+
+  Write-GcTrace -Level 'ADDON' -Message ("Addons loaded: {0}" -f $script:AddonsByRoute.Count)
+}
+
+function Ensure-GcAddonLoaded {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][pscustomobject]$Addon)
+
+  if ($Addon.Loaded) { return }
+
+  if (-not (Test-Path -LiteralPath $Addon.EntryPointPath)) {
+    throw "Addon entry point not found: $($Addon.EntryPointPath)"
+  }
+
+  . $Addon.EntryPointPath
+  $Addon.Loaded = $true
+}
+
+function New-GcAddonLauncherView {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][pscustomobject]$Addon)
+
+  $name = if ($Addon.Name) { [string]$Addon.Name } else { [string]$Addon.Module }
+  $desc = if ($Addon.Description) { [string]$Addon.Description } else { 'This addon does not provide an in-app view factory. Use the shortcuts below.' }
+
+  $escapedName = Escape-GcXml $name
+  $escapedDesc = Escape-GcXml $desc
+  $escapedManifest = Escape-GcXml ([string]$Addon.ManifestPath)
+  $escapedEntry = Escape-GcXml ([string]$Addon.EntryPointPath)
+
+  $xaml = @"
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Border CornerRadius="10" BorderBrush="#FFE5E7EB" BorderThickness="1" Background="#FFF9FAFB" Padding="14">
+      <StackPanel>
+        <TextBlock Text="$escapedName" FontSize="16" FontWeight="SemiBold" Foreground="#FF111827"/>
+        <TextBlock Text="$escapedDesc" Margin="0,8,0,0" Foreground="#FF6B7280" TextWrapping="Wrap"/>
+
+        <TextBlock Text="Manifest:" Margin="0,14,0,0" Foreground="#FF374151" FontWeight="SemiBold"/>
+        <TextBlock Text="$escapedManifest" Foreground="#FF6B7280" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11"/>
+
+        <TextBlock Text="Entry:" Margin="0,10,0,0" Foreground="#FF374151" FontWeight="SemiBold"/>
+        <TextBlock Text="$escapedEntry" Foreground="#FF6B7280" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11"/>
+
+        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+          <Button x:Name="BtnOpenAddonFolder" Content="Open Folder" Height="30" Width="110" Margin="0,0,10,0"/>
+          <Button x:Name="BtnOpenEntry" Content="Open Entry" Height="30" Width="110" Margin="0,0,10,0"/>
+          <Button x:Name="BtnOpenManifest" Content="Open Manifest" Height="30" Width="120"/>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>
+"@
+
+  $view = ConvertFrom-GcXaml -XamlString $xaml
+  $btnFolder = $view.FindName('BtnOpenAddonFolder')
+  $btnEntry = $view.FindName('BtnOpenEntry')
+  $btnManifest = $view.FindName('BtnOpenManifest')
+
+  $btnFolder.Add_Click({
+    try {
+      $dir = Split-Path -Parent $Addon.EntryPointPath
+      if (Test-Path $dir) { Start-Process -FilePath $dir | Out-Null }
+    } catch { }
+  }.GetNewClosure())
+
+  $btnEntry.Add_Click({
+    try { if (Test-Path $Addon.EntryPointPath) { Start-Process -FilePath $Addon.EntryPointPath | Out-Null } } catch { }
+  }.GetNewClosure())
+
+  $btnManifest.Add_Click({
+    try { if (Test-Path $Addon.ManifestPath) { Start-Process -FilePath $Addon.ManifestPath | Out-Null } } catch { }
+  }.GetNewClosure())
+
+  $view
+}
+
+function Get-GcAddonView {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][pscustomobject]$Addon)
+
+  try {
+    Ensure-GcAddonLoaded -Addon $Addon
+  } catch {
+    return New-PlaceholderView -Title ($Addon.Name ?? $Addon.Module) -Hint ("Failed to load addon: {0}" -f $_.Exception.Message)
+  }
+
+  if ($Addon.ViewFactory) {
+    $cmd = Get-Command -Name $Addon.ViewFactory -ErrorAction SilentlyContinue
+    if ($cmd) {
+      try {
+        return & $cmd -Addon $Addon
+      } catch {
+        return New-PlaceholderView -Title ($Addon.Name ?? $Addon.Module) -Hint ("Addon view factory failed: {0}" -f $_.Exception.Message)
+      }
+    }
+  }
+
+  New-GcAddonLauncherView -Addon $Addon
+}
+
+try {
+  Initialize-GcAddons -RepoRoot $repoRoot
+} catch {
+  Write-GcTrace -Level 'ADDON' -Message ("Addon initialization failed: {0}" -f $_.Exception.Message)
+}
+
+# -----------------------------
 # XAML - App Shell + Backstage + Snackbar
 # -----------------------------
 $xamlString = @"
@@ -8309,7 +8500,14 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
       $MainHost.Content = (New-ReportsExportsView)
     }
     default {
-      $MainHost.Content = (New-PlaceholderView -Title $module -Hint "Module shell for $workspace. UX-first; job-driven backend later.")
+      $route = "$workspace::$module"
+      if ($script:AddonsByRoute -and $script:AddonsByRoute.ContainsKey($route)) {
+        $addon = $script:AddonsByRoute[$route]
+        if ($addon.Description) { $TxtSubtitle.Text = [string]$addon.Description }
+        $MainHost.Content = (Get-GcAddonView -Addon $addon)
+      } else {
+        $MainHost.Content = (New-PlaceholderView -Title $module -Hint "Module shell for $workspace. UX-first; job-driven backend later.")
+      }
     }
   }
 
