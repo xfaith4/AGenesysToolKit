@@ -159,6 +159,13 @@ Set-GcAppState -State ([ref]$script:AppState)
 $script:ArtifactsDir = Join-Path -Path $PSScriptRoot -ChildPath 'artifacts'
 New-Item -ItemType Directory -Path $script:ArtifactsDir -Force | Out-Null
 
+# When this script is executed (not dot-sourced), WPF event handlers run in global scope.
+# Publish key state/paths to global so handlers can resolve them reliably.
+$global:repoRoot = $repoRoot
+$global:coreRoot = $coreRoot
+$global:AppState = $script:AppState
+$global:ArtifactsDir = $script:ArtifactsDir
+
 # -----------------------------
 # Trace log (persistent diagnostics)
 # -----------------------------
@@ -397,7 +404,15 @@ function Set-ControlEnabled {
     [Parameter(Mandatory)][bool]$Enabled
   )
   if ($null -eq $Control) { return }
-  try { $Control.IsEnabled = $Enabled } catch { }
+  try {
+    if ($Control -is [System.Windows.Threading.DispatcherObject] -and -not $Control.Dispatcher.CheckAccess()) {
+      $Control.Dispatcher.Invoke(([action]{ Set-ControlEnabled -Control $Control -Enabled $Enabled }))
+      return
+    }
+  } catch { }
+
+  try { $Control.IsEnabled = $Enabled; return } catch { }
+  try { $Control.Enabled = $Enabled; return } catch { }
 }
 
 function Start-AppJob {
@@ -1121,50 +1136,81 @@ $xamlString = @"
 </Window>
 "@
 
-$Window = ConvertFrom-GcXaml -XamlString $xamlString
+$global:Window = ConvertFrom-GcXaml -XamlString $xamlString
 
-function Get-El([string]$name) { $Window.FindName($name) }
+function Get-El([string]$name) { $global:Window.FindName($name) }
 
 # Top bar
-$TxtContext   = Get-El 'TxtContext'
-$BtnLogin     = Get-El 'BtnLogin'
-$BtnTestToken = Get-El 'BtnTestToken'
-$BtnBackstage = Get-El 'BtnBackstage'
-$TxtCommand   = Get-El 'TxtCommand'
+$global:TxtContext   = Get-El 'TxtContext'
+$global:BtnLogin     = Get-El 'BtnLogin'
+$global:BtnTestToken = Get-El 'BtnTestToken'
+$global:BtnBackstage = Get-El 'BtnBackstage'
+$global:TxtCommand   = Get-El 'TxtCommand'
 
 # Nav
-$NavWorkspaces   = Get-El 'NavWorkspaces'
-$NavModules      = Get-El 'NavModules'
-$TxtModuleHeader = Get-El 'TxtModuleHeader'
-$TxtModuleHint   = Get-El 'TxtModuleHint'
+$global:NavWorkspaces   = Get-El 'NavWorkspaces'
+$global:NavModules      = Get-El 'NavModules'
+$global:TxtModuleHeader = Get-El 'TxtModuleHeader'
+$global:TxtModuleHint   = Get-El 'TxtModuleHint'
 
 # Header + content
-$TxtTitle    = Get-El 'TxtTitle'
-$TxtSubtitle = Get-El 'TxtSubtitle'
-$MainHost    = Get-El 'MainHost'
-$TxtStatus   = Get-El 'TxtStatus'
-$TxtStats    = Get-El 'TxtStats'
+$global:TxtTitle    = Get-El 'TxtTitle'
+$global:TxtSubtitle = Get-El 'TxtSubtitle'
+$global:MainHost    = Get-El 'MainHost'
+$global:TxtStatus   = Get-El 'TxtStatus'
+$global:TxtStats    = Get-El 'TxtStats'
 
 # Backstage
-$BackstageOverlay = Get-El 'BackstageOverlay'
-$BackstageTabs    = Get-El 'BackstageTabs'
-$BtnCloseBackstage= Get-El 'BtnCloseBackstage'
-$LstJobs          = Get-El 'LstJobs'
-$TxtJobMeta       = Get-El 'TxtJobMeta'
-$BtnCancelJob     = Get-El 'BtnCancelJob'
-$LstJobLogs       = Get-El 'LstJobLogs'
+$global:BackstageOverlay = Get-El 'BackstageOverlay'
+$global:BackstageTabs    = Get-El 'BackstageTabs'
+$global:BtnCloseBackstage= Get-El 'BtnCloseBackstage'
+$global:LstJobs          = Get-El 'LstJobs'
+$global:TxtJobMeta       = Get-El 'TxtJobMeta'
+$global:BtnCancelJob     = Get-El 'BtnCancelJob'
+$global:LstJobLogs       = Get-El 'LstJobLogs'
 
-$LstArtifacts            = Get-El 'LstArtifacts'
-$BtnOpenArtifactsFolder  = Get-El 'BtnOpenArtifactsFolder'
-$BtnOpenSelectedArtifact = Get-El 'BtnOpenSelectedArtifact'
+$global:LstArtifacts            = Get-El 'LstArtifacts'
+$global:BtnOpenArtifactsFolder  = Get-El 'BtnOpenArtifactsFolder'
+$global:BtnOpenSelectedArtifact = Get-El 'BtnOpenSelectedArtifact'
 
 # Snackbar
-$SnackbarHost      = Get-El 'SnackbarHost'
-$SnackbarTitle     = Get-El 'SnackbarTitle'
-$SnackbarBody      = Get-El 'SnackbarBody'
-$BtnSnackPrimary   = Get-El 'BtnSnackPrimary'
-$BtnSnackSecondary = Get-El 'BtnSnackSecondary'
-$BtnSnackClose     = Get-El 'BtnSnackClose'
+$global:SnackbarHost      = Get-El 'SnackbarHost'
+$global:SnackbarTitle     = Get-El 'SnackbarTitle'
+$global:SnackbarBody      = Get-El 'SnackbarBody'
+$global:BtnSnackPrimary   = Get-El 'BtnSnackPrimary'
+$global:BtnSnackSecondary = Get-El 'BtnSnackSecondary'
+$global:BtnSnackClose     = Get-El 'BtnSnackClose'
+
+function Publish-GcScriptFunctionsToGlobal {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$ScriptPath)
+
+  $resolvedScript = $null
+  try { $resolvedScript = (Resolve-Path -LiteralPath $ScriptPath).Path } catch { $resolvedScript = $ScriptPath }
+  if (-not $resolvedScript) { return }
+
+  $funcs = Get-Command -CommandType Function -ErrorAction SilentlyContinue | Where-Object {
+    $_.ScriptBlock -and $_.ScriptBlock.File
+  }
+
+  foreach ($cmd in $funcs) {
+    $file = $null
+    try { $file = (Resolve-Path -LiteralPath $cmd.ScriptBlock.File -ErrorAction SilentlyContinue).Path } catch { $file = $cmd.ScriptBlock.File }
+    if (-not $file) { continue }
+    if ($file -ne $resolvedScript) { continue }
+
+    try {
+      $existing = Get-Command -Name $cmd.Name -CommandType Function -ErrorAction SilentlyContinue
+      if ($existing -and $existing.ScriptBlock -and $existing.ScriptBlock.File) {
+        $existingFile = $null
+        try { $existingFile = (Resolve-Path -LiteralPath $existing.ScriptBlock.File -ErrorAction SilentlyContinue).Path } catch { $existingFile = $existing.ScriptBlock.File }
+        if ($existingFile -and $existingFile -ne $resolvedScript) { continue }
+      }
+
+      Set-Item -Path ("function:global:{0}" -f $cmd.Name) -Value $cmd.ScriptBlock
+    } catch { }
+  }
+}
 
 # -----------------------------
 # Control Helpers
@@ -2591,9 +2637,9 @@ function New-OperationalEventLogsView {
   # Query button handler
   $h.BtnOpQuery.Add_Click({
     Set-Status "Querying operational events..."
-    $h.BtnOpQuery.IsEnabled = $false
-    $h.BtnOpExportJson.IsEnabled = $false
-    $h.BtnOpExportCsv.IsEnabled = $false
+    Set-ControlEnabled -Control $h.BtnOpQuery -Enabled $false
+    Set-ControlEnabled -Control $h.BtnOpExportJson -Enabled $false
+    Set-ControlEnabled -Control $h.BtnOpExportCsv -Enabled $false
 
     # Determine time range
     $hours = switch ($h.CmbOpTimeRange.SelectedIndex) {
@@ -2628,7 +2674,7 @@ function New-OperationalEventLogsView {
         Write-Error "Failed to query operational events: $_"
         return @()
       }
-    } -ArgumentList @($startTime, $endTime) -OnCompleted {
+    } -ArgumentList @($startTime, $endTime) -OnCompleted ({
       param($job)
 
       Set-ControlEnabled -Control $h.BtnOpQuery -Enabled $true
@@ -2650,8 +2696,8 @@ function New-OperationalEventLogsView {
 
         $h.GridOpEvents.ItemsSource = $displayData
         $h.TxtOpCount.Text = "($($events.Count) events)"
-        $h.BtnOpExportJson.IsEnabled = $true
-        $h.BtnOpExportCsv.IsEnabled = $true
+        Set-ControlEnabled -Control $h.BtnOpExportJson -Enabled $true
+        Set-ControlEnabled -Control $h.BtnOpExportCsv -Enabled $true
 
         Set-Status "Loaded $($events.Count) operational events."
       } else {
@@ -2659,8 +2705,8 @@ function New-OperationalEventLogsView {
         $h.GridOpEvents.ItemsSource = @()
         $h.TxtOpCount.Text = "(0 events)"
       }
-    }
-  })
+    }.GetNewClosure())
+  }.GetNewClosure())
 
   # Search text changed handler
   $h.TxtOpSearch.Add_TextChanged({
@@ -2699,7 +2745,7 @@ function New-OperationalEventLogsView {
 
     $h.GridOpEvents.ItemsSource = $displayData
     $h.TxtOpCount.Text = "($($filtered.Count) events)"
-  })
+  }.GetNewClosure())
 
   # Export JSON handler
   $h.BtnOpExportJson.Add_Click({
@@ -2721,7 +2767,7 @@ function New-OperationalEventLogsView {
       Set-Status "Export failed: $_"
       [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
     }
-  })
+  }.GetNewClosure())
 
   # Export CSV handler
   $h.BtnOpExportCsv.Add_Click({
@@ -2754,7 +2800,7 @@ function New-OperationalEventLogsView {
       Set-Status "Export failed: $_"
       [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
     }
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -2866,9 +2912,9 @@ function New-AuditLogsView {
   # Query button handler
   $h.BtnAuditQuery.Add_Click({
     Set-Status "Querying audit logs..."
-    $h.BtnAuditQuery.IsEnabled = $false
-    $h.BtnAuditExportJson.IsEnabled = $false
-    $h.BtnAuditExportCsv.IsEnabled = $false
+    Set-ControlEnabled -Control $h.BtnAuditQuery -Enabled $false
+    Set-ControlEnabled -Control $h.BtnAuditExportJson -Enabled $false
+    Set-ControlEnabled -Control $h.BtnAuditExportCsv -Enabled $false
 
     # Determine time range
     $hours = switch ($h.CmbAuditTimeRange.SelectedIndex) {
@@ -2903,7 +2949,7 @@ function New-AuditLogsView {
         Write-Error "Failed to query audit logs: $_"
         return @()
       }
-    } -ArgumentList @($startTime, $endTime) -OnCompleted {
+    } -ArgumentList @($startTime, $endTime) -OnCompleted ({
       param($job)
 
       Set-ControlEnabled -Control $h.BtnAuditQuery -Enabled $true
@@ -2935,8 +2981,8 @@ function New-AuditLogsView {
         $h.GridAuditLogs.ItemsSource = @()
         $h.TxtAuditCount.Text = "(0 audits)"
       }
-    }
-  })
+    }.GetNewClosure())
+  }.GetNewClosure())
 
   # Search text changed handler
   $h.TxtAuditSearch.Add_TextChanged({
@@ -2977,7 +3023,7 @@ function New-AuditLogsView {
 
     $h.GridAuditLogs.ItemsSource = $displayData
     $h.TxtAuditCount.Text = "($($filtered.Count) audits)"
-  })
+  }.GetNewClosure())
 
   # Export JSON handler
   $h.BtnAuditExportJson.Add_Click({
@@ -2999,7 +3045,7 @@ function New-AuditLogsView {
       Set-Status "Export failed: $_"
       [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
     }
-  })
+  }.GetNewClosure())
 
   # Export CSV handler
   $h.BtnAuditExportCsv.Add_Click({
@@ -3033,7 +3079,7 @@ function New-AuditLogsView {
       Set-Status "Export failed: $_"
       [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
     }
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -3132,9 +3178,9 @@ function New-OAuthTokenUsageView {
   # Query button handler
   $h.BtnTokenQuery.Add_Click({
     Set-Status "Querying OAuth clients..."
-    $h.BtnTokenQuery.IsEnabled = $false
-    $h.BtnTokenExportJson.IsEnabled = $false
-    $h.BtnTokenExportCsv.IsEnabled = $false
+    Set-ControlEnabled -Control $h.BtnTokenQuery -Enabled $false
+    Set-ControlEnabled -Control $h.BtnTokenExportJson -Enabled $false
+    Set-ControlEnabled -Control $h.BtnTokenExportCsv -Enabled $false
 
     Start-AppJob -Name "Query OAuth Clients" -Type "Query" -ScriptBlock {
       # Use Invoke-GcPagedRequest to query OAuth clients
@@ -3148,10 +3194,10 @@ function New-OAuthTokenUsageView {
         Write-Error "Failed to query OAuth clients: $_"
         return @()
       }
-    } -OnCompleted {
+    } -OnCompleted ({
       param($job)
 
-      $h.BtnTokenQuery.IsEnabled = $true
+      Set-ControlEnabled -Control $h.BtnTokenQuery -Enabled $true
 
       if ($job.Result) {
         $clients = $job.Result
@@ -3170,8 +3216,8 @@ function New-OAuthTokenUsageView {
 
         $h.GridTokenUsage.ItemsSource = $displayData
         $h.TxtTokenCount.Text = "($($clients.Count) clients)"
-        $h.BtnTokenExportJson.IsEnabled = $true
-        $h.BtnTokenExportCsv.IsEnabled = $true
+        Set-ControlEnabled -Control $h.BtnTokenExportJson -Enabled $true
+        Set-ControlEnabled -Control $h.BtnTokenExportCsv -Enabled $true
 
         Set-Status "Loaded $($clients.Count) OAuth clients."
       } else {
@@ -3179,8 +3225,8 @@ function New-OAuthTokenUsageView {
         $h.GridTokenUsage.ItemsSource = @()
         $h.TxtTokenCount.Text = "(0 clients)"
       }
-    }
-  })
+    }.GetNewClosure())
+  }.GetNewClosure())
 
   # Search text changed handler
   $h.TxtTokenSearch.Add_TextChanged({
@@ -3219,7 +3265,7 @@ function New-OAuthTokenUsageView {
 
     $h.GridTokenUsage.ItemsSource = $displayData
     $h.TxtTokenCount.Text = "($($filtered.Count) clients)"
-  })
+  }.GetNewClosure())
 
   # Export JSON handler
   $h.BtnTokenExportJson.Add_Click({
@@ -3241,7 +3287,7 @@ function New-OAuthTokenUsageView {
       Set-Status "Export failed: $_"
       [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
     }
-  })
+  }.GetNewClosure())
 
   # Export CSV handler
   $h.BtnTokenExportCsv.Add_Click({
@@ -3273,7 +3319,7 @@ function New-OAuthTokenUsageView {
       Set-Status "Export failed: $_"
       [System.Windows.MessageBox]::Show("Export failed: $_", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
     }
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -3725,13 +3771,13 @@ function New-ConversationLookupView {
     if ($h.TxtConvSearchFilter.Text -eq "Filter results...") {
       $h.TxtConvSearchFilter.Text = ""
     }
-  })
+  }.GetNewClosure())
 
   $h.TxtConvSearchFilter.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtConvSearchFilter.Text)) {
       $h.TxtConvSearchFilter.Text = "Filter results..."
     }
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -3796,11 +3842,16 @@ function New-ConversationTimelineView {
   $detail   = $view.FindName('TxtDetail')
 
   if ($script:AppState.FocusConversationId) {
-    $txtConv.Text = $script:AppState.FocusConversationId
+    if ($txtConv) { $txtConv.Text = $script:AppState.FocusConversationId }
   }
 
   $btnBuild.Add_Click({
-    $conv = $txtConv.Text.Trim()
+    if (-not $txtConv) {
+      Set-Status "Conversation ID input is not available in this view."
+      return
+    }
+
+    $conv = ([string]$txtConv.Text).Trim()
 
     # Validate conversation ID
     if (-not $conv) {
@@ -3853,17 +3904,17 @@ function New-ConversationTimelineView {
     }
 
     Refresh-HeaderStats
-  })
+  }.GetNewClosure())
 
   $lst.Add_SelectionChanged({
     if ($lst.SelectedItem) {
       $sel = [string]$lst.SelectedItem
       $detail.Text = "{`r`n  `"event`": `"$sel`",`r`n  `"note`": `"Mock payload would include segments, media stats, participant/session IDs.`"`r`n}"
     }
-  })
+  }.GetNewClosure())
 
   $btnExport.Add_Click({
-    $conv = $txtConv.Text.Trim()
+    $conv = if ($txtConv) { ([string]$txtConv.Text).Trim() } else { '' }
     if (-not $conv) { $conv = "c-unknown" }
 
     if (-not $script:AppState.AccessToken) {
@@ -3940,7 +3991,7 @@ function New-ConversationTimelineView {
     }
 
     Refresh-HeaderStats
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -4091,7 +4142,7 @@ function New-AnalyticsJobsView {
 
   $h.BtnSubmitJob.Add_Click({
     Set-Status "Submitting analytics job..."
-    $h.BtnSubmitJob.IsEnabled = $false
+    Set-ControlEnabled -Control $h.BtnSubmitJob -Enabled $false
 
     # Build date range
     $endTime = Get-Date
@@ -4170,9 +4221,9 @@ function New-AnalyticsJobsView {
       }
 
       throw "Analytics job timed out after $timeout seconds"
-    } -ArgumentList @($queryBody, $script:AppState.AccessToken, $script:AppState.Region, $maxResults) -OnCompleted {
+    } -ArgumentList @($queryBody, $script:AppState.AccessToken, $script:AppState.Region, $maxResults) -OnCompleted ({
       param($job)
-      $h.BtnSubmitJob.IsEnabled = $true
+      Set-ControlEnabled -Control $h.BtnSubmitJob -Enabled $true
 
       if ($job.Result -and $job.Result.JobId) {
         $jobData = @{
@@ -4189,18 +4240,18 @@ function New-AnalyticsJobsView {
         Refresh-JobsList
         Set-Status "Analytics job completed: $($jobData.JobId) - $($jobData.Results.Count) results"
 
-        $h.BtnViewResults.IsEnabled = $true
-        $h.BtnExportResults.IsEnabled = $true
+        Set-ControlEnabled -Control $h.BtnViewResults -Enabled $true
+        Set-ControlEnabled -Control $h.BtnExportResults -Enabled $true
       } else {
         Set-Status "Failed to submit analytics job. See job logs for details."
       }
-    }
-  })
+    }.GetNewClosure())
+  }.GetNewClosure())
 
   $h.BtnRefresh.Add_Click({
     Refresh-JobsList
     Set-Status "Refreshed job list."
-  })
+  }.GetNewClosure())
 
   $h.BtnViewResults.Add_Click({
     $selected = $h.GridJobs.SelectedItem
@@ -4226,7 +4277,7 @@ function New-AnalyticsJobsView {
       [System.Windows.MessageBoxImage]::Information
     )
     Set-Status "Viewing results for job: $jobId"
-  })
+  }.GetNewClosure())
 
   $h.BtnExportResults.Add_Click({
     $selected = $h.GridJobs.SelectedItem
@@ -4256,11 +4307,11 @@ function New-AnalyticsJobsView {
       Set-Status "Exported $($jobData.Results.Count) results to $filename"
       Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
         Start-Process (Split-Path $filepath -Parent)
-      }
+      }.GetNewClosure()
     } catch {
       Set-Status "Failed to export: $_"
     }
-  })
+  }.GetNewClosure())
 
   Refresh-JobsList
 
@@ -4521,13 +4572,13 @@ function New-IncidentPacketView {
     if ($h.TxtPacketConvId.Text -eq "Enter conversation ID...") {
       $h.TxtPacketConvId.Text = ""
     }
-  })
+  }.GetNewClosure())
 
   $h.TxtPacketConvId.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtPacketConvId.Text)) {
       $h.TxtPacketConvId.Text = "Enter conversation ID..."
     }
-  })
+  }.GetNewClosure())
 
   Refresh-PacketHistory
 
@@ -4980,8 +5031,8 @@ function New-MediaQualityView {
   # Load Recordings button handler
   $h.BtnLoadRecordings.Add_Click({
     Set-Status "Loading recordings..."
-    $h.BtnLoadRecordings.IsEnabled = $false
-    $h.BtnExportRecordings.IsEnabled = $false
+    Set-ControlEnabled -Control $h.BtnLoadRecordings -Enabled $false
+    Set-ControlEnabled -Control $h.BtnExportRecordings -Enabled $false
 
     $coreConvPath = Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1'
     $coreHttpPath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
@@ -4993,9 +5044,9 @@ function New-MediaQualityView {
       Import-Module $convPath -Force
 
       Get-GcRecordings -AccessToken $accessToken -InstanceName $region -MaxItems 100
-    } -ArgumentList @($coreConvPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region) -OnCompleted {
+    } -ArgumentList @($coreConvPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region) -OnCompleted ({
       param($job)
-      $h.BtnLoadRecordings.IsEnabled = $true
+      Set-ControlEnabled -Control $h.BtnLoadRecordings -Enabled $true
 
       if ($job.Result -and $job.Result.Count -gt 0) {
         $script:RecordingsData = $job.Result
@@ -5011,15 +5062,15 @@ function New-MediaQualityView {
 
         $h.GridRecordings.ItemsSource = $displayData
         $h.TxtRecordingCount.Text = "($($job.Result.Count) recordings)"
-        $h.BtnExportRecordings.IsEnabled = $true
+        Set-ControlEnabled -Control $h.BtnExportRecordings -Enabled $true
         Set-Status "Loaded $($job.Result.Count) recordings."
       } else {
         $h.GridRecordings.ItemsSource = @()
         $h.TxtRecordingCount.Text = "(0 recordings)"
         Set-Status "No recordings found or failed to load."
       }
-    }
-  })
+    }.GetNewClosure())
+  }.GetNewClosure())
 
   # Export Recordings button handler
   $h.BtnExportRecordings.Add_Click({
@@ -5041,15 +5092,15 @@ function New-MediaQualityView {
       Set-Status "Exported $($script:RecordingsData.Count) recordings to $filename"
       Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
         Start-Process (Split-Path $filepath -Parent)
-      }
+      }.GetNewClosure()
     } catch {
       Set-Status "Failed to export: $_"
     }
-  })
+  }.GetNewClosure())
 
   # Load Transcript button handler
   $h.BtnLoadTranscript.Add_Click({
-    $convId = $h.TxtTranscriptConvId.Text.Trim()
+    $convId = if ($h.TxtTranscriptConvId) { ([string]$h.TxtTranscriptConvId.Text).Trim() } else { '' }
 
     if ([string]::IsNullOrWhiteSpace($convId) -or $convId -eq "Enter conversation ID...") {
       [System.Windows.MessageBox]::Show("Please enter a conversation ID.", "Missing Input",
@@ -5058,8 +5109,8 @@ function New-MediaQualityView {
     }
 
     Set-Status "Loading transcript for conversation $convId..."
-    $h.BtnLoadTranscript.IsEnabled = $false
-    $h.BtnExportTranscript.IsEnabled = $false
+    Set-ControlEnabled -Control $h.BtnLoadTranscript -Enabled $false
+    Set-ControlEnabled -Control $h.BtnExportTranscript -Enabled $false
     $h.TxtTranscriptContent.Text = "Loading transcript..."
 
     $coreConvPath = Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1'
@@ -5072,9 +5123,9 @@ function New-MediaQualityView {
       Import-Module $convPath -Force
 
       Get-GcConversationTranscript -ConversationId $convId -AccessToken $accessToken -InstanceName $region
-    } -ArgumentList @($coreConvPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region, $convId) -OnCompleted {
+    } -ArgumentList @($coreConvPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region, $convId) -OnCompleted ({
       param($job)
-      $h.BtnLoadTranscript.IsEnabled = $true
+      Set-ControlEnabled -Control $h.BtnLoadTranscript -Enabled $true
 
       if ($job.Result -and $job.Result.Count -gt 0) {
         $script:TranscriptData = $job.Result
@@ -5094,14 +5145,14 @@ function New-MediaQualityView {
         }
 
         $h.TxtTranscriptContent.Text = $transcriptText
-        $h.BtnExportTranscript.IsEnabled = $true
+        Set-ControlEnabled -Control $h.BtnExportTranscript -Enabled $true
         Set-Status "Loaded transcript for conversation $convId."
       } else {
         $h.TxtTranscriptContent.Text = "No transcript found for conversation $convId or conversation does not exist."
         Set-Status "No transcript found."
       }
-    }
-  })
+    }.GetNewClosure())
+  }.GetNewClosure())
 
   # Export Transcript button handler
   $h.BtnExportTranscript.Add_Click({
@@ -5110,7 +5161,7 @@ function New-MediaQualityView {
       return
     }
 
-    $convId = $h.TxtTranscriptConvId.Text.Trim()
+    $convId = if ($h.TxtTranscriptConvId) { ([string]$h.TxtTranscriptConvId.Text).Trim() } else { '' }
     $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $filename = "transcript_${convId}_$timestamp.txt"
     $artifactsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'artifacts'
@@ -5124,17 +5175,17 @@ function New-MediaQualityView {
       Set-Status "Exported transcript to $filename"
       Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
         Start-Process (Split-Path $filepath -Parent)
-      }
+      }.GetNewClosure()
     } catch {
       Set-Status "Failed to export: $_"
     }
-  })
+  }.GetNewClosure())
 
   # Load Evaluations button handler
   $h.BtnLoadEvaluations.Add_Click({
     Set-Status "Loading quality evaluations..."
-    $h.BtnLoadEvaluations.IsEnabled = $false
-    $h.BtnExportEvaluations.IsEnabled = $false
+    Set-ControlEnabled -Control $h.BtnLoadEvaluations -Enabled $false
+    Set-ControlEnabled -Control $h.BtnExportEvaluations -Enabled $false
 
     $coreConvPath = Join-Path -Path $coreRoot -ChildPath 'ConversationsExtended.psm1'
     $coreHttpPath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
@@ -5146,9 +5197,9 @@ function New-MediaQualityView {
       Import-Module $convPath -Force
 
       Get-GcQualityEvaluations -AccessToken $accessToken -InstanceName $region -MaxItems 100
-    } -ArgumentList @($coreConvPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region) -OnCompleted {
+    } -ArgumentList @($coreConvPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region) -OnCompleted ({
       param($job)
-      $h.BtnLoadEvaluations.IsEnabled = $true
+      Set-ControlEnabled -Control $h.BtnLoadEvaluations -Enabled $true
 
       if ($job.Result -and $job.Result.Count -gt 0) {
         $script:EvaluationsData = $job.Result
@@ -5166,15 +5217,15 @@ function New-MediaQualityView {
 
         $h.GridEvaluations.ItemsSource = $displayData
         $h.TxtEvaluationCount.Text = "($($job.Result.Count) evaluations)"
-        $h.BtnExportEvaluations.IsEnabled = $true
+        Set-ControlEnabled -Control $h.BtnExportEvaluations -Enabled $true
         Set-Status "Loaded $($job.Result.Count) quality evaluations."
       } else {
         $h.GridEvaluations.ItemsSource = @()
         $h.TxtEvaluationCount.Text = "(0 evaluations)"
         Set-Status "No evaluations found or failed to load."
       }
-    }
-  })
+    }.GetNewClosure())
+  }.GetNewClosure())
 
   # Export Evaluations button handler
   $h.BtnExportEvaluations.Add_Click({
@@ -5196,24 +5247,24 @@ function New-MediaQualityView {
       Set-Status "Exported $($script:EvaluationsData.Count) evaluations to $filename"
       Show-Snackbar "Export complete! Saved to artifacts/$filename" -Action "Open Folder" -ActionCallback {
         Start-Process (Split-Path $filepath -Parent)
-      }
+      }.GetNewClosure()
     } catch {
       Set-Status "Failed to export: $_"
     }
-  })
+  }.GetNewClosure())
 
   # Transcript conversation ID textbox focus handlers
   $h.TxtTranscriptConvId.Add_GotFocus({
     if ($h.TxtTranscriptConvId.Text -eq "Enter conversation ID...") {
       $h.TxtTranscriptConvId.Text = ""
     }
-  })
+  }.GetNewClosure())
 
   $h.TxtTranscriptConvId.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtTranscriptConvId.Text)) {
       $h.TxtTranscriptConvId.Text = "Enter conversation ID..."
     }
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -5471,14 +5522,14 @@ function New-FlowsView {
     if ($h.TxtFlowSearch -and $h.TxtFlowSearch.Text -eq "Search flows...") {
       $h.TxtFlowSearch.Text = ""
     }
-  })
+  }.GetNewClosure())
 
   # Restore search placeholder on lost focus if empty
   $h.TxtFlowSearch.Add_LostFocus({
     if ($h.TxtFlowSearch -and [string]::IsNullOrWhiteSpace($h.TxtFlowSearch.Text)) {
       $h.TxtFlowSearch.Text = "Search flows..."
     }
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -6194,13 +6245,13 @@ function New-DependencyImpactMapView {
     if ($h.TxtObjectId.Text -eq "Enter object ID...") {
       $h.TxtObjectId.Text = ""
     }
-  })
+  }.GetNewClosure())
 
   $h.TxtObjectId.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtObjectId.Text)) {
       $h.TxtObjectId.Text = "Enter object ID..."
     }
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -6410,13 +6461,13 @@ function New-QueuesView {
     if ($h.TxtQueueSearch.Text -eq "Search queues...") {
       $h.TxtQueueSearch.Text = ""
     }
-  })
+  }.GetNewClosure())
 
   $h.TxtQueueSearch.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtQueueSearch.Text)) {
       $h.TxtQueueSearch.Text = "Search queues..."
     }
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -6618,13 +6669,13 @@ function New-SkillsView {
     if ($h.TxtSkillSearch.Text -eq "Search skills...") {
       $h.TxtSkillSearch.Text = ""
     }
-  })
+  }.GetNewClosure())
 
   $h.TxtSkillSearch.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtSkillSearch.Text)) {
       $h.TxtSkillSearch.Text = "Search skills..."
     }
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -7031,13 +7082,13 @@ function New-UsersPresenceView {
     if ($h.TxtUserSearch.Text -eq "Search users...") {
       $h.TxtUserSearch.Text = ""
     }
-  })
+  }.GetNewClosure())
 
   $h.TxtUserSearch.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtUserSearch.Text)) {
       $h.TxtUserSearch.Text = "Search users..."
     }
-  })
+  }.GetNewClosure())
 
   return $view
 }
@@ -7417,14 +7468,14 @@ function New-SubscriptionsView {
     if ($h.TxtSearch.Text -eq 'search (conversationId, error, agent…)') {
       Set-ControlValue -Control $h.TxtSearch -Value ''
     }
-  })
+  }.GetNewClosure())
 
   # Restore search placeholder on lost focus if empty
   $h.TxtSearch.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtSearch.Text)) {
       Set-ControlValue -Control $h.TxtSearch -Value 'search (conversationId, error, agent…)'
     }
-  })
+  }.GetNewClosure())
 
   $h.BtnOpenTimeline.Add_Click({
     # Derive conversation ID from textbox first, then from selected event
@@ -7758,9 +7809,12 @@ function New-ReportsExportsView {
     MnuArtifactDelete      = $view.FindName('MnuArtifactDelete')
   }
 
-  # Track current report run
-  $script:CurrentReportBundle = $null
-  $script:ParameterControls = @{}
+  $appState = if ($global:AppState) { $global:AppState } else { $script:AppState }
+  $repoRootForView = if ($global:repoRoot) { $global:repoRoot } elseif ($appState -and $appState.RepositoryRoot) { $appState.RepositoryRoot } else { $null }
+
+  # Track current report run (view-local state)
+  $currentReportBundle = $null
+  $parameterControls = @{}
 
   # Load templates
   $templates = Get-GcReportTemplates
@@ -7785,11 +7839,11 @@ function New-ReportsExportsView {
     }
   }
 
-  function Build-ParameterPanel {
+  $buildParameterPanel = {
     param($template)
     
     $h.PnlParameters.Children.Clear()
-    $script:ParameterControls.Clear()
+    $parameterControls.Clear()
     
     if (-not $template.Parameters -or $template.Parameters.Count -eq 0) {
       $noParamsText = New-Object System.Windows.Controls.TextBlock
@@ -7887,20 +7941,20 @@ function New-ReportsExportsView {
       $paramGrid.Children.Add($control)
       
       $h.PnlParameters.Children.Add($paramGrid)
-      $script:ParameterControls[$paramName] = @{
+      $parameterControls[$paramName] = @{
         Control = $control
         Type = $paramType
         Required = $paramDef.Required
       }
     }
-  }
+  }.GetNewClosure()
 
-  function Get-ParameterValues {
+  $getParameterValues = {
     $params = @{}
     $valid = $true
     
-    foreach ($paramName in $script:ParameterControls.Keys) {
-      $paramInfo = $script:ParameterControls[$paramName]
+    foreach ($paramName in $parameterControls.Keys) {
+      $paramInfo = $parameterControls[$paramName]
       $control = $paramInfo.Control
       $type = $paramInfo.Type
       
@@ -7935,7 +7989,7 @@ function New-ReportsExportsView {
           
           # Special handling for AccessToken
           if ($paramName -eq 'AccessToken' -and $value -eq '***TOKEN***') {
-            $value = $script:AppState.AccessToken
+            $value = if ($appState) { $appState.AccessToken } else { $null }
           }
         }
       }
@@ -7958,9 +8012,9 @@ function New-ReportsExportsView {
     }
     
     return $params
-  }
+  }.GetNewClosure()
 
-  function Refresh-ArtifactList {
+  $refreshArtifactList = {
     try {
       $artifacts = Get-GcArtifactIndex
       
@@ -7983,24 +8037,24 @@ function New-ReportsExportsView {
     } catch {
       Write-Warning "Failed to load artifact index: $_"
     }
-  }
+  }.GetNewClosure()
 
   # Template search
   $h.TxtTemplateSearch.Add_TextChanged({
     script:Refresh-TemplateList -h $h -Templates $templates
-  })
+  }.GetNewClosure())
 
   $h.TxtTemplateSearch.Add_GotFocus({
     if ($h.TxtTemplateSearch.Text -eq "Search templates...") {
       $h.TxtTemplateSearch.Text = ""
     }
-  })
+  }.GetNewClosure())
 
   $h.TxtTemplateSearch.Add_LostFocus({
     if ([string]::IsNullOrWhiteSpace($h.TxtTemplateSearch.Text)) {
       $h.TxtTemplateSearch.Text = "Search templates..."
     }
-  })
+  }.GetNewClosure())
 
   # Template selection
   $h.LstTemplates.Add_SelectionChanged({
@@ -8008,10 +8062,10 @@ function New-ReportsExportsView {
     if ($selectedItem -and $selectedItem.Tag) {
       $template = $selectedItem.Tag
       $h.TxtTemplateDescription.Text = $template.Description
-      Build-ParameterPanel -template $template
+      & $buildParameterPanel $template
       
       # Reset current report
-      $script:CurrentReportBundle = $null
+      $currentReportBundle = $null
       $h.BtnOpenInBrowser.IsEnabled = $false
       $h.BtnExportHtml.IsEnabled = $false
       $h.BtnExportJson.IsEnabled = $false
@@ -8020,7 +8074,7 @@ function New-ReportsExportsView {
       $h.BtnCopyPath.IsEnabled = $false
       $h.BtnOpenFolder.IsEnabled = $false
     }
-  })
+  }.GetNewClosure())
 
   # Run report
   $h.BtnRunReport.Add_Click({
@@ -8036,7 +8090,7 @@ function New-ReportsExportsView {
     }
     
     $template = $selectedItem.Tag
-    $params = Get-ParameterValues
+    $params = & $getParameterValues
     
     if (-not $params) {
       [System.Windows.MessageBox]::Show(
@@ -8061,14 +8115,14 @@ function New-ReportsExportsView {
         Write-Error "Failed to run report: $_"
         return $null
       }
-    } -ArgumentList @($template.Name, $params) -OnCompleted {
+    } -ArgumentList @($template.Name, $params) -OnCompleted ({
       param($job)
       
       $h.BtnRunReport.IsEnabled = $true
       
       if ($job.Result) {
         $bundle = $job.Result
-        $script:CurrentReportBundle = $bundle
+        $currentReportBundle = $bundle
         
         Set-Status "Report completed: $($bundle.BundlePath)"
         
@@ -8087,11 +8141,11 @@ function New-ReportsExportsView {
         $h.BtnOpenFolder.IsEnabled = $true
         
         # Refresh artifact list
-        Refresh-ArtifactList
+        & $refreshArtifactList
         
         Show-Snackbar "Report completed successfully!" -Action "Open" -ActionCallback {
           Start-Process $bundle.BundlePath
-        }
+        }.GetNewClosure()
       } else {
         Set-Status "Report failed. See job logs for details."
         [System.Windows.MessageBox]::Show(
@@ -8101,40 +8155,40 @@ function New-ReportsExportsView {
           [System.Windows.MessageBoxImage]::Error
         )
       }
-    }
-  })
+    }.GetNewClosure())
+  }.GetNewClosure())
 
   # Export actions
   $h.BtnOpenInBrowser.Add_Click({
-    if ($script:CurrentReportBundle -and (Test-Path $script:CurrentReportBundle.ReportHtmlPath)) {
-      Start-Process $script:CurrentReportBundle.ReportHtmlPath
+    if ($currentReportBundle -and (Test-Path $currentReportBundle.ReportHtmlPath)) {
+      Start-Process $currentReportBundle.ReportHtmlPath
     }
-  })
+  }.GetNewClosure())
 
   $h.BtnExportHtml.Add_Click({
-    if ($script:CurrentReportBundle -and (Test-Path $script:CurrentReportBundle.ReportHtmlPath)) {
-      Start-Process $script:CurrentReportBundle.ReportHtmlPath
+    if ($currentReportBundle -and (Test-Path $currentReportBundle.ReportHtmlPath)) {
+      Start-Process $currentReportBundle.ReportHtmlPath
       Set-Status "Opened HTML report"
     }
-  })
+  }.GetNewClosure())
 
   $h.BtnExportJson.Add_Click({
-    if ($script:CurrentReportBundle -and (Test-Path $script:CurrentReportBundle.DataJsonPath)) {
-      Start-Process $script:CurrentReportBundle.DataJsonPath
+    if ($currentReportBundle -and (Test-Path $currentReportBundle.DataJsonPath)) {
+      Start-Process $currentReportBundle.DataJsonPath
       Set-Status "Opened JSON data"
     }
-  })
+  }.GetNewClosure())
 
   $h.BtnExportCsv.Add_Click({
-    if ($script:CurrentReportBundle -and (Test-Path $script:CurrentReportBundle.DataCsvPath)) {
-      Start-Process $script:CurrentReportBundle.DataCsvPath
+    if ($currentReportBundle -and (Test-Path $currentReportBundle.DataCsvPath)) {
+      Start-Process $currentReportBundle.DataCsvPath
       Set-Status "Opened CSV data"
     }
-  })
+  }.GetNewClosure())
 
   $h.BtnExportExcel.Add_Click({
-    if ($script:CurrentReportBundle -and (Test-Path $script:CurrentReportBundle.DataXlsxPath)) {
-      Start-Process $script:CurrentReportBundle.DataXlsxPath
+    if ($currentReportBundle -and (Test-Path $currentReportBundle.DataXlsxPath)) {
+      Start-Process $currentReportBundle.DataXlsxPath
       Set-Status "Opened Excel workbook"
     } else {
       [System.Windows.MessageBox]::Show(
@@ -8144,28 +8198,28 @@ function New-ReportsExportsView {
         [System.Windows.MessageBoxImage]::Information
       )
     }
-  })
+  }.GetNewClosure())
 
   $h.BtnCopyPath.Add_Click({
-    if ($script:CurrentReportBundle) {
-      [System.Windows.Clipboard]::SetText($script:CurrentReportBundle.BundlePath)
+    if ($currentReportBundle) {
+      [System.Windows.Clipboard]::SetText($currentReportBundle.BundlePath)
       Set-Status "Artifact path copied to clipboard"
       Show-Snackbar "Path copied to clipboard"
     }
-  })
+  }.GetNewClosure())
 
   $h.BtnOpenFolder.Add_Click({
-    if ($script:CurrentReportBundle -and (Test-Path $script:CurrentReportBundle.BundlePath)) {
-      Start-Process $script:CurrentReportBundle.BundlePath
+    if ($currentReportBundle -and (Test-Path $currentReportBundle.BundlePath)) {
+      Start-Process $currentReportBundle.BundlePath
       Set-Status "Opened artifact folder"
     }
-  })
+  }.GetNewClosure())
 
   # Preset management
   $h.BtnLoadPreset.Add_Click({
-    $presetsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'App\artifacts\presets'
+    $presetsDir = if ($repoRootForView) { Join-Path -Path $repoRootForView -ChildPath 'App\artifacts\presets' } else { $null }
     
-    if (-not (Test-Path $presetsDir)) {
+    if (-not $presetsDir -or -not (Test-Path $presetsDir)) {
       [System.Windows.MessageBox]::Show(
         "No presets found. Save a preset first.",
         "No Presets",
@@ -8204,8 +8258,8 @@ function New-ReportsExportsView {
         
         # Load parameter values
         foreach ($paramName in $presetData.Parameters.Keys) {
-          if ($script:ParameterControls.ContainsKey($paramName)) {
-            $control = $script:ParameterControls[$paramName].Control
+          if ($parameterControls.ContainsKey($paramName)) {
+            $control = $parameterControls[$paramName].Control
             $value = $presetData.Parameters[$paramName]
             
             if ($control -is [System.Windows.Controls.TextBox]) {
@@ -8228,7 +8282,7 @@ function New-ReportsExportsView {
         [System.Windows.MessageBoxImage]::Error
       )
     }
-  })
+  }.GetNewClosure())
 
   $h.BtnSavePreset.Add_Click({
     $selectedItem = $h.LstTemplates.SelectedItem
@@ -8243,7 +8297,7 @@ function New-ReportsExportsView {
     }
     
     $template = $selectedItem.Tag
-    $params = Get-ParameterValues
+    $params = & $getParameterValues
     
     if (-not $params) {
       [System.Windows.MessageBox]::Show(
@@ -8256,7 +8310,7 @@ function New-ReportsExportsView {
     }
     
     # Create presets directory
-    $presetsDir = Join-Path -Path $script:AppState.RepositoryRoot -ChildPath 'App\artifacts\presets'
+    $presetsDir = if ($repoRootForView) { Join-Path -Path $repoRootForView -ChildPath 'App\artifacts\presets' } else { $null }
     if (-not (Test-Path $presetsDir)) {
       New-Item -ItemType Directory -Path $presetsDir -Force | Out-Null
     }
@@ -8284,13 +8338,13 @@ function New-ReportsExportsView {
         [System.Windows.MessageBoxImage]::Error
       )
     }
-  })
+  }.GetNewClosure())
 
   # Artifact hub actions
   $h.BtnRefreshArtifacts.Add_Click({
-    Refresh-ArtifactList
+    & $refreshArtifactList
     Set-Status "Artifact list refreshed"
-  })
+  }.GetNewClosure())
 
   # Artifact context menu handlers
   $h.MnuArtifactOpen.Add_Click({
@@ -8309,7 +8363,7 @@ function New-ReportsExportsView {
         )
       }
     }
-  })
+  }.GetNewClosure())
 
   $h.MnuArtifactFolder.Add_Click({
     $selectedItem = $h.LstArtifacts.SelectedItem
@@ -8317,7 +8371,7 @@ function New-ReportsExportsView {
       Start-Process $selectedItem.BundlePath
       Set-Status "Opened folder: $($selectedItem.DisplayName)"
     }
-  })
+  }.GetNewClosure())
 
   $h.MnuArtifactCopy.Add_Click({
     $selectedItem = $h.LstArtifacts.SelectedItem
@@ -8326,7 +8380,7 @@ function New-ReportsExportsView {
       Set-Status "Path copied to clipboard"
       Show-Snackbar "Path copied to clipboard"
     }
-  })
+  }.GetNewClosure())
 
   $h.MnuArtifactDelete.Add_Click({
     $selectedItem = $h.LstArtifacts.SelectedItem
@@ -8355,7 +8409,7 @@ function New-ReportsExportsView {
             
             # Remove from index (would need to rebuild index or filter it)
             # For now, just refresh the list
-            Refresh-ArtifactList
+            & $refreshArtifactList
             Set-Status "Artifact moved to trash"
             Show-Snackbar "Artifact deleted"
           }
@@ -8369,7 +8423,7 @@ function New-ReportsExportsView {
         }
       }
     }
-  })
+  }.GetNewClosure())
 
   # Double-click to open artifact
   $h.LstArtifacts.Add_MouseDoubleClick({
@@ -8380,11 +8434,11 @@ function New-ReportsExportsView {
         Start-Process $htmlPath
       }
     }
-  })
+  }.GetNewClosure())
 
   # Initialize view
   script:Refresh-TemplateList -h $h -Templates $templates
-  Refresh-ArtifactList
+  & $refreshArtifactList
 
   # Select first template by default
   if ($h.LstTemplates.Items.Count -gt 0) {
@@ -8542,6 +8596,8 @@ function Show-WorkspaceAndModule {
 # -----------------------------
 # Nav events
 # -----------------------------
+Publish-GcScriptFunctionsToGlobal -ScriptPath $PSCommandPath
+
 $NavWorkspaces.Add_SelectionChanged({
   $item = $NavWorkspaces.SelectedItem
   if (-not $item) { return }

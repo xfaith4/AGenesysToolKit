@@ -10,6 +10,13 @@ Exclude: callback, voicemail, wrapup/acw/aftercallwork segments
 
 This version hardens all ".Count" usage by normalizing potentially-scalar values to arrays via @(...),
 which avoids StrictMode failures when APIs return a single object instead of an array.
+
+. "C:\Path\To\PeakConcurrentExternalTrunkVoiceCalls.Function.ps1"
+
+$script:AccessToken = "<YOUR_OAUTH_ACCESS_TOKEN>"
+
+PeakConcurrentExternalTrunkVoiceCalls -Interval "2026-01-25T00:00:00Z/2026-01-26T00:00:00Z"
+
 #>
 
 #requires -Version 5.1
