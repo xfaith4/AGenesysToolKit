@@ -777,60 +777,6 @@ function Set-ControlEnabled {
   try { $Control.Enabled = $Enabled; return } catch { }
 }
 
-### BEGIN: AUTH_READY_BUTTON_ENABLE_HELPERS
-function Test-AuthReady {
-  <#
-    Auth-ready means we can let the UI do work:
-    - Offline demo mode is enabled (no real token required)
-    - OR a real token is present
-  #>
-
-  try {
-    if (Get-Command Test-OfflineDemoEnabled -ErrorAction SilentlyContinue) {
-      if (Test-OfflineDemoEnabled) { return $true }
-    }
-  } catch { }
-
-  return (-not [string]::IsNullOrWhiteSpace($script:AppState.AccessToken))
-}
-
-function Enable-PrimaryActionButtons {
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory=$false)]
-    [hashtable]$Handles
-  )
-
-  if ($null -eq $Handles) { return }
-
-  $canRun = Test-AuthReady
-
-  # Only enable "primary actions" (Load/Search/Start/Query).
-  # Exports should typically remain disabled until data exists.
-  $primaryKeys = @(
-    'BtnQueueLoad',
-    'BtnSkillLoad',
-    'BtnUserLoad',
-    'BtnFlowLoad',
-    'btnConvSearch',
-    'BtnGeneratePacket',
-    'BtnAbandonQuery',
-    'BtnSearchReferences',
-    'BtnSnapshotRefresh',
-    'BtnStart',
-    'BtnRunReport'
-  )
-
-  foreach ($k in $primaryKeys) {
-    if ($Handles.ContainsKey($k) -and $Handles[$k]) {
-      Set-ControlEnabled -Control $Handles[$k] -Enabled $canRun
-    }
-  }
-}
-
-### END: AUTH_READY_BUTTON_ENABLE_HELPERS
-
-
 function Set-ControlEnabled {
   [CmdletBinding()]
   param(
@@ -1779,6 +1725,7 @@ function Set-OfflineDemoMode {
 
     try {
       if ($BtnLogin) { $BtnLogin.Content = 'Offline (Disable)' }
+      if ($BtnTestToken) { $BtnTestToken.IsEnabled = $true }
     } catch { }
 
     Write-GcTrace -Level 'INFO' -Message "Offline demo enabled"
@@ -1806,11 +1753,12 @@ function Set-OfflineDemoMode {
 
   try {
     if ($BtnLogin) { $BtnLogin.Content = if ($script:AppState.AccessToken) { 'Logout' } else { 'Login.' } }
+    if ($BtnTestToken) { $BtnTestToken.IsEnabled = [bool]$script:AppState.AccessToken }
   } catch { }
 
-  Write-GcTrace -Level 'INFO' -Message (if ($Enabled) { 'Offline demo enabled' } else { 'Offline demo disabled' })
+  Write-GcTrace -Level 'INFO' -Message "Offline demo disabled"
   try { Set-TopContext } catch { }
-  try { Set-Status (if ($Enabled) { 'Offline demo enabled.' } else { 'Offline demo disabled.' }) } catch { }
+  try { Set-Status "Offline demo disabled." } catch { }
 }
 
 function Add-OfflineDemoSampleEvents {
@@ -1980,7 +1928,7 @@ function Start-TokenTest {
   Write-GcDiag ("Start-TokenTest: begin (Region='{0}', Token={1})" -f $script:AppState.Region, (Format-GcDiagSecret -Value $script:AppState.AccessToken))
 
   # Disable button during test
-  Set-ControlEnabled -Control $BtnTestToken -Enabled ($false)
+  $BtnTestToken.IsEnabled = $false
   $BtnTestToken.Content = "Testing..."
   Set-Status "Testing token..."
 
@@ -2189,7 +2137,7 @@ function Start-TokenTest {
         Set-Status "Token test: OK (client credentials). Some features require user-context OAuth."
 
         $BtnTestToken.Content = "Test Token"
-        Set-ControlEnabled -Control $BtnTestToken -Enabled ($true)
+        $BtnTestToken.IsEnabled = $true
         return
       }
 
@@ -2239,7 +2187,7 @@ function Start-TokenTest {
 
     # Re-enable button
     $BtnTestToken.Content = "Test Token"
-    Set-ControlEnabled -Control $BtnTestToken -Enabled ($true)
+    $BtnTestToken.IsEnabled = $true
   }
 }
 
@@ -2584,7 +2532,7 @@ $LstJobs.Add_SelectionChanged({
   if ($idx -lt 0 -or $idx -ge $script:AppState.Jobs.Count) {
     $TxtJobMeta.Text = "Select a job…"
     $LstJobLogs.Items.Clear()
-    Set-ControlEnabled -Control $BtnCancelJob -Enabled ($false)
+    $BtnCancelJob.IsEnabled = $false
     return
   }
 
@@ -2592,7 +2540,7 @@ $LstJobs.Add_SelectionChanged({
   $TxtJobMeta.Text = "Name: $($job.Name)`r`nType: $($job.Type)`r`nStatus: $($job.Status)`r`nProgress: $($job.Progress)%"
   $LstJobLogs.Items.Clear()
   foreach ($l in $job.Logs) { $LstJobLogs.Items.Add($l) | Out-Null }
-  Set-ControlEnabled -Control $BtnCancelJob -Enabled ([bool]$job.CanCancel)
+  $BtnCancelJob.IsEnabled = [bool]$job.CanCancel
 })
 
 $BtnCancelJob.Add_Click({
@@ -3892,9 +3840,6 @@ function New-ConversationLookupView {
     GridConversations   = $view.FindName('GridConversations')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   # Capture control references for event handlers (avoid dynamic scoping surprises)
   $btnConvSearch       = $h.BtnConvSearch
   $btnConvExportJson   = $h.BtnConvExportJson
@@ -3911,6 +3856,10 @@ function New-ConversationLookupView {
 
   if ($btnConvSearch) { $btnConvSearch.Add_Click({
     Set-Status "Searching conversations..."
+    if ($btnConvSearch) { $btnConvSearch.IsEnabled = $false }
+    if ($btnConvExportJson) { $btnConvExportJson.IsEnabled = $false }
+    if ($btnConvExportCsv) { $btnConvExportCsv.IsEnabled = $false }
+    if ($btnConvOpenTimeline) { $btnConvOpenTimeline.IsEnabled = $false }
 
     # Build date range
     $endTime = Get-Date
@@ -3966,6 +3915,7 @@ function New-ConversationLookupView {
       Search-GcConversations -Body $queryBody -AccessToken $accessToken -InstanceName $instanceName -MaxItems $maxItems
     } -ArgumentList @($queryBody, $script:AppState.AccessToken, $script:AppState.Region, $maxResults) -OnCompleted ({
       param($job)
+      if ($btnConvSearch) { $btnConvSearch.IsEnabled = $true }
 
       if ($job.Result) {
         $script:ConversationsData = $job.Result
@@ -4019,6 +3969,9 @@ function New-ConversationLookupView {
         }
         if ($gridConversations) { $gridConversations.ItemsSource = $displayData }
         if ($txtConvCount) { $txtConvCount.Text = "($($job.Result.Count) conversations)" }
+        if ($btnConvExportJson) { $btnConvExportJson.IsEnabled = $true }
+        if ($btnConvExportCsv) { $btnConvExportCsv.IsEnabled = $true }
+        if ($btnConvOpenTimeline) { $btnConvOpenTimeline.IsEnabled = $true }
         Set-Status "Found $($job.Result.Count) conversations."
       } else {
         if ($gridConversations) { $gridConversations.ItemsSource = @() }
@@ -4881,9 +4834,6 @@ function New-IncidentPacketView {
     GridPackets            = $view.FindName('GridPackets')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   # Track packet history
   if (-not (Get-Variable -Name IncidentPacketHistory -Scope Script -ErrorAction SilentlyContinue)) {
     $script:IncidentPacketHistory = @()
@@ -4947,7 +4897,7 @@ function New-IncidentPacketView {
     }
 
     Set-Status "Generating incident packet for conversation: $convId"
-    Set-ControlEnabled -Control $h.BtnGeneratePacket -Enabled ($false)
+    $h.BtnGeneratePacket.IsEnabled = $false
 
     $createZip = $h.ChkZip.IsChecked
 
@@ -4974,7 +4924,7 @@ function New-IncidentPacketView {
       }
     } -ArgumentList @($convId, $script:AppState.Region, $script:AppState.AccessToken, $script:ArtifactsDir, $script:AppState.EventBuffer, $createZip) -OnCompleted {
       param($job)
-      Set-ControlEnabled -Control $h.BtnGeneratePacket -Enabled ($true)
+      $h.BtnGeneratePacket.IsEnabled = $true
 
       if ($job.Result) {
         $packet = $job.Result
@@ -5149,17 +5099,14 @@ function New-AbandonExperienceView {
     GridAbandonedConversations = $view.FindName('GridAbandonedConversations')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   $script:AbandonmentData = $null
   $script:AbandonedConversations = @()
 
   # Query button click handler
   $h.BtnAbandonQuery.Add_Click({
     Set-Status "Querying abandonment metrics..."
-    Set-ControlEnabled -Control $h.BtnAbandonQuery -Enabled ($false)
-    Set-ControlEnabled -Control $h.BtnAbandonExport -Enabled ($false)
+    $h.BtnAbandonQuery.IsEnabled = $false
+    $h.BtnAbandonExport.IsEnabled = $false
 
     # Get date range
     $now = Get-Date
@@ -5193,7 +5140,7 @@ function New-AbandonExperienceView {
       }
     } -ArgumentList @($coreAnalyticsPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region, $startTime, $endTime) -OnCompleted {
       param($job)
-      Set-ControlEnabled -Control $h.BtnAbandonQuery -Enabled ($true)
+      $h.BtnAbandonQuery.IsEnabled = $true
 
       if ($job.Result -and $job.Result.metrics) {
         $metrics = $job.Result.metrics
@@ -5244,7 +5191,7 @@ function New-AbandonExperienceView {
 
           $h.GridAbandonedConversations.ItemsSource = $displayData
           $h.TxtAbandonCount.Text = "($($job.Result.conversations.Count) conversations)"
-          Set-ControlEnabled -Control $h.BtnAbandonExport -Enabled ($true)
+          $h.BtnAbandonExport.IsEnabled = $true
         } else {
           $h.GridAbandonedConversations.ItemsSource = @()
           $h.TxtAbandonCount.Text = "(0 conversations)"
@@ -5817,15 +5764,15 @@ function New-FlowsView {
     GridFlows          = $view.FindName('GridFlows')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   # Store flows data for export
   $script:FlowsData = @()
 
   # Load button handler
   $h.BtnFlowLoad.Add_Click({
     Set-Status "Loading flows..."
+    if ($h.BtnFlowLoad) { $h.BtnFlowLoad.IsEnabled = $false }
+    if ($h.BtnFlowExportJson) { $h.BtnFlowExportJson.IsEnabled = $false }
+    if ($h.BtnFlowExportCsv) { $h.BtnFlowExportCsv.IsEnabled = $false }
 
     Start-AppJob -Name "Load Flows" -Type "Query" -ScriptBlock {
       # Query flows using Genesys Cloud API
@@ -5842,6 +5789,7 @@ function New-FlowsView {
     } -OnCompleted {
       param($job)
 
+      if ($h.BtnFlowLoad) { $h.BtnFlowLoad.IsEnabled = $true }
 
       if ($job.Result) {
         $flows = $job.Result
@@ -5861,6 +5809,8 @@ function New-FlowsView {
 
         if ($h.GridFlows) { $h.GridFlows.ItemsSource = $displayData }
         if ($h.TxtFlowCount) { $h.TxtFlowCount.Text = "($($flows.Count) flows)" }
+        if ($h.BtnFlowExportJson) { $h.BtnFlowExportJson.IsEnabled = $true }
+        if ($h.BtnFlowExportCsv) { $h.BtnFlowExportCsv.IsEnabled = $true }
 
         Set-Status "Loaded $($flows.Count) flows."
       } else {
@@ -6110,7 +6060,9 @@ function New-DataActionsView {
   # Load button handler
   if ($btnLoad) { $btnLoad.Add_Click({
     Set-Status "Loading data actions..."
-    Set-ControlEnabled -Control $btnLoad -Enabled ($false)
+    $btnLoad.IsEnabled = $false
+    if ($btnExportJson) { $btnExportJson.IsEnabled = $false }
+    if ($btnExportCsv) { $btnExportCsv.IsEnabled = $false }
 
     Start-AppJob -Name "Load Data Actions" -Type "Query" -ScriptBlock {
       param($coreModulePath, $instanceName, $accessToken, $maxItems)
@@ -6127,6 +6079,7 @@ function New-DataActionsView {
     } -ArgumentList @($coreRoot, $script:AppState.Region, $script:AppState.AccessToken, 500) -OnCompleted ({
       param($job)
 
+      if ($btnLoad) { $btnLoad.IsEnabled = $true }
 
       $actions = @()
       try { if ($job.Result) { $actions = @($job.Result) } } catch { $actions = @() }
@@ -6154,6 +6107,8 @@ function New-DataActionsView {
 
         if ($grid) { $grid.ItemsSource = $displayData }
         if ($txtCount) { $txtCount.Text = "($($actions.Count) actions)" }
+        if ($btnExportJson) { $btnExportJson.IsEnabled = $true }
+        if ($btnExportCsv) { $btnExportCsv.IsEnabled = $true }
 
         Set-Status "Loaded $($actions.Count) data actions."
       } else {
@@ -6420,8 +6375,8 @@ function New-ConfigExportView {
     }
 
     Set-Status "Exporting configuration..."
-    Set-ControlEnabled -Control $h.BtnExportSelected -Enabled ($false)
-    Set-ControlEnabled -Control $h.BtnExportAll -Enabled ($false)
+    $h.BtnExportSelected.IsEnabled = $false
+    $h.BtnExportAll.IsEnabled = $false
 
     $includeFlows = $h.ChkFlows.IsChecked
     $includeQueues = $h.ChkQueues.IsChecked
@@ -6443,8 +6398,8 @@ function New-ConfigExportView {
         -CreateZip:$createZip
     } -ArgumentList @($script:AppState.AccessToken, $script:AppState.Region, $script:ArtifactsDir, $includeFlows, $includeQueues, $includeSkills, $includeDataActions, $createZip) -OnCompleted {
       param($job)
-      Set-ControlEnabled -Control $h.BtnExportSelected -Enabled ($true)
-      Set-ControlEnabled -Control $h.BtnExportAll -Enabled ($true)
+      $h.BtnExportSelected.IsEnabled = $true
+      $h.BtnExportAll.IsEnabled = $true
 
       if ($job.Result) {
         $export = $job.Result
@@ -6580,9 +6535,6 @@ function New-DependencyImpactMapView {
     GridReferences       = $view.FindName('GridReferences')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   $script:DependencyReferencesData = @()
 
   # Search button click handler
@@ -6604,8 +6556,8 @@ function New-DependencyImpactMapView {
     }
 
     Set-Status "Searching for references to $objectType $objectId..."
-    Set-ControlEnabled -Control $h.BtnSearchReferences -Enabled ($false)
-    Set-ControlEnabled -Control $h.BtnExportReferences -Enabled ($false)
+    $h.BtnSearchReferences.IsEnabled = $false
+    $h.BtnExportReferences.IsEnabled = $false
 
     $coreDepsPath = Join-Path -Path $coreRoot -ChildPath 'Dependencies.psm1'
     $coreHttpPath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
@@ -6620,7 +6572,7 @@ function New-DependencyImpactMapView {
         -AccessToken $accessToken -InstanceName $region
     } -ArgumentList @($coreDepsPath, $coreHttpPath, $script:AppState.AccessToken, $script:AppState.Region, $objectId, $objectType) -OnCompleted {
       param($job)
-      Set-ControlEnabled -Control $h.BtnSearchReferences -Enabled ($true)
+      $h.BtnSearchReferences.IsEnabled = $true
 
       if ($job.Result -and $job.Result.Count -gt 0) {
         $script:DependencyReferencesData = $job.Result
@@ -6638,7 +6590,7 @@ function New-DependencyImpactMapView {
 
         $h.GridReferences.ItemsSource = $displayData
         $h.TxtReferenceCount.Text = "($($job.Result.Count) flows)"
-        Set-ControlEnabled -Control $h.BtnExportReferences -Enabled ($true)
+        $h.BtnExportReferences.IsEnabled = $true
         Set-Status "Found $($job.Result.Count) flows referencing $objectType $objectId."
       } else {
         $h.GridReferences.ItemsSource = @()
@@ -6777,9 +6729,6 @@ function New-QueuesView {
     TxtQueueCount       = $view.FindName('TxtQueueCount')
     GridQueues          = $view.FindName('GridQueues')
   }
-
-  Enable-PrimaryActionButtons -Handles $h
-
 
   $queuesData = @()
 
@@ -6995,9 +6944,6 @@ function New-SkillsView {
     GridSkills          = $view.FindName('GridSkills')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   $skillsData = @()
 
   $h.BtnSkillLoad.Add_Click({
@@ -7209,16 +7155,13 @@ function New-RoutingSnapshotView {
     GridSnapshot        = $view.FindName('GridSnapshot')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   $script:RoutingSnapshotData = $null
   $script:RoutingSnapshotTimer = $null
 
   # Function to refresh snapshot
   $refreshSnapshot = {
     Set-Status "Refreshing routing snapshot..."
-    Set-ControlEnabled -Control $h.BtnSnapshotRefresh -Enabled ($false)
+    $h.BtnSnapshotRefresh.IsEnabled = $false
 
     $coreModulePath = Join-Path -Path $coreRoot -ChildPath 'RoutingPeople.psm1'
     $httpModulePath = Join-Path -Path $coreRoot -ChildPath 'HttpRequests.psm1'
@@ -7232,7 +7175,7 @@ function New-RoutingSnapshotView {
       Get-GcRoutingSnapshot -AccessToken $accessToken -InstanceName $region
     } -ArgumentList @($coreModulePath, $httpModulePath, $script:AppState.AccessToken, $script:AppState.Region) -OnCompleted {
       param($job)
-      Set-ControlEnabled -Control $h.BtnSnapshotRefresh -Enabled ($true)
+      $h.BtnSnapshotRefresh.IsEnabled = $true
 
       if ($job.Result -and $job.Result.queues) {
         $script:RoutingSnapshotData = $job.Result
@@ -7263,7 +7206,7 @@ function New-RoutingSnapshotView {
           $h.TxtSnapshotTimestamp.Text = "Last updated: just now"
         }
 
-        Set-ControlEnabled -Control $h.BtnSnapshotExport -Enabled ($true)
+        $h.BtnSnapshotExport.IsEnabled = $true
         Set-Status "Routing snapshot refreshed successfully."
       } else {
         $h.GridSnapshot.ItemsSource = @()
@@ -7406,16 +7349,13 @@ function New-UsersPresenceView {
     GridUsers          = $view.FindName('GridUsers')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   $script:UsersData = @()
 
   $h.BtnUserLoad.Add_Click({
     Set-Status "Loading users..."
-    Set-ControlEnabled -Control $h.BtnUserLoad -Enabled ($false)
-    Set-ControlEnabled -Control $h.BtnUserExportJson -Enabled ($false)
-    Set-ControlEnabled -Control $h.BtnUserExportCsv -Enabled ($false)
+    $h.BtnUserLoad.IsEnabled = $false
+    $h.BtnUserExportJson.IsEnabled = $false
+    $h.BtnUserExportCsv.IsEnabled = $false
 
     Start-AppJob -Name "Load Users" -Type "Query" -ScriptBlock {
       param($accessToken, $instanceName)
@@ -7423,7 +7363,7 @@ function New-UsersPresenceView {
       Get-GcUsers -AccessToken $accessToken -InstanceName $instanceName
     } -ArgumentList @($script:AppState.AccessToken, $script:AppState.Region) -OnCompleted {
       param($job)
-      Set-ControlEnabled -Control $h.BtnUserLoad -Enabled ($true)
+      $h.BtnUserLoad.IsEnabled = $true
 
       if ($job.Result) {
         $script:UsersData = $job.Result
@@ -7438,8 +7378,8 @@ function New-UsersPresenceView {
         }
         $h.GridUsers.ItemsSource = $displayData
         $h.TxtUserCount.Text = "($($job.Result.Count) users)"
-        Set-ControlEnabled -Control $h.BtnUserExportJson -Enabled ($true)
-        Set-ControlEnabled -Control $h.BtnUserExportCsv -Enabled ($true)
+        $h.BtnUserExportJson.IsEnabled = $true
+        $h.BtnUserExportCsv.IsEnabled = $true
         Set-Status "Loaded $($job.Result.Count) users."
       } else {
         $h.GridUsers.ItemsSource = @()
@@ -7673,9 +7613,6 @@ function New-SubscriptionsView {
     TxtTranscript    = $view.FindName('TxtTranscript')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   # Streaming timer (simulated AudioHook / Agent Assist)
   if (Get-Variable -Name StreamTimer -Scope Script -ErrorAction SilentlyContinue) {
     if ($null -ne $script:StreamTimer) {
@@ -7809,8 +7746,8 @@ function New-SubscriptionsView {
     } -OnCompleted {
       param($job)
       $script:AppState.IsStreaming = $true
-      Set-ControlEnabled -Control $h.BtnStart -Enabled ($false)
-      Set-ControlEnabled -Control $h.BtnStop -Enabled ($true)
+      $h.BtnStart.IsEnabled = $false
+      $h.BtnStop.IsEnabled  = $true
       Set-Status "Subscription started."
       Refresh-HeaderStats
     } | Out-Null
@@ -7828,8 +7765,8 @@ function New-SubscriptionsView {
     } -OnCompleted {
       param($job)
       $script:AppState.IsStreaming = $false
-      Set-ControlEnabled -Control $h.BtnStart -Enabled ($true)
-      Set-ControlEnabled -Control $h.BtnStop -Enabled ($false)
+      $h.BtnStart.IsEnabled = $true
+      $h.BtnStop.IsEnabled  = $false
       Set-Status "Subscription stopped."
       Refresh-HeaderStats
     } | Out-Null
@@ -8272,9 +8209,6 @@ function New-ReportsExportsView {
     MnuArtifactDelete      = $view.FindName('MnuArtifactDelete')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   $appState = if ($global:AppState) { $global:AppState } else { $script:AppState }
   $repoRootForView = if ($global:repoRoot) { $global:repoRoot } elseif ($appState -and $appState.RepositoryRoot) { $appState.RepositoryRoot } else { $null }
 
@@ -8545,6 +8479,13 @@ function New-ReportsExportsView {
 
         # Reset current report
         $currentReportBundle = $null
+        try { if ($h.BtnOpenInBrowser) { $h.BtnOpenInBrowser.IsEnabled = $false } } catch { }
+        try { if ($h.BtnExportHtml) { $h.BtnExportHtml.IsEnabled = $false } } catch { }
+        try { if ($h.BtnExportJson) { $h.BtnExportJson.IsEnabled = $false } } catch { }
+        try { if ($h.BtnExportCsv) { $h.BtnExportCsv.IsEnabled = $false } } catch { }
+        try { if ($h.BtnExportExcel) { $h.BtnExportExcel.IsEnabled = $false } } catch { }
+        try { if ($h.BtnCopyPath) { $h.BtnCopyPath.IsEnabled = $false } } catch { }
+        try { if ($h.BtnOpenFolder) { $h.BtnOpenFolder.IsEnabled = $false } } catch { }
       }
     }.GetNewClosure())
   }
@@ -8581,6 +8522,7 @@ function New-ReportsExportsView {
         }
 
         try { Set-Status "Running report: $($template.Name)..." } catch { }
+        try { if ($h.BtnRunReport) { $h.BtnRunReport.IsEnabled = $false } } catch { }
 
         Start-AppJob -Name "Run Report — $($template.Name)" -Type 'Report' -ScriptBlock {
           param($templateName, $params)
@@ -8595,6 +8537,7 @@ function New-ReportsExportsView {
         } -ArgumentList @($template.Name, $params) -OnCompleted ({
           param($job)
 
+          try { if ($h.BtnRunReport) { $h.BtnRunReport.IsEnabled = $true } } catch { }
 
           if ($job.Result) {
             $bundle = $job.Result
@@ -8606,10 +8549,17 @@ function New-ReportsExportsView {
             if ($bundle.ReportHtmlPath -and (Test-Path $bundle.ReportHtmlPath)) {
               try {
                 if ($h.WebPreview) { $h.WebPreview.Navigate($bundle.ReportHtmlPath) }
+                if ($h.BtnOpenInBrowser) { $h.BtnOpenInBrowser.IsEnabled = $true }
               } catch { }
             }
 
             # Enable export buttons
+            try { if ($h.BtnExportHtml) { $h.BtnExportHtml.IsEnabled = $true } } catch { }
+            try { if ($h.BtnExportJson) { $h.BtnExportJson.IsEnabled = $true } } catch { }
+            try { if ($h.BtnExportCsv) { $h.BtnExportCsv.IsEnabled = $true } } catch { }
+            try { if ($h.BtnExportExcel) { $h.BtnExportExcel.IsEnabled = $true } } catch { }
+            try { if ($h.BtnCopyPath) { $h.BtnCopyPath.IsEnabled = $true } } catch { }
+            try { if ($h.BtnOpenFolder) { $h.BtnOpenFolder.IsEnabled = $true } } catch { }
 
             # Refresh artifact list
             try { & $refreshArtifactList } catch { }
@@ -8634,6 +8584,7 @@ function New-ReportsExportsView {
       } catch {
         Write-GcTrace -Level 'ERROR' -Message "BtnRunReport.Click error: $($_.Exception.Message)"
         try { Set-Status "⚠️ Error running report: $($_.Exception.Message)" } catch { }
+        try { if ($h.BtnRunReport) { $h.BtnRunReport.IsEnabled = $true } } catch { }
       }
     }.GetNewClosure())
   }
@@ -9212,7 +9163,7 @@ $BtnLogin.Add_Click({
     Set-Status "Logged out successfully."
 
     $BtnLogin.Content = "Login…"
-    Set-ControlEnabled -Control $BtnTestToken -Enabled ($false)
+    $BtnTestToken.IsEnabled = $false
     return
   }
 
@@ -9249,7 +9200,7 @@ $BtnLogin.Add_Click({
   }
 
   # Disable button during auth
-  Set-ControlEnabled -Control $BtnLogin -Enabled ($false)
+  $BtnLogin.IsEnabled = $false
   $BtnLogin.Content = "Authenticating..."
   Set-Status "Starting OAuth flow..."
 
@@ -9336,13 +9287,13 @@ $BtnLogin.Add_Click({
       Set-TopContext
       Set-Status "Authentication successful!"
       $BtnLogin.Content = "Logout"
-      Set-ControlEnabled -Control $BtnLogin -Enabled ($true)
-      Set-ControlEnabled -Control $BtnTestToken -Enabled ($true)
+      $BtnLogin.IsEnabled = $true
+      $BtnTestToken.IsEnabled = $true
     } else {
       $err = $null
       if ($job.Result) { $err = $job.Result.Error }
       Write-GcDiag ("OAuth Login: FAILED (Error='{0}')" -f $err)
-      Set-ControlEnabled -Control $BtnTestToken -Enabled ($false)
+      $BtnTestToken.IsEnabled = $false
 
       $script:AppState.Auth = "Login failed"
       $script:AppState.TokenStatus = "No token"
@@ -9373,7 +9324,7 @@ $BtnLogin.Add_Click({
         Set-Status "Authentication failed. Check job logs for details."
       }
       $BtnLogin.Content = "Login…"
-      Set-ControlEnabled -Control $BtnLogin -Enabled ($true)
+      $BtnLogin.IsEnabled = $true
     }
   }
 })

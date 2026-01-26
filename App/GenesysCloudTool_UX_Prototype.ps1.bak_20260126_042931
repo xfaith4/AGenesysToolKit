@@ -777,60 +777,6 @@ function Set-ControlEnabled {
   try { $Control.Enabled = $Enabled; return } catch { }
 }
 
-### BEGIN: AUTH_READY_BUTTON_ENABLE_HELPERS
-function Test-AuthReady {
-  <#
-    Auth-ready means we can let the UI do work:
-    - Offline demo mode is enabled (no real token required)
-    - OR a real token is present
-  #>
-
-  try {
-    if (Get-Command Test-OfflineDemoEnabled -ErrorAction SilentlyContinue) {
-      if (Test-OfflineDemoEnabled) { return $true }
-    }
-  } catch { }
-
-  return (-not [string]::IsNullOrWhiteSpace($script:AppState.AccessToken))
-}
-
-function Enable-PrimaryActionButtons {
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory=$false)]
-    [hashtable]$Handles
-  )
-
-  if ($null -eq $Handles) { return }
-
-  $canRun = Test-AuthReady
-
-  # Only enable "primary actions" (Load/Search/Start/Query).
-  # Exports should typically remain disabled until data exists.
-  $primaryKeys = @(
-    'BtnQueueLoad',
-    'BtnSkillLoad',
-    'BtnUserLoad',
-    'BtnFlowLoad',
-    'btnConvSearch',
-    'BtnGeneratePacket',
-    'BtnAbandonQuery',
-    'BtnSearchReferences',
-    'BtnSnapshotRefresh',
-    'BtnStart',
-    'BtnRunReport'
-  )
-
-  foreach ($k in $primaryKeys) {
-    if ($Handles.ContainsKey($k) -and $Handles[$k]) {
-      Set-ControlEnabled -Control $Handles[$k] -Enabled $canRun
-    }
-  }
-}
-
-### END: AUTH_READY_BUTTON_ENABLE_HELPERS
-
-
 function Set-ControlEnabled {
   [CmdletBinding()]
   param(
@@ -1779,6 +1725,7 @@ function Set-OfflineDemoMode {
 
     try {
       if ($BtnLogin) { $BtnLogin.Content = 'Offline (Disable)' }
+      if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
     } catch { }
 
     Write-GcTrace -Level 'INFO' -Message "Offline demo enabled"
@@ -1806,11 +1753,12 @@ function Set-OfflineDemoMode {
 
   try {
     if ($BtnLogin) { $BtnLogin.Content = if ($script:AppState.AccessToken) { 'Logout' } else { 'Login.' } }
+    if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
   } catch { }
 
-  Write-GcTrace -Level 'INFO' -Message (if ($Enabled) { 'Offline demo enabled' } else { 'Offline demo disabled' })
+  Write-GcTrace -Level 'INFO' -Message "Offline demo disabled"
   try { Set-TopContext } catch { }
-  try { Set-Status (if ($Enabled) { 'Offline demo enabled.' } else { 'Offline demo disabled.' }) } catch { }
+  try { Set-Status "Offline demo disabled." } catch { }
 }
 
 function Add-OfflineDemoSampleEvents {
@@ -3892,9 +3840,6 @@ function New-ConversationLookupView {
     GridConversations   = $view.FindName('GridConversations')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   # Capture control references for event handlers (avoid dynamic scoping surprises)
   $btnConvSearch       = $h.BtnConvSearch
   $btnConvExportJson   = $h.BtnConvExportJson
@@ -3911,6 +3856,10 @@ function New-ConversationLookupView {
 
   if ($btnConvSearch) { $btnConvSearch.Add_Click({
     Set-Status "Searching conversations..."
+    if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
+    if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
+    if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
+    if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
 
     # Build date range
     $endTime = Get-Date
@@ -3966,6 +3915,7 @@ function New-ConversationLookupView {
       Search-GcConversations -Body $queryBody -AccessToken $accessToken -InstanceName $instanceName -MaxItems $maxItems
     } -ArgumentList @($queryBody, $script:AppState.AccessToken, $script:AppState.Region, $maxResults) -OnCompleted ({
       param($job)
+      if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
 
       if ($job.Result) {
         $script:ConversationsData = $job.Result
@@ -4019,6 +3969,9 @@ function New-ConversationLookupView {
         }
         if ($gridConversations) { $gridConversations.ItemsSource = $displayData }
         if ($txtConvCount) { $txtConvCount.Text = "($($job.Result.Count) conversations)" }
+        if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
+        if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
+        if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
         Set-Status "Found $($job.Result.Count) conversations."
       } else {
         if ($gridConversations) { $gridConversations.ItemsSource = @() }
@@ -4881,9 +4834,6 @@ function New-IncidentPacketView {
     GridPackets            = $view.FindName('GridPackets')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   # Track packet history
   if (-not (Get-Variable -Name IncidentPacketHistory -Scope Script -ErrorAction SilentlyContinue)) {
     $script:IncidentPacketHistory = @()
@@ -5148,9 +5098,6 @@ function New-AbandonExperienceView {
     BtnAbandonExport           = $view.FindName('BtnAbandonExport')
     GridAbandonedConversations = $view.FindName('GridAbandonedConversations')
   }
-
-  Enable-PrimaryActionButtons -Handles $h
-
 
   $script:AbandonmentData = $null
   $script:AbandonedConversations = @()
@@ -5817,15 +5764,15 @@ function New-FlowsView {
     GridFlows          = $view.FindName('GridFlows')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   # Store flows data for export
   $script:FlowsData = @()
 
   # Load button handler
   $h.BtnFlowLoad.Add_Click({
     Set-Status "Loading flows..."
+    if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
+    if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
+    if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
 
     Start-AppJob -Name "Load Flows" -Type "Query" -ScriptBlock {
       # Query flows using Genesys Cloud API
@@ -5842,6 +5789,7 @@ function New-FlowsView {
     } -OnCompleted {
       param($job)
 
+      if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
 
       if ($job.Result) {
         $flows = $job.Result
@@ -5861,6 +5809,8 @@ function New-FlowsView {
 
         if ($h.GridFlows) { $h.GridFlows.ItemsSource = $displayData }
         if ($h.TxtFlowCount) { $h.TxtFlowCount.Text = "($($flows.Count) flows)" }
+        if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
+        if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
 
         Set-Status "Loaded $($flows.Count) flows."
       } else {
@@ -6111,6 +6061,8 @@ function New-DataActionsView {
   if ($btnLoad) { $btnLoad.Add_Click({
     Set-Status "Loading data actions..."
     Set-ControlEnabled -Control $btnLoad -Enabled ($false)
+    if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
+    if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
 
     Start-AppJob -Name "Load Data Actions" -Type "Query" -ScriptBlock {
       param($coreModulePath, $instanceName, $accessToken, $maxItems)
@@ -6127,6 +6079,7 @@ function New-DataActionsView {
     } -ArgumentList @($coreRoot, $script:AppState.Region, $script:AppState.AccessToken, 500) -OnCompleted ({
       param($job)
 
+      if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
 
       $actions = @()
       try { if ($job.Result) { $actions = @($job.Result) } } catch { $actions = @() }
@@ -6154,6 +6107,8 @@ function New-DataActionsView {
 
         if ($grid) { $grid.ItemsSource = $displayData }
         if ($txtCount) { $txtCount.Text = "($($actions.Count) actions)" }
+        if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
+        if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
 
         Set-Status "Loaded $($actions.Count) data actions."
       } else {
@@ -6580,9 +6535,6 @@ function New-DependencyImpactMapView {
     GridReferences       = $view.FindName('GridReferences')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   $script:DependencyReferencesData = @()
 
   # Search button click handler
@@ -6777,9 +6729,6 @@ function New-QueuesView {
     TxtQueueCount       = $view.FindName('TxtQueueCount')
     GridQueues          = $view.FindName('GridQueues')
   }
-
-  Enable-PrimaryActionButtons -Handles $h
-
 
   $queuesData = @()
 
@@ -6995,9 +6944,6 @@ function New-SkillsView {
     GridSkills          = $view.FindName('GridSkills')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   $skillsData = @()
 
   $h.BtnSkillLoad.Add_Click({
@@ -7209,9 +7155,6 @@ function New-RoutingSnapshotView {
     GridSnapshot        = $view.FindName('GridSnapshot')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   $script:RoutingSnapshotData = $null
   $script:RoutingSnapshotTimer = $null
 
@@ -7405,9 +7348,6 @@ function New-UsersPresenceView {
     TxtUserCount       = $view.FindName('TxtUserCount')
     GridUsers          = $view.FindName('GridUsers')
   }
-
-  Enable-PrimaryActionButtons -Handles $h
-
 
   $script:UsersData = @()
 
@@ -7672,9 +7612,6 @@ function New-SubscriptionsView {
     LstEvents        = $view.FindName('LstEvents')
     TxtTranscript    = $view.FindName('TxtTranscript')
   }
-
-  Enable-PrimaryActionButtons -Handles $h
-
 
   # Streaming timer (simulated AudioHook / Agent Assist)
   if (Get-Variable -Name StreamTimer -Scope Script -ErrorAction SilentlyContinue) {
@@ -8272,9 +8209,6 @@ function New-ReportsExportsView {
     MnuArtifactDelete      = $view.FindName('MnuArtifactDelete')
   }
 
-  Enable-PrimaryActionButtons -Handles $h
-
-
   $appState = if ($global:AppState) { $global:AppState } else { $script:AppState }
   $repoRootForView = if ($global:repoRoot) { $global:repoRoot } elseif ($appState -and $appState.RepositoryRoot) { $appState.RepositoryRoot } else { $null }
 
@@ -8545,6 +8479,13 @@ function New-ReportsExportsView {
 
         # Reset current report
         $currentReportBundle = $null
+        try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+        try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+        try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+        try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+        try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+        try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+        try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
       }
     }.GetNewClosure())
   }
@@ -8581,6 +8522,7 @@ function New-ReportsExportsView {
         }
 
         try { Set-Status "Running report: $($template.Name)..." } catch { }
+        try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
 
         Start-AppJob -Name "Run Report — $($template.Name)" -Type 'Report' -ScriptBlock {
           param($templateName, $params)
@@ -8595,6 +8537,7 @@ function New-ReportsExportsView {
         } -ArgumentList @($template.Name, $params) -OnCompleted ({
           param($job)
 
+          try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
 
           if ($job.Result) {
             $bundle = $job.Result
@@ -8606,10 +8549,17 @@ function New-ReportsExportsView {
             if ($bundle.ReportHtmlPath -and (Test-Path $bundle.ReportHtmlPath)) {
               try {
                 if ($h.WebPreview) { $h.WebPreview.Navigate($bundle.ReportHtmlPath) }
+                if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) }
               } catch { }
             }
 
             # Enable export buttons
+            try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+            try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+            try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+            try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+            try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
+            try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
 
             # Refresh artifact list
             try { & $refreshArtifactList } catch { }
@@ -8634,6 +8584,7 @@ function New-ReportsExportsView {
       } catch {
         Write-GcTrace -Level 'ERROR' -Message "BtnRunReport.Click error: $($_.Exception.Message)"
         try { Set-Status "⚠️ Error running report: $($_.Exception.Message)" } catch { }
+        try { if ($($matches["cond"])) { Set-ControlEnabled -Control $($matches["lhs"]) -Enabled ($($matches["rhs"])) } } catch { }
       }
     }.GetNewClosure())
   }
