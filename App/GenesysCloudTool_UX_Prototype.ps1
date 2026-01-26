@@ -276,6 +276,7 @@ function script:Build-ParameterPanel {
 
   foreach ($paramName in $Template.Parameters.Keys) {
     $paramDef = $Template.Parameters[$paramName]
+    $paramType = if ($paramDef.Type) { $paramDef.Type } else { 'String' }
 
     $paramGrid = New-Object System.Windows.Controls.Grid
     $paramGrid.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
@@ -306,9 +307,72 @@ function script:Build-ParameterPanel {
       [void]$paramGrid.Children.Add($desc)
     }
 
-    # default control: TextBox (template types may be expanded later)
-    $control = New-Object System.Windows.Controls.TextBox
-    $control.Height = 28
+    # Create type-appropriate control
+    $control = $null
+    $defaultValue = $null
+    
+    # Auto-fill from AppState for known parameters
+    if ($paramName -eq 'Region' -or $paramName -eq 'InstanceName') {
+      $defaultValue = $script:AppState.Region
+    } elseif ($paramName -eq 'AccessToken') {
+      $defaultValue = $script:AppState.AccessToken
+    } elseif ($paramName -eq 'ConversationId' -and $script:AppState.FocusConversationId) {
+      $defaultValue = $script:AppState.FocusConversationId
+    }
+
+    switch ($paramType) {
+      'DateTime' {
+        # DatePicker for DateTime parameters
+        $control = New-Object System.Windows.Controls.DatePicker
+        $control.Height = 28
+        # Default to yesterday for reports
+        if (-not $defaultValue) {
+          $control.SelectedDate = (Get-Date).AddDays(-1).Date
+        } else {
+          try { $control.SelectedDate = [DateTime]$defaultValue } catch { }
+        }
+      }
+      'Bool' {
+        # CheckBox for Boolean parameters
+        $control = New-Object System.Windows.Controls.CheckBox
+        $control.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        if ($defaultValue) {
+          try { $control.IsChecked = [bool]$defaultValue } catch { }
+        }
+      }
+      'Int' {
+        # TextBox with numeric validation hint
+        $control = New-Object System.Windows.Controls.TextBox
+        $control.Height = 28
+        if ($defaultValue) { $control.Text = [string]$defaultValue }
+        # Add tooltip for validation
+        $control.ToolTip = "Enter an integer value"
+      }
+      'Array' {
+        # Multi-line TextBox for arrays
+        $control = New-Object System.Windows.Controls.TextBox
+        $control.MinHeight = 60
+        $control.AcceptsReturn = $true
+        $control.TextWrapping = [System.Windows.TextWrapping]::Wrap
+        $control.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
+        if ($defaultValue) { $control.Text = [string]$defaultValue }
+        $control.ToolTip = "Enter JSON array or comma-separated values"
+      }
+      default {
+        # TextBox for String and other types
+        $control = New-Object System.Windows.Controls.TextBox
+        $control.Height = 28
+        if ($defaultValue) { $control.Text = [string]$defaultValue }
+      }
+    }
+
+    # Make Region and AccessToken read-only if auto-filled
+    if (($paramName -eq 'Region' -or $paramName -eq 'AccessToken') -and $defaultValue) {
+      $control.IsReadOnly = $true
+      $control.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(240, 240, 240))
+      $control.ToolTip = "Auto-filled from current session context"
+    }
+
     $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
     [System.Windows.Controls.Grid]::SetRow($control, 2)
     [void]$paramGrid.Children.Add($control)
@@ -319,7 +383,18 @@ function script:Build-ParameterPanel {
 }
 
 function script:Get-ParameterValues {
-  # Returns a hashtable of parameterName -> value based on controls created in Build-ParameterPanel
+  <#
+  .SYNOPSIS
+    Returns parameter values from UI controls with type conversion.
+  
+  .DESCRIPTION
+    Reads values from parameter controls created by Build-ParameterPanel
+    and converts them to appropriate types based on control type.
+    Handles DateTime, Bool, Int, Array, and String conversions.
+  
+  .OUTPUTS
+    Hashtable of parameter name -> typed value
+  #>
   $values = @{}
   if (-not $script:ParameterControls) { return $values }
 
@@ -328,17 +403,280 @@ function script:Get-ParameterValues {
     if ($null -eq $c) { continue }
 
     if ($c -is [System.Windows.Controls.CheckBox]) {
+      # Boolean parameter
       $values[$k] = [bool]$c.IsChecked
     } elseif ($c -is [System.Windows.Controls.DatePicker]) {
-      $values[$k] = $c.SelectedDate
+      # DateTime parameter
+      if ($c.SelectedDate) {
+        $values[$k] = $c.SelectedDate
+      }
     } else {
-      $values[$k] = $c.Text
+      # TextBox - need to parse based on content
+      $text = Get-UiTextSafe -Control $c
+      
+      # Try to detect if this should be an array (contains [ or ,)
+      if ($text -match '^\s*\[' -or ($text -match ',' -and $text -notmatch '^\s*\d+\s*$')) {
+        # Try JSON array first
+        try {
+          $values[$k] = ($text | ConvertFrom-Json)
+        } catch {
+          # Fall back to comma-separated
+          $values[$k] = @($text -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        }
+      } elseif ($text -match '^\s*\d+\s*$') {
+        # Looks like an integer
+        try {
+          $values[$k] = [int]$text
+        } catch {
+          $values[$k] = $text
+        }
+      } elseif ($text -match '^\s*(true|false)\s*$') {
+        # Looks like a boolean
+        $values[$k] = ($text.Trim() -eq 'true')
+      } else {
+        # String value
+        $values[$k] = $text
+      }
     }
   }
   return $values
 }
 
+function script:Validate-ReportParameters {
+  <#
+  .SYNOPSIS
+    Validates report parameters against template requirements.
+  
+  .DESCRIPTION
+    Checks that all required parameters have values and returns
+    validation errors as a string array.
+  
+  .PARAMETER Template
+    The report template definition
+  
+  .PARAMETER ParameterValues
+    The hashtable of parameter values from Get-ParameterValues
+  
+  .OUTPUTS
+    Array of error messages (empty if valid)
+  #>
+  param(
+    [Parameter(Mandatory=$true)]$Template,
+    [Parameter(Mandatory=$true)][hashtable]$ParameterValues
+  )
+  
+  $errors = @()
+  
+  if (-not $Template.Parameters) { return $errors }
+  
+  foreach ($paramName in $Template.Parameters.Keys) {
+    $paramDef = $Template.Parameters[$paramName]
+    
+    if ($paramDef.Required) {
+      $value = $ParameterValues[$paramName]
+      $isEmpty = $false
+      
+      if ($null -eq $value) {
+        $isEmpty = $true
+      } elseif ($value -is [string] -and [string]::IsNullOrWhiteSpace($value)) {
+        $isEmpty = $true
+      } elseif ($value -is [array] -and $value.Count -eq 0) {
+        $isEmpty = $true
+      }
+      
+      if ($isEmpty) {
+        $errors += "Required parameter '$paramName' is missing or empty"
+      }
+    }
+    
+    # Type-specific validation
+    if ($ParameterValues.ContainsKey($paramName)) {
+      $value = $ParameterValues[$paramName]
+      $paramType = if ($paramDef.Type) { $paramDef.Type } else { 'String' }
+      
+      if ($paramType -eq 'Int' -and $value -is [string]) {
+        try {
+          [int]$value | Out-Null
+        } catch {
+          $errors += "Parameter '$paramName' must be an integer"
+        }
+      }
+    }
+  }
+  
+  return $errors
+}
+
 ### END: Reports helpers (script-scope; safe for event handlers)
+
+
+### BEGIN: UI → State → API Parameter Plumbing Helpers
+
+function Get-UiTextSafe {
+  <#
+  .SYNOPSIS
+    Safely retrieves text from a UI control without null reference errors.
+  
+  .DESCRIPTION
+    Returns the text value from a TextBox, TextBlock, or similar control.
+    Returns empty string if control is null or doesn't have a Text property.
+    Trims whitespace and handles null coalescing.
+  
+  .PARAMETER Control
+    The UI control to read text from.
+  
+  .EXAMPLE
+    $region = Get-UiTextSafe -Control $h.TxtRegion
+  #>
+  param([AllowNull()]$Control)
+  
+  if ($null -eq $Control) { return '' }
+  
+  try {
+    $text = $Control.Text
+    if ($null -eq $text) { return '' }
+    return [string]$text.Trim()
+  } catch {
+    return ''
+  }
+}
+
+function Get-UiSelectionSafe {
+  <#
+  .SYNOPSIS
+    Safely retrieves the selected item from a selection control without null reference errors.
+  
+  .DESCRIPTION
+    Returns the SelectedItem from a ComboBox, ListBox, or DataGrid.
+    Returns null if control is null or has no selection.
+  
+  .PARAMETER Control
+    The selection control to read from.
+  
+  .EXAMPLE
+    $selectedTemplate = Get-UiSelectionSafe -Control $h.LstTemplates
+  #>
+  param([AllowNull()]$Control)
+  
+  if ($null -eq $Control) { return $null }
+  
+  try {
+    return $Control.SelectedItem
+  } catch {
+    return $null
+  }
+}
+
+function Sync-AppStateFromUi {
+  <#
+  .SYNOPSIS
+    Synchronizes UI control values back into AppState with normalization.
+  
+  .DESCRIPTION
+    Reads region/token fields from login dialog or manual entry controls,
+    normalizes them using Core/HttpRequests.psm1 functions, and updates AppState.
+    Calls Set-TopContext afterward to refresh the UI.
+  
+  .PARAMETER RegionControl
+    Optional TextBox containing region/instance name input.
+  
+  .PARAMETER TokenControl
+    Optional TextBox containing access token input.
+  
+  .EXAMPLE
+    Sync-AppStateFromUi -RegionControl $h.TxtRegion -TokenControl $h.TxtAccessToken
+  #>
+  param(
+    [AllowNull()]$RegionControl,
+    [AllowNull()]$TokenControl
+  )
+  
+  # Read and normalize region if control provided
+  if ($RegionControl) {
+    $rawRegion = Get-UiTextSafe -Control $RegionControl
+    if (-not [string]::IsNullOrWhiteSpace($rawRegion)) {
+      $normalized = Normalize-GcInstanceName -RegionText $rawRegion
+      if ($normalized) {
+        $script:AppState.Region = $normalized
+        Write-GcTrace -Level 'INFO' -Message "AppState.Region updated: $normalized"
+      }
+    }
+  }
+  
+  # Read and normalize token if control provided
+  if ($TokenControl) {
+    $rawToken = Get-UiTextSafe -Control $TokenControl
+    if (-not [string]::IsNullOrWhiteSpace($rawToken)) {
+      $normalized = Normalize-GcAccessToken -TokenText $rawToken
+      if ($normalized) {
+        $script:AppState.AccessToken = $normalized
+        Write-GcTrace -Level 'INFO' -Message "AppState.AccessToken updated (length: $($normalized.Length))"
+      }
+    }
+  }
+  
+  # Refresh UI context display
+  try { Set-TopContext } catch { }
+}
+
+function Get-CallContext {
+  <#
+  .SYNOPSIS
+    Builds a call context hashtable for API functions.
+  
+  .DESCRIPTION
+    Returns a hashtable containing InstanceName, AccessToken, and IsOfflineDemo.
+    If offline demo is enabled and token/region are missing, sets safe defaults.
+    If not offline and token is missing, returns null to indicate invalid context.
+  
+  .OUTPUTS
+    Hashtable with keys: InstanceName, AccessToken, IsOfflineDemo, Region
+    Returns $null if context is invalid (missing token when not in offline mode).
+  
+  .EXAMPLE
+    $ctx = Get-CallContext
+    if ($ctx) {
+      $result = Invoke-GcRequest -InstanceName $ctx.InstanceName -AccessToken $ctx.AccessToken ...
+    }
+  #>
+  
+  $isOffline = Test-OfflineDemoEnabled
+  
+  # Get current values from AppState
+  $region = $script:AppState.Region
+  $token = $script:AppState.AccessToken
+  
+  # In offline demo mode, ensure safe defaults
+  if ($isOffline) {
+    if ([string]::IsNullOrWhiteSpace($region) -or $region -eq 'usw2.pure.cloud') {
+      $region = 'offline.local'
+      $script:AppState.Region = $region
+    }
+    if ([string]::IsNullOrWhiteSpace($token)) {
+      $token = 'offline-demo'
+      $script:AppState.AccessToken = $token
+    }
+    if ([string]::IsNullOrWhiteSpace($script:AppState.FocusConversationId)) {
+      $script:AppState.FocusConversationId = 'c-demo-001'
+    }
+  } else {
+    # Not in offline mode - token is required
+    if ([string]::IsNullOrWhiteSpace($token)) {
+      Write-GcTrace -Level 'WARN' -Message "Get-CallContext: No access token available and not in offline mode"
+      return $null
+    }
+  }
+  
+  # Build and return context
+  return @{
+    InstanceName    = $region
+    Region          = $region  # Some functions use Region instead of InstanceName
+    AccessToken     = $token
+    IsOfflineDemo   = $isOffline
+  }
+}
+
+### END: UI → State → API Parameter Plumbing Helpers
 
 
 function Format-EventSummary {
