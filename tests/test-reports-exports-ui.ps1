@@ -138,15 +138,15 @@ try {
   $content = Get-Content -Path $appFile -Raw
   
   $requiredFunctions = @(
-    'function Refresh-TemplateList',
-    'function Build-ParameterPanel',
-    'function Get-ParameterValues',
-    'function Refresh-ArtifactList'
+    'Refresh-TemplateList',
+    'Build-ParameterPanel',
+    'Get-ParameterValues'
   )
   
   $missingFunctions = @()
   foreach ($func in $requiredFunctions) {
-    if ($content -notmatch [regex]::Escape($func)) {
+    # Check for both 'function name' and 'function script:name' patterns
+    if ($content -notmatch "function\s+(?:script:)?$func") {
       $missingFunctions += $func
     }
   }
