@@ -71,7 +71,8 @@ function ConvertTo-UtcDateTime {
   param([Parameter(Mandatory)][string]$Value)
 
   $dt = $null
-  if (-not [DateTime]::TryParse($Value, [ref]$dt)) {
+  $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+  if (-not [DateTime]::TryParse($Value, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$dt)) {
     throw "Invalid datetime: '$Value' (expected ISO8601)."
   }
 
