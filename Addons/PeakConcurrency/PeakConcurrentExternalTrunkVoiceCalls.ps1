@@ -1,4 +1,3 @@
-function PeakConcurrentExternalTrunkVoiceCalls {
 #requires -Version 5.1
   <#
 .SYNOPSIS
@@ -25,12 +24,10 @@ function PeakConcurrentExternalTrunkVoiceCalls {
     - Interval is clipped to the analysis window
 
 .NOTES
-  - Authentication is intentionally not implemented. Provide -Headers (with Authorization) or -AccessToken.
   - Designed for PowerShell 5.1 and 7+.
 
 .EXAMPLE
-
-  PeakConcurrentExternalTrunkVoiceCalls -interval "2026-01-23T10:00:00Z\2026-01-23T13:00:00Z" -ExportSummaryJson -ExportIntervalsCsv
+  .\PeakConcurrentExternalTrunkVoiceCalls.ps1 -Interval "2026-01-23T10:00:00Z/2026-01-23T13:00:00Z" -AccessToken "<token>"
 
 #>
 
@@ -38,27 +35,11 @@ function PeakConcurrentExternalTrunkVoiceCalls {
 param(
   [Parameter(Mandatory)]
   [ValidateNotNullOrEmpty()]
-  [string]$StartUtc,
+  [string]$Interval,
 
   [Parameter(Mandatory)]
   [ValidateNotNullOrEmpty()]
-  [string]$EndUtc,
-
-  [Parameter(Mandatory)]
-  [ValidateNotNull()]
-  [hashtable]$JobRequestBodyBase,
-
-  [Parameter()]
-  [string[]]$AllowedEdgeIds,
-
-  [Parameter()]
-  [switch]$ExportIntervalsCsv,
-
-  [Parameter()]
-  [switch]$ExportEventsCsv,
-
-  [Parameter()]
-  [switch]$ExportSummaryJson,
+  [string]$AccessToken,
 
   [Parameter()]
   [switch]$VerboseLog
@@ -82,7 +63,7 @@ function Write-Log {
   )
 
   if ($Level -eq 'DEBUG' -and -not $VerboseLog) { return }
-  $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
+  $ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
   Write-Host "[$ts] [$Level] $Message"
 }
 
@@ -90,7 +71,8 @@ function ConvertTo-UtcDateTime {
   param([Parameter(Mandatory)][string]$Value)
 
   $dt = $null
-  if (-not [DateTime]::TryParse($Value, [ref]$dt)) {
+  $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+  if (-not [DateTime]::TryParse($Value, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$dt)) {
     throw "Invalid datetime: '$Value' (expected ISO8601)."
   }
 
@@ -109,17 +91,10 @@ function Format-IsoUtc {
 }
 
 function Ensure-Headers {
-  if (-not $Headers) { $Headers = @{} }
-
-  if (-not $Headers.ContainsKey('Accept')) { $Headers['Accept'] = 'application/json' }
-  if (-not $Headers.ContainsKey('Content-Type')) { $Headers['Content-Type'] = 'application/json' }
-
-  if ($AccessToken) {
-    $Headers['Authorization'] = "Bearer $AccessToken"
-  }
-
-  if (-not $Headers.ContainsKey('Authorization')) {
-    throw "Provide -Headers with an Authorization header or supply -AccessToken."
+  $script:Headers = @{
+    Accept = 'application/json'
+    'Content-Type' = 'application/json'
+    Authorization = "Bearer $AccessToken"
   }
 }
 
@@ -210,38 +185,35 @@ function New-DetailsJob {
   )
 
   $uri = ($ApiBaseUri.TrimEnd('/') + "/api/v2/analytics/conversations/details/jobs")
-  $body = @'
-  {
-  "segmentFilters": [
-    {
-      "type": "and",
-      "predicates": [
-        {
-          "dimension": "dnis",
-          "operator": "matches",
-          "value": "tel:"
-        }
-      ]
-    },
-    {
-      "type": "and",
-      "predicates": [
-        {
-          "dimension": "mediaType",
-          "operator": "matches",
-          "value": "voice"
-        }
-      ]
-    },
-    {
-      "type": "and"
-    }
-  ],
-  "interval": "$interval"
+  $intervalValue = "{0}/{1}" -f (Format-IsoUtc $QueryStart), (Format-IsoUtc $QueryEnd)
+  $body = @{
+    segmentFilters = @(
+      @{
+        type = 'and'
+        predicates = @(
+          @{
+            dimension = 'dnis'
+            operator = 'matches'
+            value = 'tel:'
+          }
+        )
+      }
+      @{
+        type = 'and'
+        predicates = @(
+          @{
+            dimension = 'mediaType'
+            operator = 'matches'
+            value = 'voice'
+          }
+        )
+      }
+      @{
+        type = 'and'
+      }
+    )
+    interval = $intervalValue
   }
-'@
-
-
   $resp = Invoke-GcRequest -Method POST -Uri $uri -Body $body
   if (-not $resp.id) { throw "Job creation did not return an id." }
   return $resp.id
@@ -326,12 +298,6 @@ function Test-QualifyingTrunkSession {
   if ($sdnis -match 'user=voicemail') { return $false }
 
   if (-not $Session.mediaEndpointStats -or $Session.mediaEndpointStats.Count -lt 1) { return $false }
-
-  if ($AllowedEdgeIds -and $AllowedEdgeIds.Count -gt 0) {
-    $edgeId = $Session.edgeId
-    if (-not $edgeId) { return $false }
-    if ($AllowedEdgeIds -notcontains $edgeId) { return $false }
-  }
 
   return $true
 }
@@ -478,9 +444,12 @@ function Compute-Concurrency {
   )
 
   $events = New-Object System.Collections.Generic.List[object]
+  $seq = 0
   foreach ($i in $Intervals) {
-    $events.Add([pscustomobject]@{ Ts = $i.StartUtc; Delta =  1; LegKey = $i.LegKey }) | Out-Null
-    $events.Add([pscustomobject]@{ Ts = $i.EndUtc;   Delta = -1; LegKey = $i.LegKey }) | Out-Null
+    $seq++
+    $events.Add([pscustomobject]@{ Ts = $i.StartUtc; Delta =  1; LegKey = $i.LegKey; Seq = $seq }) | Out-Null
+    $seq++
+    $events.Add([pscustomobject]@{ Ts = $i.EndUtc;   Delta = -1; LegKey = $i.LegKey; Seq = $seq }) | Out-Null
   }
 
   if ($events.Count -eq 0) {
@@ -492,7 +461,7 @@ function Compute-Concurrency {
     }
   }
 
-  $sorted = $events | Sort-Object Ts, Delta, LegKey
+  $sorted = $events | Sort-Object Ts, Delta, Seq
 
   $cur = 0
   $peak = 0
@@ -535,17 +504,81 @@ function Compute-Concurrency {
   }
 }
 
-function Get-ScriptDirectory {
-  if ($PSCommandPath) {
-    return [System.IO.Path]::GetDirectoryName($PSCommandPath)
+function Get-MinuteConcurrency {
+  param(
+    [Parameter(Mandatory)][System.Collections.Generic.List[object]]$Events,
+    [Parameter(Mandatory)][DateTime]$WindowStartUtc,
+    [Parameter(Mandatory)][DateTime]$WindowEndUtc
+  )
+
+  $results = New-Object System.Collections.Generic.List[object]
+  if ($WindowEndUtc -le $WindowStartUtc) { return $results }
+
+  $sorted = $Events | Sort-Object Ts, Delta, Seq
+  $eventIndex = 0
+  $eventCount = $sorted.Count
+  $current = 0
+
+  $minuteStart = [DateTime]::SpecifyKind($WindowStartUtc, [DateTimeKind]::Utc)
+  $minuteStart = $minuteStart.AddSeconds(-1 * $minuteStart.Second).AddMilliseconds(-1 * $minuteStart.Millisecond)
+
+  while ($minuteStart -lt $WindowEndUtc) {
+    $minuteEnd = $minuteStart.AddMinutes(1)
+    if ($minuteEnd -gt $WindowEndUtc) { $minuteEnd = $WindowEndUtc }
+
+    while ($eventIndex -lt $eventCount -and $sorted[$eventIndex].Ts -lt $minuteStart) {
+      $current += $sorted[$eventIndex].Delta
+      $eventIndex++
+    }
+
+    $minuteMax = $current
+    $scanIndex = $eventIndex
+    $scanCurrent = $current
+
+    while ($scanIndex -lt $eventCount -and $sorted[$scanIndex].Ts -lt $minuteEnd) {
+      $scanCurrent += $sorted[$scanIndex].Delta
+      if ($scanCurrent -gt $minuteMax) { $minuteMax = $scanCurrent }
+      $scanIndex++
+    }
+
+    $results.Add([pscustomobject]@{
+      MinuteUtc = (Format-IsoUtc $minuteStart)
+      ActiveConversations = [int]$minuteMax
+    }) | Out-Null
+
+    while ($eventIndex -lt $eventCount -and $sorted[$eventIndex].Ts -lt $minuteEnd) {
+      $current += $sorted[$eventIndex].Delta
+      $eventIndex++
+    }
+
+    $minuteStart = $minuteStart.AddMinutes(1)
   }
-  return (Get-Location).Path
+
+  return $results
+}
+
+function Split-Interval {
+  param([Parameter(Mandatory)][string]$Value)
+
+  $parts = $Value -split '/'
+  if ($parts.Count -ne 2) {
+    throw "Interval must be in the format 'start/end' using ISO8601 UTC timestamps."
+  }
+
+  $start = ConvertTo-UtcDateTime $parts[0]
+  $end = ConvertTo-UtcDateTime $parts[1]
+
+  return [pscustomobject]@{
+    StartUtc = $start
+    EndUtc = $end
+  }
 }
 
 Ensure-Headers
 
-$windowStart = ConvertTo-UtcDateTime $StartUtc
-$windowEnd   = ConvertTo-UtcDateTime $EndUtc
+$intervalParts = Split-Interval -Value $Interval
+$windowStart = $intervalParts.StartUtc
+$windowEnd   = $intervalParts.EndUtc
 if ($windowEnd -le $windowStart) { throw "EndUtc must be greater than StartUtc." }
 
 $chunks = New-TimeChunks -Start $windowStart -End $windowEnd -Size $ChunkSize -Unit $ChunkUnit -OverlapMinutes $ChunkOverlapMinutes
@@ -583,22 +616,7 @@ $finalIntervals = $dedupe.Intervals
 $duplicatesCollapsed = $dedupe.DuplicatesCollapsed
 
 $cc = Compute-Concurrency -Intervals $finalIntervals -WindowStartUtc $windowStart -WindowEndUtc $windowEnd
-
-$scriptDir = Get-ScriptDirectory
-$stamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
-$baseName = "PeakConcurrentExternalTrunkVoiceCalls_$stamp"
-
-if ($ExportIntervalsCsv) {
-  $csvPath = Join-Path -Path $scriptDir -ChildPath ($baseName + "_intervals.csv")
-  $finalIntervals | Sort-Object StartUtc | Export-Csv -NoTypeInformation -Path $csvPath -Encoding UTF8
-  Write-Log -Message ("Wrote intervals CSV: {0}" -f $csvPath)
-}
-
-if ($ExportEventsCsv) {
-  $csvPath = Join-Path -Path $scriptDir -ChildPath ($baseName + "_events.csv")
-  $cc.Events | Select-Object Ts, Delta, LegKey | Export-Csv -NoTypeInformation -Path $csvPath -Encoding UTF8
-  Write-Log -Message ("Wrote events CSV: {0}" -f $csvPath)
-}
+$minuteConcurrency = Get-MinuteConcurrency -Events $cc.Events -WindowStartUtc $windowStart -WindowEndUtc $windowEnd
 
 $summary = [pscustomobject]@{
   RunUtc = (Format-IsoUtc (Get-Date).ToUniversalTime())
@@ -629,7 +647,6 @@ $summary = [pscustomobject]@{
     PageSize = $PageSize
     PollIntervalSeconds = $PollIntervalSeconds
     JobTimeoutSeconds = $JobTimeoutSeconds
-    AllowedEdgeIds = $AllowedEdgeIds
     Chunks = $chunkStats
   }
   Results = [pscustomobject]@{
@@ -642,18 +659,4 @@ $summary = [pscustomobject]@{
   }
 }
 
-if ($ExportSummaryJson) {
-  $jsonPath = Join-Path -Path $scriptDir -ChildPath ($baseName + "_summary.json")
-  $summary | ConvertTo-Json -Depth 30 | Out-File -FilePath $jsonPath -Encoding UTF8
-  Write-Log -Message ("Wrote summary JSON: {0}" -f $jsonPath)
-}
-
-Write-Host ""
-Write-Host ("Peak Concurrent External-Trunk Voice Calls: {0}" -f $summary.Results.PeakConcurrent)
-Write-Host ("Peak Timestamp (UTC): {0}" -f $summary.Results.PeakUtc)
-Write-Host ("Average Concurrent (UTC window): {0}" -f $summary.Results.AverageConcurrent)
-Write-Host ("Intervals (final): {0} (collapsed duplicates: {1})" -f $summary.Results.IntervalsFinal, $summary.Results.DuplicatesCollapsed)
-Write-Host ""
-
-return $summary
-}
+$minuteConcurrency
