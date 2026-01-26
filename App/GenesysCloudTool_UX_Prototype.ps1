@@ -414,20 +414,44 @@ function script:Get-ParameterValues {
       # TextBox - need to parse based on content
       $text = Get-UiTextSafe -Control $c
       
-      # Try to detect if this should be an array (contains [ or ,)
-      if ($text -match '^\s*\[' -or ($text -match ',' -and $text -notmatch '^\s*\d+\s*$')) {
-        # Try JSON array first
+      # Skip conversion for empty strings
+      if ([string]::IsNullOrWhiteSpace($text)) {
+        $values[$k] = $text
+        continue
+      }
+      
+      # Try to detect if this should be an array
+      # Pattern: starts with [ OR contains comma (but comma could be in a single number like 1,000)
+      # So we check: starts with [ OR (contains comma AND not purely numeric with optional commas)
+      if ($text -match '^\s*\[') {
+        # Definitely a JSON array
         try {
           $values[$k] = ($text | ConvertFrom-Json)
         } catch {
-          # Fall back to comma-separated
+          # Fall back to treating as string
+          $values[$k] = $text
+        }
+      } elseif ($text -match ',') {
+        # Contains comma - check if it's a number with thousand separators or an array
+        $testNumeric = $text -replace '[,\s]', ''
+        if ($testNumeric -match '^\d+$') {
+          # Looks like a number with thousand separators (e.g., "1,000")
+          try {
+            $values[$k] = [int]($text -replace ',', '')
+          } catch {
+            $values[$k] = $text
+          }
+        } else {
+          # Treat as comma-separated array
           $values[$k] = @($text -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
         }
-      } elseif ($text -match '^\s*\d+\s*$') {
-        # Looks like an integer
+      } elseif ($text -match '^\s*-?\d+\s*$') {
+        # Looks like an integer (with optional negative sign)
         try {
           $values[$k] = [int]$text
         } catch {
+          # If it fails to parse, keep as string - validation will catch this later
+          Write-GcTrace -Level 'WARN' -Message "Failed to parse '$text' as integer for parameter '$k'"
           $values[$k] = $text
         }
       } elseif ($text -match '^\s*(true|false)\s*$') {
