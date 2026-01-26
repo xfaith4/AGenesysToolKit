@@ -7,6 +7,7 @@ Successfully implemented a production-ready, enterprise-grade Reporting & Export
 ## ✅ Deliverables Completed
 
 ### 1. Core Infrastructure (`Core/Reporting.psm1`)
+
 - ✅ **819 lines of production code**
 - ✅ **8 exported functions** with full documentation
 - ✅ **18/18 unit tests passing**
@@ -14,6 +15,7 @@ Successfully implemented a production-ready, enterprise-grade Reporting & Export
 - ✅ Cross-platform support (Windows, macOS, Linux)
 
 **Functions Implemented:**
+
 - `New-GcReportRunId` - Unique correlation ID generation
 - `New-GcArtifactBundle` - Bundle structure creation
 - `Write-GcReportHtml` - Self-contained HTML reports
@@ -24,21 +26,25 @@ Successfully implemented a production-ready, enterprise-grade Reporting & Export
 - `Set-GcReportingConfig` - Configuration management
 
 ### 2. Report Templates (`Core/ReportTemplates.psm1`)
+
 - ✅ **645 lines of production code**
 - ✅ **3 built-in templates** ready for production use
 - ✅ **7/7 template tests passing**
 - ✅ **Template registry system** for extensibility
 
 **Templates Delivered:**
+
 1. **Conversation Inspect Packet** - Complete conversation analysis with timeline and events
 2. **Errors & Failures Snapshot** - Cross-cutting error analysis from multiple sources
 3. **Subscription Session Summary** - Live monitoring session documentation
 
 **High-Level API:**
+
 - `Get-GcReportTemplates` - Template discovery
 - `Invoke-GcReportTemplate` - Template execution with artifact generation
 
 ### 3. Documentation (`docs/REPORTING_AND_EXPORTS.md`)
+
 - ✅ **650+ lines** of comprehensive documentation
 - ✅ **Complete user guide** with examples for all templates
 - ✅ **Artifact folder layout specification**
@@ -50,6 +56,7 @@ Successfully implemented a production-ready, enterprise-grade Reporting & Export
 - ✅ **Advanced usage** examples (scheduling, automation)
 
 ### 4. UI Integration
+
 - ✅ **"Reports & Exports" workspace** added to navigation
 - ✅ **3 modules** wired: Report Builder, Export History, Quick Exports
 - ✅ **Module imports** in app entry point
@@ -58,11 +65,12 @@ Successfully implemented a production-ready, enterprise-grade Reporting & Export
 - ✅ **Architecture provided** for full view implementation
 
 ### 5. Stability Fixes
+
 - ✅ **Fixed TxtSearch.Text placeholder crash**
   - Added `Set-ControlValue` helper for robust WPF control updates
   - Handles TextBox, TextBlock, Label, ComboBox, ContentControl
   - Graceful degradation with warnings
-  
+
 - ✅ **Fixed OAuth "Scopes property missing" failure**
   - Modified `Get-GcAuthConfig` to ensure Scopes is always an array
   - Added null guards in authorization URL building
@@ -74,6 +82,7 @@ Successfully implemented a production-ready, enterprise-grade Reporting & Export
   - Prevents null-valued expression method call errors
 
 ### 6. Testing & Validation
+
 - ✅ **18 core module tests** - All passing
 - ✅ **7 template tests** - All passing
 - ✅ **5 integration tests** - All passing
@@ -82,6 +91,7 @@ Successfully implemented a production-ready, enterprise-grade Reporting & Export
 - ✅ **Total: 31+ tests passing**
 
 **Integration Test Validates:**
+
 - End-to-end artifact bundle creation
 - HTML, JSON, CSV, metadata, index generation
 - Template execution workflow
@@ -104,6 +114,7 @@ Successfully implemented a production-ready, enterprise-grade Reporting & Export
 ## 🏗️ Architecture Highlights
 
 ### Artifact Bundle Structure
+
 ```
 App/artifacts/
 ├── index.json                                    # Global export history
@@ -117,6 +128,7 @@ App/artifacts/
 ```
 
 ### Metadata Schema
+
 ```json
 {
   "ReportName": "Conversation Inspect Packet",
@@ -137,6 +149,7 @@ App/artifacts/
 ```
 
 ### Template Definition Pattern
+
 ```powershell
 [PSCustomObject]@{
   Name = 'Custom Report'
@@ -149,16 +162,17 @@ App/artifacts/
 ```
 
 ### Report Invocation Pattern
+
 ```powershell
 function Invoke-CustomReport {
   param([Parameter(Mandatory)][string]$ParamName)
-  
+
   $rows = @()     # Array of data rows
   $summary = @{}  # Summary key-value pairs
   $warnings = @() # Warning messages
-  
+
   # ... fetch and process data ...
-  
+
   return @{
     Rows = $rows
     Summary = $summary
@@ -170,6 +184,7 @@ function Invoke-CustomReport {
 ## 🎓 Usage Examples
 
 ### Basic Template Execution
+
 ```powershell
 # Import modules
 Import-Module ./Core/Reporting.psm1
@@ -194,6 +209,7 @@ Open-GcArtifact -Path $bundle.ReportHtmlPath
 ```
 
 ### High-Level API
+
 ```powershell
 # One-line execution with full artifact generation
 $bundle = Invoke-GcReportTemplate `
@@ -209,6 +225,7 @@ $bundle = Invoke-GcReportTemplate `
 ```
 
 ### Export History
+
 ```powershell
 # Get all exports
 $exports = Get-GcArtifactIndex
@@ -235,12 +252,14 @@ Open-GcArtifact -Path $htmlPath
 ## 📈 Quality Metrics
 
 ### Test Coverage
+
 - **100%** of core functions have unit tests
 - **100%** of templates have functional tests
 - **End-to-end** integration test validates full workflow
 - **App load** validation ensures UI integration doesn't break
 
 ### Code Quality
+
 - **Strict mode** enabled in all modules
 - **CmdletBinding** on all functions
 - **Parameter validation** throughout
@@ -249,6 +268,7 @@ Open-GcArtifact -Path $htmlPath
 - **Comprehensive documentation** (synopsis, description, parameters, examples)
 
 ### Compatibility
+
 - **Windows PowerShell 5.1** - Tested ✅
 - **PowerShell 7.4** - Tested ✅
 - **Windows** - Primary target ✅
@@ -257,6 +277,7 @@ Open-GcArtifact -Path $htmlPath
 ## 🚀 Demo Scenarios (Documented)
 
 ### Scenario 1: Conversation Inspect Packet
+
 1. Launch app
 2. Log in via OAuth
 3. Navigate to Operations → Topic Subscriptions
@@ -270,6 +291,7 @@ Open-GcArtifact -Path $htmlPath
 **Result:** Complete conversation analysis with timeline, events, and analytics in professional HTML + CSV + JSON format.
 
 ### Scenario 2: Errors & Failures Snapshot
+
 1. After running operations (some with failures)
 2. Navigate to Reports & Exports → Report Builder
 3. Select "Errors & Failures Snapshot" template
@@ -280,6 +302,7 @@ Open-GcArtifact -Path $htmlPath
 **Result:** Consolidated error report from jobs, subscriptions, and API calls with timestamp, source, category, and error message.
 
 ### Scenario 3: Subscription Session Summary
+
 1. Start subscription session
 2. Let run for several minutes, collecting events
 3. Navigate to Reports & Exports → Report Builder
@@ -304,6 +327,7 @@ Open-GcArtifact -Path $htmlPath
 ## 📝 Adding New Templates (Developer Guide)
 
 1. Define template in `Get-GcReportTemplates`:
+
 ```powershell
 [PSCustomObject]@{
   Name = 'Queue Performance Report'
@@ -317,6 +341,7 @@ Open-GcArtifact -Path $htmlPath
 ```
 
 2. Implement invoke function:
+
 ```powershell
 function Invoke-QueuePerformanceReport {
   param([Parameter(Mandatory)][string]$QueueId, [string]$DateRange)
@@ -325,11 +350,13 @@ function Invoke-QueuePerformanceReport {
 ```
 
 3. Export function:
+
 ```powershell
 Export-ModuleMember -Function @('...', 'Invoke-QueuePerformanceReport')
 ```
 
 4. Test:
+
 ```powershell
 $bundle = Invoke-GcReportTemplate -TemplateName 'Queue Performance Report' -Parameters @{ QueueId = 'q-123' }
 ```
@@ -375,6 +402,7 @@ $bundle = Invoke-GcReportTemplate -TemplateName 'Queue Performance Report' -Para
 ## 📦 Files Changed
 
 ### Added Files (8)
+
 - `Core/Reporting.psm1` (819 lines)
 - `Core/ReportTemplates.psm1` (645 lines)
 - `tests/test-reporting.ps1` (384 lines)
@@ -383,6 +411,7 @@ $bundle = Invoke-GcReportTemplate -TemplateName 'Queue Performance Report' -Para
 - `docs/REPORTING_AND_EXPORTS.md` (653 lines)
 
 ### Modified Files (2)
+
 - `App/GenesysCloudTool_UX_Prototype_v2_1.ps1` (+~70 lines)
   - Added Reports & Exports workspace
   - Added module definitions
@@ -390,7 +419,7 @@ $bundle = Invoke-GcReportTemplate -TemplateName 'Queue Performance Report' -Para
   - Imported reporting modules
   - Added Set-ControlValue helper
   - Fixed TxtSearch.Text usage
-  
+
 - `Core/Auth.psm1` (+~30 lines)
   - Fixed Get-GcAuthConfig Scopes handling
   - Added null guards in authorization flow
@@ -409,8 +438,9 @@ $bundle = Invoke-GcReportTemplate -TemplateName 'Queue Performance Report' -Para
 The Reporting & Exports system is **production-ready** and **fully functional**. All core requirements are met, code quality is high, and the system is well-tested and documented. The architecture supports future enhancements while providing immediate value through the 3 built-in templates.
 
 **Total Implementation:**
+
 - 8 new files created
-- 2 files modified  
+- 2 files modified
 - ~3000 lines of production code
 - 31+ tests passing
 - 650+ lines of documentation
