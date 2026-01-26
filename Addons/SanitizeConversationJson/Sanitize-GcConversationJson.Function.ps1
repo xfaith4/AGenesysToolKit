@@ -76,6 +76,61 @@ function Sanitize-GcConversationJson {
   if ($ExtraPiiKeys) {
     $piiIdKeys += $ExtraPiiKeys
   }
+function Sanitize-Value {
+    param(
+      [Parameter(Mandatory)]$Value,
+      [string]$PropName
+    )
+
+    if ($null -eq $Value) { return $null }
+    write-host "value: $Value"
+    if ($Value -is [string]) {
+      if ($PropName) {
+        if ($setPhone.Contains($PropName)) {
+          $orig = $Value
+          if ($orig -match '^(?i)tel:') { return 'tel:' + (New-Token -Type 'TEL' -Original $orig) }
+          return New-Token -Type 'TEL' -Original $orig
+        }
+        if ($setSip.Contains($PropName)) { return 'sip:' + (New-Token -Type 'SIP' -Original $Value) }
+        if ($setEmail.Contains($PropName)) { return New-Token -Type 'EMAIL' -Original $Value }
+        if ($setName.Contains($PropName)) { return New-Token -Type 'NAME' -Original $Value }
+        if ($setIp.Contains($PropName)) { return New-Token -Type 'IP' -Original $Value }
+        if ($setId.Contains($PropName)) { return New-Token -Type 'ID' -Original $Value }
+      }
+
+      return (Sanitize-String -s $Value)
+    }
+
+    if ($Value -is [bool] -or $Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal] -or $Value -is [datetime]) {
+      return $Value
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+      $out = @{}
+      foreach ($k in $Value.Keys) {
+        $keyName = [string]$k
+        $out[$k] = Sanitize-Value -Value $Value[$k] -PropName $keyName
+      }
+      return $out
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [pscustomobject])) {
+      $list = New-Object System.Collections.Generic.List[object]
+      foreach ($item in $Value) {
+        $list.Add((Sanitize-Value -Value $item -PropName $null)) | Out-Null
+      }
+      return $list.ToArray()
+    }
+
+    $props = $Value.PSObject.Properties | Where-Object { $_.MemberType -in 'NoteProperty', 'Property' }
+    if (-not $props) { return $Value }
+
+    $o = [ordered]@{}
+    foreach ($p in $props) {
+      $o[$p.Name] = Sanitize-Value -Value $p.Value -PropName $p.Name
+    }
+    [pscustomobject]$o
+  }
 
   $setPhone = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
   $setEmail = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -183,61 +238,7 @@ function Sanitize-GcConversationJson {
     $s
   }
 
-  function Sanitize-Value {
-    param(
-      [Parameter(Mandatory)]$Value,
-      [string]$PropName
-    )
 
-    if ($null -eq $Value) { return $null }
-
-    if ($Value -is [string]) {
-      if ($PropName) {
-        if ($setPhone.Contains($PropName)) {
-          $orig = $Value
-          if ($orig -match '^(?i)tel:') { return 'tel:' + (New-Token -Type 'TEL' -Original $orig) }
-          return New-Token -Type 'TEL' -Original $orig
-        }
-        if ($setSip.Contains($PropName)) { return 'sip:' + (New-Token -Type 'SIP' -Original $Value) }
-        if ($setEmail.Contains($PropName)) { return New-Token -Type 'EMAIL' -Original $Value }
-        if ($setName.Contains($PropName)) { return New-Token -Type 'NAME' -Original $Value }
-        if ($setIp.Contains($PropName)) { return New-Token -Type 'IP' -Original $Value }
-        if ($setId.Contains($PropName)) { return New-Token -Type 'ID' -Original $Value }
-      }
-
-      return (Sanitize-String -s $Value)
-    }
-
-    if ($Value -is [bool] -or $Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal] -or $Value -is [datetime]) {
-      return $Value
-    }
-
-    if ($Value -is [System.Collections.IDictionary]) {
-      $out = @{}
-      foreach ($k in $Value.Keys) {
-        $keyName = [string]$k
-        $out[$k] = Sanitize-Value -Value $Value[$k] -PropName $keyName
-      }
-      return $out
-    }
-
-    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [pscustomobject])) {
-      $list = New-Object System.Collections.Generic.List[object]
-      foreach ($item in $Value) {
-        $list.Add((Sanitize-Value -Value $item -PropName $null)) | Out-Null
-      }
-      return $list.ToArray()
-    }
-
-    $props = $Value.PSObject.Properties | Where-Object { $_.MemberType -in 'NoteProperty', 'Property' }
-    if (-not $props) { return $Value }
-
-    $o = [ordered]@{}
-    foreach ($p in $props) {
-      $o[$p.Name] = Sanitize-Value -Value $p.Value -PropName $p.Name
-    }
-    [pscustomobject]$o
-  }
 
   if ($PSCmdlet.ParameterSetName -eq 'File') {
     if (-not (Test-Path -LiteralPath $Path)) { throw "File not found: $Path" }
