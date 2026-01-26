@@ -514,7 +514,7 @@ function Get-MinuteConcurrency {
   $results = New-Object System.Collections.Generic.List[object]
   if ($WindowEndUtc -le $WindowStartUtc) { return $results }
 
-  $sorted = $Events | Sort-Object Ts, Delta, Seq
+  $sorted = $Events | Sort-Object Ts, Delta, LegKey
   $eventIndex = 0
   $eventCount = $sorted.Count
   $current = 0
