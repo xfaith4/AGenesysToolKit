@@ -8354,6 +8354,8 @@ function New-ReportsExportsView {
 
   $refreshArtifactList = {
     try {
+      if (-not $h.LstArtifacts) { return }
+      
       $artifacts = Get-GcArtifactIndex
       
       $displayItems = $artifacts | Sort-Object -Property Timestamp -Descending | Select-Object -First 20 | ForEach-Object {
@@ -8373,185 +8375,256 @@ function New-ReportsExportsView {
         $h.LstArtifacts.Items.Add($item) | Out-Null
       }
     } catch {
-      Write-Warning "Failed to load artifact index: $_"
+      Write-GcTrace -Level 'WARN' -Message "Failed to load artifact index: $($_.Exception.Message)"
     }
   }.GetNewClosure()
 
   # Template search
-  $h.TxtTemplateSearch.Add_TextChanged({
-    script:Refresh-TemplateList -h $h -Templates $templates
-  }.GetNewClosure())
-
-  $h.TxtTemplateSearch.Add_GotFocus({
-    if ($h.TxtTemplateSearch.Text -eq "Search templates...") {
-      $h.TxtTemplateSearch.Text = ""
-    }
-  }.GetNewClosure())
-
-  $h.TxtTemplateSearch.Add_LostFocus({
-    if ([string]::IsNullOrWhiteSpace($h.TxtTemplateSearch.Text)) {
-      $h.TxtTemplateSearch.Text = "Search templates..."
-    }
-  }.GetNewClosure())
-
-  # Template selection
-  $h.LstTemplates.Add_SelectionChanged({
-    $selectedItem = $h.LstTemplates.SelectedItem
-    if ($selectedItem -and $selectedItem.Tag) {
-      $template = $selectedItem.Tag
-      $h.TxtTemplateDescription.Text = $template.Description
-      & $buildParameterPanel $template
-      
-      # Reset current report
-      $currentReportBundle = $null
-      $h.BtnOpenInBrowser.IsEnabled = $false
-      $h.BtnExportHtml.IsEnabled = $false
-      $h.BtnExportJson.IsEnabled = $false
-      $h.BtnExportCsv.IsEnabled = $false
-      $h.BtnExportExcel.IsEnabled = $false
-      $h.BtnCopyPath.IsEnabled = $false
-      $h.BtnOpenFolder.IsEnabled = $false
-    }
-  }.GetNewClosure())
-
-  # Run report
-  $h.BtnRunReport.Add_Click({
-    $selectedItem = $h.LstTemplates.SelectedItem
-    if (-not $selectedItem -or -not $selectedItem.Tag) {
-      [System.Windows.MessageBox]::Show(
-        "Please select a report template first.",
-        "No Template Selected",
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Warning
-      )
-      return
-    }
-    
-    $template = $selectedItem.Tag
-    $params = & $getParameterValues
-    
-    if (-not $params) {
-      [System.Windows.MessageBox]::Show(
-        "Please fill in all required parameters.",
-        "Validation Error",
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Warning
-      )
-      return
-    }
-    
-    Set-Status "Running report: $($template.Name)..."
-    $h.BtnRunReport.IsEnabled = $false
-    
-    Start-AppJob -Name "Run Report — $($template.Name)" -Type 'Report' -ScriptBlock {
-      param($templateName, $params)
-      
+  if ($h.TxtTemplateSearch) {
+    $h.TxtTemplateSearch.Add_TextChanged({
       try {
-        $bundle = Invoke-GcReportTemplate -TemplateName $templateName -Parameters $params
-        return $bundle
+        script:Refresh-TemplateList -h $h -Templates $templates
       } catch {
-        Write-Error "Failed to run report: $_"
-        return $null
-      }
-    } -ArgumentList @($template.Name, $params) -OnCompleted ({
-      param($job)
-      
-      $h.BtnRunReport.IsEnabled = $true
-      
-      if ($job.Result) {
-        $bundle = $job.Result
-        $currentReportBundle = $bundle
-        
-        Set-Status "Report completed: $($bundle.BundlePath)"
-        
-        # Load HTML preview
-        if (Test-Path $bundle.ReportHtmlPath) {
-          $h.WebPreview.Navigate($bundle.ReportHtmlPath)
-          $h.BtnOpenInBrowser.IsEnabled = $true
-        }
-        
-        # Enable export buttons
-        $h.BtnExportHtml.IsEnabled = $true
-        $h.BtnExportJson.IsEnabled = $true
-        $h.BtnExportCsv.IsEnabled = $true
-        $h.BtnExportExcel.IsEnabled = $true
-        $h.BtnCopyPath.IsEnabled = $true
-        $h.BtnOpenFolder.IsEnabled = $true
-        
-        # Refresh artifact list
-        & $refreshArtifactList
-        
-        Show-Snackbar "Report completed successfully!" -Action "Open" -ActionCallback {
-          Start-Process $bundle.BundlePath
-        }.GetNewClosure()
-      } else {
-        Set-Status "Report failed. See job logs for details."
-        [System.Windows.MessageBox]::Show(
-          "Report execution failed. Check job logs for details.",
-          "Report Error",
-          [System.Windows.MessageBoxButton]::OK,
-          [System.Windows.MessageBoxImage]::Error
-        )
+        Write-GcTrace -Level 'ERROR' -Message "TxtTemplateSearch.TextChanged error: $($_.Exception.Message)"
       }
     }.GetNewClosure())
-  }.GetNewClosure())
+
+    $h.TxtTemplateSearch.Add_GotFocus({
+      try {
+        if ($h.TxtTemplateSearch -and $h.TxtTemplateSearch.Text -eq "Search templates...") {
+          $h.TxtTemplateSearch.Text = ""
+        }
+      } catch { }
+    }.GetNewClosure())
+
+    $h.TxtTemplateSearch.Add_LostFocus({
+      try {
+        if ($h.TxtTemplateSearch -and [string]::IsNullOrWhiteSpace($h.TxtTemplateSearch.Text)) {
+          $h.TxtTemplateSearch.Text = "Search templates..."
+        }
+      } catch { }
+    }.GetNewClosure())
+  }
+
+  # Template selection
+  if ($h.LstTemplates) {
+    $h.LstTemplates.Add_SelectionChanged({
+      $selectedItem = Get-UiSelectionSafe -Control $h.LstTemplates
+      if ($selectedItem -and $selectedItem.Tag) {
+        $template = $selectedItem.Tag
+        try { if ($h.TxtTemplateDescription) { $h.TxtTemplateDescription.Text = $template.Description } } catch { }
+        & $buildParameterPanel $template
+        
+        # Reset current report
+        $currentReportBundle = $null
+        try { if ($h.BtnOpenInBrowser) { $h.BtnOpenInBrowser.IsEnabled = $false } } catch { }
+        try { if ($h.BtnExportHtml) { $h.BtnExportHtml.IsEnabled = $false } } catch { }
+        try { if ($h.BtnExportJson) { $h.BtnExportJson.IsEnabled = $false } } catch { }
+        try { if ($h.BtnExportCsv) { $h.BtnExportCsv.IsEnabled = $false } } catch { }
+        try { if ($h.BtnExportExcel) { $h.BtnExportExcel.IsEnabled = $false } } catch { }
+        try { if ($h.BtnCopyPath) { $h.BtnCopyPath.IsEnabled = $false } } catch { }
+        try { if ($h.BtnOpenFolder) { $h.BtnOpenFolder.IsEnabled = $false } } catch { }
+      }
+    }.GetNewClosure())
+  }
+
+  # Run report
+  if ($h.BtnRunReport) {
+    $h.BtnRunReport.Add_Click({
+      try {
+        $selectedItem = Get-UiSelectionSafe -Control $h.LstTemplates
+        if (-not $selectedItem -or -not $selectedItem.Tag) {
+          [System.Windows.MessageBox]::Show(
+            "Please select a report template first.",
+            "No Template Selected",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning
+          )
+          return
+        }
+        
+        $template = $selectedItem.Tag
+        $params = & $getParameterValues
+        
+        # Validate parameters
+        $validationErrors = Validate-ReportParameters -Template $template -ParameterValues $params
+        if ($validationErrors -and $validationErrors.Count -gt 0) {
+          $errorMsg = "Validation errors:`n" + ($validationErrors -join "`n")
+          [System.Windows.MessageBox]::Show(
+            $errorMsg,
+            "Validation Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning
+          )
+          return
+        }
+        
+        try { Set-Status "Running report: $($template.Name)..." } catch { }
+        try { if ($h.BtnRunReport) { $h.BtnRunReport.IsEnabled = $false } } catch { }
+        
+        Start-AppJob -Name "Run Report — $($template.Name)" -Type 'Report' -ScriptBlock {
+          param($templateName, $params)
+          
+          try {
+            $bundle = Invoke-GcReportTemplate -TemplateName $templateName -Parameters $params
+            return $bundle
+          } catch {
+            Write-Error "Failed to run report: $_"
+            return $null
+          }
+        } -ArgumentList @($template.Name, $params) -OnCompleted ({
+          param($job)
+          
+          try { if ($h.BtnRunReport) { $h.BtnRunReport.IsEnabled = $true } } catch { }
+          
+          if ($job.Result) {
+            $bundle = $job.Result
+            $currentReportBundle = $bundle
+            
+            try { Set-Status "Report completed: $($bundle.BundlePath)" } catch { }
+            
+            # Load HTML preview
+            if ($bundle.ReportHtmlPath -and (Test-Path $bundle.ReportHtmlPath)) {
+              try { 
+                if ($h.WebPreview) { $h.WebPreview.Navigate($bundle.ReportHtmlPath) }
+                if ($h.BtnOpenInBrowser) { $h.BtnOpenInBrowser.IsEnabled = $true }
+              } catch { }
+            }
+            
+            # Enable export buttons
+            try { if ($h.BtnExportHtml) { $h.BtnExportHtml.IsEnabled = $true } } catch { }
+            try { if ($h.BtnExportJson) { $h.BtnExportJson.IsEnabled = $true } } catch { }
+            try { if ($h.BtnExportCsv) { $h.BtnExportCsv.IsEnabled = $true } } catch { }
+            try { if ($h.BtnExportExcel) { $h.BtnExportExcel.IsEnabled = $true } } catch { }
+            try { if ($h.BtnCopyPath) { $h.BtnCopyPath.IsEnabled = $true } } catch { }
+            try { if ($h.BtnOpenFolder) { $h.BtnOpenFolder.IsEnabled = $true } } catch { }
+            
+            # Refresh artifact list
+            try { & $refreshArtifactList } catch { }
+            
+            try {
+              Show-Snackbar "Report completed successfully!" -Action "Open" -ActionCallback {
+                if ($bundle.BundlePath -and (Test-Path $bundle.BundlePath)) {
+                  Start-Process $bundle.BundlePath
+                }
+              }.GetNewClosure()
+            } catch { }
+          } else {
+            try { Set-Status "Report failed. See job logs for details." } catch { }
+            [System.Windows.MessageBox]::Show(
+              "Report execution failed. Check job logs for details.",
+              "Report Error",
+              [System.Windows.MessageBoxButton]::OK,
+              [System.Windows.MessageBoxImage]::Error
+            )
+          }
+        }.GetNewClosure())
+      } catch {
+        Write-GcTrace -Level 'ERROR' -Message "BtnRunReport.Click error: $($_.Exception.Message)"
+        try { Set-Status "⚠️ Error running report: $($_.Exception.Message)" } catch { }
+        try { if ($h.BtnRunReport) { $h.BtnRunReport.IsEnabled = $true } } catch { }
+      }
+    }.GetNewClosure())
+  }
 
   # Export actions
-  $h.BtnOpenInBrowser.Add_Click({
-    if ($currentReportBundle -and (Test-Path $currentReportBundle.ReportHtmlPath)) {
-      Start-Process $currentReportBundle.ReportHtmlPath
-    }
-  }.GetNewClosure())
+  if ($h.BtnOpenInBrowser) {
+    $h.BtnOpenInBrowser.Add_Click({
+      try {
+        if ($currentReportBundle -and $currentReportBundle.ReportHtmlPath -and (Test-Path $currentReportBundle.ReportHtmlPath)) {
+          Start-Process $currentReportBundle.ReportHtmlPath
+        }
+      } catch {
+        Write-GcTrace -Level 'ERROR' -Message "BtnOpenInBrowser.Click error: $($_.Exception.Message)"
+      }
+    }.GetNewClosure())
+  }
 
-  $h.BtnExportHtml.Add_Click({
-    if ($currentReportBundle -and (Test-Path $currentReportBundle.ReportHtmlPath)) {
-      Start-Process $currentReportBundle.ReportHtmlPath
-      Set-Status "Opened HTML report"
-    }
-  }.GetNewClosure())
+  if ($h.BtnExportHtml) {
+    $h.BtnExportHtml.Add_Click({
+      try {
+        if ($currentReportBundle -and $currentReportBundle.ReportHtmlPath -and (Test-Path $currentReportBundle.ReportHtmlPath)) {
+          Start-Process $currentReportBundle.ReportHtmlPath
+          try { Set-Status "Opened HTML report" } catch { }
+        }
+      } catch {
+        Write-GcTrace -Level 'ERROR' -Message "BtnExportHtml.Click error: $($_.Exception.Message)"
+      }
+    }.GetNewClosure())
+  }
 
-  $h.BtnExportJson.Add_Click({
-    if ($currentReportBundle -and (Test-Path $currentReportBundle.DataJsonPath)) {
-      Start-Process $currentReportBundle.DataJsonPath
-      Set-Status "Opened JSON data"
-    }
-  }.GetNewClosure())
+  if ($h.BtnExportJson) {
+    $h.BtnExportJson.Add_Click({
+      try {
+        if ($currentReportBundle -and $currentReportBundle.DataJsonPath -and (Test-Path $currentReportBundle.DataJsonPath)) {
+          Start-Process $currentReportBundle.DataJsonPath
+          try { Set-Status "Opened JSON data" } catch { }
+        }
+      } catch {
+        Write-GcTrace -Level 'ERROR' -Message "BtnExportJson.Click error: $($_.Exception.Message)"
+      }
+    }.GetNewClosure())
+  }
 
-  $h.BtnExportCsv.Add_Click({
-    if ($currentReportBundle -and (Test-Path $currentReportBundle.DataCsvPath)) {
-      Start-Process $currentReportBundle.DataCsvPath
-      Set-Status "Opened CSV data"
-    }
-  }.GetNewClosure())
+  if ($h.BtnExportCsv) {
+    $h.BtnExportCsv.Add_Click({
+      try {
+        if ($currentReportBundle -and $currentReportBundle.DataCsvPath -and (Test-Path $currentReportBundle.DataCsvPath)) {
+          Start-Process $currentReportBundle.DataCsvPath
+          try { Set-Status "Opened CSV data" } catch { }
+        }
+      } catch {
+        Write-GcTrace -Level 'ERROR' -Message "BtnExportCsv.Click error: $($_.Exception.Message)"
+      }
+    }.GetNewClosure())
+  }
 
-  $h.BtnExportExcel.Add_Click({
-    if ($currentReportBundle -and (Test-Path $currentReportBundle.DataXlsxPath)) {
-      Start-Process $currentReportBundle.DataXlsxPath
-      Set-Status "Opened Excel workbook"
-    } else {
-      [System.Windows.MessageBox]::Show(
-        "Excel file not available. Ensure ImportExcel module is installed.",
-        "Excel Not Available",
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Information
-      )
-    }
-  }.GetNewClosure())
+  if ($h.BtnExportExcel) {
+    $h.BtnExportExcel.Add_Click({
+      try {
+        if ($currentReportBundle -and $currentReportBundle.DataXlsxPath -and (Test-Path $currentReportBundle.DataXlsxPath)) {
+          Start-Process $currentReportBundle.DataXlsxPath
+          try { Set-Status "Opened Excel workbook" } catch { }
+        } else {
+          [System.Windows.MessageBox]::Show(
+            "Excel file not available. Ensure ImportExcel module is installed.",
+            "Excel Not Available",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information
+          )
+        }
+      } catch {
+        Write-GcTrace -Level 'ERROR' -Message "BtnExportExcel.Click error: $($_.Exception.Message)"
+      }
+    }.GetNewClosure())
+  }
 
-  $h.BtnCopyPath.Add_Click({
-    if ($currentReportBundle) {
-      [System.Windows.Clipboard]::SetText($currentReportBundle.BundlePath)
-      Set-Status "Artifact path copied to clipboard"
-      Show-Snackbar "Path copied to clipboard"
-    }
-  }.GetNewClosure())
+  if ($h.BtnCopyPath) {
+    $h.BtnCopyPath.Add_Click({
+      try {
+        if ($currentReportBundle -and $currentReportBundle.BundlePath) {
+          [System.Windows.Clipboard]::SetText($currentReportBundle.BundlePath)
+          try { Set-Status "Artifact path copied to clipboard" } catch { }
+          try { Show-Snackbar "Path copied to clipboard" } catch { }
+        }
+      } catch {
+        Write-GcTrace -Level 'ERROR' -Message "BtnCopyPath.Click error: $($_.Exception.Message)"
+      }
+    }.GetNewClosure())
+  }
 
-  $h.BtnOpenFolder.Add_Click({
-    if ($currentReportBundle -and (Test-Path $currentReportBundle.BundlePath)) {
-      Start-Process $currentReportBundle.BundlePath
-      Set-Status "Opened artifact folder"
-    }
-  }.GetNewClosure())
+  if ($h.BtnOpenFolder) {
+    $h.BtnOpenFolder.Add_Click({
+      try {
+        if ($currentReportBundle -and $currentReportBundle.BundlePath -and (Test-Path $currentReportBundle.BundlePath)) {
+          Start-Process $currentReportBundle.BundlePath
+          try { Set-Status "Opened artifact folder" } catch { }
+        }
+      } catch {
+        Write-GcTrace -Level 'ERROR' -Message "BtnOpenFolder.Click error: $($_.Exception.Message)"
+      }
+    }.GetNewClosure())
+  }
 
   # Preset management
   $h.BtnLoadPreset.Add_Click({
