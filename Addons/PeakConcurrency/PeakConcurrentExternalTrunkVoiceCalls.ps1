@@ -63,7 +63,7 @@ function Write-Log {
   )
 
   if ($Level -eq 'DEBUG' -and -not $VerboseLog) { return }
-  $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
+  $ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
   Write-Host "[$ts] [$Level] $Message"
 }
 
@@ -444,9 +444,12 @@ function Compute-Concurrency {
   )
 
   $events = New-Object System.Collections.Generic.List[object]
+  $seq = 0
   foreach ($i in $Intervals) {
-    $events.Add([pscustomobject]@{ Ts = $i.StartUtc; Delta =  1; LegKey = $i.LegKey }) | Out-Null
-    $events.Add([pscustomobject]@{ Ts = $i.EndUtc;   Delta = -1; LegKey = $i.LegKey }) | Out-Null
+    $seq++
+    $events.Add([pscustomobject]@{ Ts = $i.StartUtc; Delta =  1; LegKey = $i.LegKey; Seq = $seq }) | Out-Null
+    $seq++
+    $events.Add([pscustomobject]@{ Ts = $i.EndUtc;   Delta = -1; LegKey = $i.LegKey; Seq = $seq }) | Out-Null
   }
 
   if ($events.Count -eq 0) {
@@ -458,7 +461,7 @@ function Compute-Concurrency {
     }
   }
 
-  $sorted = $events | Sort-Object Ts, Delta, LegKey
+  $sorted = $events | Sort-Object Ts, Delta, Seq
 
   $cur = 0
   $peak = 0
