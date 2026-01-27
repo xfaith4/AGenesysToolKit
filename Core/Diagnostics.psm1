@@ -43,7 +43,16 @@ function Enable-GcDiagnostics {
   )
   
   if (-not $LogDirectory) {
-    $LogDirectory = Join-Path $env:TEMP 'AGenesysToolKit'
+    # Try $env:TEMP, fallback to /tmp or current directory
+    if ($env:TEMP) {
+      $LogDirectory = Join-Path $env:TEMP 'AGenesysToolKit'
+    } elseif ($env:TMPDIR) {
+      $LogDirectory = Join-Path $env:TMPDIR 'AGenesysToolKit'
+    } elseif (Test-Path '/tmp') {
+      $LogDirectory = '/tmp/AGenesysToolKit'
+    } else {
+      $LogDirectory = Join-Path (Get-Location) 'temp/AGenesysToolKit'
+    }
   }
   
   try {
@@ -52,10 +61,13 @@ function Enable-GcDiagnostics {
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $script:DiagnosticLogPath = Join-Path $LogDirectory "diagnostic-$timestamp.log"
     
-    Write-GcDiagnostic "Diagnostics enabled: $script:DiagnosticLogPath"
-    Write-Output $script:DiagnosticLogPath
+    # Create the log file
+    "Diagnostics enabled: $script:DiagnosticLogPath" | Set-Content -Path $script:DiagnosticLogPath -Encoding UTF8
+    
+    return $script:DiagnosticLogPath
   } catch {
     Write-Warning "Failed to enable diagnostics: $_"
+    return $null
   }
 }
 
