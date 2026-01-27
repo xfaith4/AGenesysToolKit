@@ -1522,7 +1522,7 @@ $xamlString = @"
 
               <DockPanel Grid.Row="0">
                 <TextBlock Text="Backstage" FontSize="16" FontWeight="SemiBold" Foreground="#FF111827" DockPanel.Dock="Left"/>
-                <Button x:Name="BtnCloseBackstage" Content="Close" Width="70" Height="26" DockPanel.Dock="Right" Margin="0,0,0,0" IsEnabled="False"/>
+                <Button x:Name="BtnCloseBackstage" Content="Close" Width="70" Height="26" DockPanel.Dock="Right" Margin="0,0,0,0" IsEnabled="True"/>
               </DockPanel>
 
               <TabControl x:Name="BackstageTabs" Grid.Row="1" Margin="0,10,0,10">
@@ -3425,20 +3425,67 @@ function Add-ArtifactAndNotify {
 # -----------------------------
 # Backstage drawer
 # -----------------------------
+function Update-SelectedJobDetails {
+  $idx = $LstJobs.SelectedIndex
+  if ($idx -lt 0 -or $idx -ge $script:AppState.Jobs.Count) {
+    if ($TxtJobMeta.Text -ne "Select a job…") { $TxtJobMeta.Text = "Select a job…" }
+    if ($LstJobLogs.Items.Count -gt 0) { $LstJobLogs.Items.Clear() }
+    Set-ControlEnabled -Control $BtnCancelJob -Enabled ($false)
+    return
+  }
+
+  $job = $script:AppState.Jobs[$idx]
+  $meta = "Name: $($job.Name)`r`nType: $($job.Type)`r`nStatus: $($job.Status)`r`nProgress: $($job.Progress)%"
+  if ($TxtJobMeta.Text -ne $meta) { $TxtJobMeta.Text = $meta }
+
+  # Incremental log sync to avoid UI thrash during frequent refreshes
+  $uiCount = $LstJobLogs.Items.Count
+  $jobCount = @($job.Logs).Count
+  if ($uiCount -gt $jobCount) {
+    $LstJobLogs.Items.Clear()
+    $uiCount = 0
+  }
+  if ($uiCount -lt $jobCount) {
+    for ($i = $uiCount; $i -lt $jobCount; $i++) {
+      $LstJobLogs.Items.Add($job.Logs[$i]) | Out-Null
+    }
+  }
+
+  Set-ControlEnabled -Control $BtnCancelJob -Enabled ([bool]$job.CanCancel)
+}
+
 function Refresh-JobsList {
-  # Preserve selected index to avoid flashing when list refreshes
+  # Preserve selection and avoid SelectionChanged/UI thrash while refreshing frequently
   $selectedIdx = $LstJobs.SelectedIndex
 
-  $LstJobs.Items.Clear()
+  $newItems = New-Object 'System.Collections.Generic.List[string]'
   foreach ($j in $script:AppState.Jobs) {
-    $LstJobs.Items.Add("$($j.Status) [$($j.Progress)%] — $($j.Name)") | Out-Null
+    [void]$newItems.Add("$($j.Status) [$($j.Progress)%] — $($j.Name)")
   }
 
-  # Restore selection if it was valid and still within range
-  if ($selectedIdx -ge 0 -and $selectedIdx -lt $LstJobs.Items.Count) {
-    $LstJobs.SelectedIndex = $selectedIdx
+  $script:SuppressJobsSelectionChanged = $true
+  try {
+    if ($LstJobs.Items.Count -ne $newItems.Count) {
+      $LstJobs.Items.Clear()
+      foreach ($s in $newItems) { $LstJobs.Items.Add($s) | Out-Null }
+    } else {
+      for ($i = 0; $i -lt $newItems.Count; $i++) {
+        if ([string]$LstJobs.Items[$i] -ne $newItems[$i]) {
+          $LstJobs.Items[$i] = $newItems[$i]
+        }
+      }
+    }
+
+    if ($selectedIdx -ge 0 -and $selectedIdx -lt $LstJobs.Items.Count) {
+      if ($LstJobs.SelectedIndex -ne $selectedIdx) { $LstJobs.SelectedIndex = $selectedIdx }
+    } else {
+      if ($LstJobs.SelectedIndex -ne -1) { $LstJobs.SelectedIndex = -1 }
+    }
+  } finally {
+    $script:SuppressJobsSelectionChanged = $false
   }
 
+  Update-SelectedJobDetails
   Refresh-HeaderStats
 }
 
@@ -3460,19 +3507,8 @@ $BtnCloseBackstage.Add_Click({ Close-Backstage })
 # Jobs selection
 # -----------------------------
 $LstJobs.Add_SelectionChanged({
-  $idx = $LstJobs.SelectedIndex
-  if ($idx -lt 0 -or $idx -ge $script:AppState.Jobs.Count) {
-    $TxtJobMeta.Text = "Select a job…"
-    $LstJobLogs.Items.Clear()
-    Set-ControlEnabled -Control $BtnCancelJob -Enabled ($false)
-    return
-  }
-
-  $job = $script:AppState.Jobs[$idx]
-  $TxtJobMeta.Text = "Name: $($job.Name)`r`nType: $($job.Type)`r`nStatus: $($job.Status)`r`nProgress: $($job.Progress)%"
-  $LstJobLogs.Items.Clear()
-  foreach ($l in $job.Logs) { $LstJobLogs.Items.Add($l) | Out-Null }
-  Set-ControlEnabled -Control $BtnCancelJob -Enabled ([bool]$job.CanCancel)
+  if ($script:SuppressJobsSelectionChanged) { return }
+  Update-SelectedJobDetails
 })
 
 $BtnCancelJob.Add_Click({
@@ -10165,8 +10201,11 @@ $BtnBackstage.Add_Click({ Open-Backstage -Tab 'Jobs' })
 $script:JobsRefreshTimer = New-Object Windows.Threading.DispatcherTimer
 $script:JobsRefreshTimer.Interval = [TimeSpan]::FromMilliseconds(400)
 $script:JobsRefreshTimer.Add_Tick({
-  Refresh-JobsList
-  Refresh-HeaderStats
+  if ($BackstageOverlay.Visibility -eq 'Visible') {
+    Refresh-JobsList
+  } else {
+    Refresh-HeaderStats
+  }
 })
 $script:JobsRefreshTimer.Start()
 
