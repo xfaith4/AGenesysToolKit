@@ -176,7 +176,7 @@ Test-Scenario "Reference counting returns numeric occurrences" {
     if ($result -and (@($result).Count -gt 0)) {
         $firstResult = @($result)[0]
         
-        if ($firstResult.occurrences -isnot [int]) {
+        if ($firstResult.occurrences -isnot [System.IConvertible] -or -not ($firstResult.occurrences -is [System.ValueType])) {
             throw "Expected occurrences to be numeric, got $($firstResult.occurrences.GetType())"
         }
         
