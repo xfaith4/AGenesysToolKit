@@ -52,16 +52,152 @@ jobs:
         Write-Host "========================================" -ForegroundColor Cyan
         ./tests/test-parameter-flow.ps1
         
-    - name: Test results summary
+    - name: Run auth tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Auth Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-auth.ps1
+        
+    - name: Run timeline tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Timeline Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-timeline.ps1
+        
+    - name: Run reporting tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Reporting Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-reporting.ps1
+        
+    - name: Run artifact generator tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Artifact Generator Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-artifact-generator.ps1
+        
+    - name: Run event stream tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Event Stream Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-event-stream.ps1
+        
+    - name: Run MVP modules tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running MVP Modules Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-mvp-modules.ps1
+        
+    - name: Run app load tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running App Load Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-app-load.ps1
+        
+    - name: Run offline demo workflow tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Offline Demo Workflow Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-offlinedemo-workflow.ps1
+        
+    - name: Verify export packet
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Verifying Export Packet" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/verify-export-packet.ps1
+        
+    - name: Run analytics tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Analytics Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-analytics.ps1
+        
+    - name: Run routing people tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running RoutingPeople Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-routing-people.ps1
+        
+    - name: Run conversations extended tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running ConversationsExtended Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-conversations-extended.ps1
+        
+    - name: Run config export tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running ConfigExport Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-config-export.ps1
+        
+    - name: Run dependencies tests
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Dependencies Tests" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        ./tests/test-dependencies.ps1
+        
+    - name: Generate test summary
       shell: pwsh
       if: always()
       run: |
         Write-Host "========================================" -ForegroundColor Cyan
-        Write-Host "Test Suite Complete" -ForegroundColor Cyan
+        Write-Host "Test Execution Summary" -ForegroundColor Cyan
         Write-Host "========================================" -ForegroundColor Cyan
         Write-Host "✓ Smoke tests completed" -ForegroundColor Green
         Write-Host "✓ JobRunner tests completed" -ForegroundColor Green
         Write-Host "✓ Parameter flow tests completed" -ForegroundColor Green
+        Write-Host "✓ Auth tests completed" -ForegroundColor Green
+        Write-Host "✓ Timeline tests completed" -ForegroundColor Green
+        Write-Host "✓ Reporting tests completed" -ForegroundColor Green
+        Write-Host "✓ Artifact generator tests completed" -ForegroundColor Green
+        Write-Host "✓ Event stream tests completed" -ForegroundColor Green
+        Write-Host "✓ MVP modules tests completed" -ForegroundColor Green
+        Write-Host "✓ App load tests completed" -ForegroundColor Green
+        Write-Host "✓ Offline demo workflow tests completed" -ForegroundColor Green
+        Write-Host "✓ Export packet verification completed" -ForegroundColor Green
+        Write-Host "✓ Analytics tests completed" -ForegroundColor Green
+        Write-Host "✓ RoutingPeople tests completed" -ForegroundColor Green
+        Write-Host "✓ ConversationsExtended tests completed" -ForegroundColor Green
+        Write-Host "✓ ConfigExport tests completed" -ForegroundColor Green
+        Write-Host "✓ Dependencies tests completed" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "All test suites completed successfully!" -ForegroundColor Green
+        
+    - name: Upload test logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-logs-${{ github.run_number }}
+        path: artifacts/*.log
+        retention-days: 7
 
   lint:
     name: Lint PowerShell Code
@@ -122,3 +258,73 @@ jobs:
         } else {
             Write-Host "`n✓ Linting passed" -ForegroundColor Green
         }
+
+  security:
+    name: Security Scan
+    runs-on: windows-latest
+    
+    permissions:
+      contents: read
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Run PSScriptAnalyzer security rules
+      shell: pwsh
+      run: |
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Running Security Scan" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        
+        Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+        
+        $results = Invoke-ScriptAnalyzer -Path ./Core -Recurse -Severity Error,Warning
+        
+        if ($results) {
+          Write-Host "`nSecurity issues found:" -ForegroundColor Red
+          $results | Format-Table -AutoSize
+          Write-Host "`n❌ Security scan failed with $($results.Count) issues" -ForegroundColor Red
+          exit 1
+        } else {
+          Write-Host "`n✓ No security issues found" -ForegroundColor Green
+        }
+
+  docs:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Check required documentation exists
+      run: |
+        echo "========================================"
+        echo "Checking Required Documentation"
+        echo "========================================"
+        
+        required_docs=("README.md" "CONTRIBUTING.md" "CHANGELOG.md" "TESTING.md")
+        missing_docs=()
+        
+        for doc in "${required_docs[@]}"; do
+          if [ -f "$doc" ]; then
+            echo "✓ Found: $doc"
+          else
+            echo "✗ Missing: $doc"
+            missing_docs+=("$doc")
+          fi
+        done
+        
+        if [ ${#missing_docs[@]} -gt 0 ]; then
+          echo ""
+          echo "❌ Documentation check failed"
+          echo "Missing files: ${missing_docs[*]}"
+          exit 1
+        else
+          echo ""
+          echo "✓ All required documentation files present"
+        fi
