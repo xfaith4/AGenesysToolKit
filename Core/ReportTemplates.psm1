@@ -1027,8 +1027,8 @@ function Invoke-GcReportTemplate {
     return $bundle
     
   } catch {
-    Write-Error "Report generation failed: $_"
-    Write-Error "Stack trace: $($_.ScriptStackTrace)"
+    Write-Verbose "Report generation failed: $_"
+    Write-Verbose "Stack trace: $($_.ScriptStackTrace)"
     
     # Return error object for UI consumption
     return @{

@@ -61,8 +61,10 @@ function Enable-GcDiagnostics {
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $script:DiagnosticLogPath = Join-Path $LogDirectory "diagnostic-$timestamp.log"
     
-    # Create the log file
-    "Diagnostics enabled: $script:DiagnosticLogPath" | Set-Content -Path $script:DiagnosticLogPath -Encoding UTF8
+    # Create the log file with properly formatted initial entry
+    $initTimestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'
+    $entry = "[$initTimestamp] [INFO] Diagnostics enabled: $script:DiagnosticLogPath"
+    $entry | Set-Content -Path $script:DiagnosticLogPath -Encoding UTF8
     
     return $script:DiagnosticLogPath
   } catch {
