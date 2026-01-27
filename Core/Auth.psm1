@@ -701,6 +701,99 @@ function Get-GcTokenFromAuthCode {
   }
 }
 
+function Get-GcClientCredentialsToken {
+  <#
+  .SYNOPSIS
+    Retrieves an access token using the OAuth Client Credentials grant.
+
+  .DESCRIPTION
+    Calls https://login.{region}/oauth/token with grant_type=client_credentials using
+    HTTP Basic authentication (client_id:client_secret). Stores the resulting token
+    in module token state and returns the token response.
+
+  .PARAMETER Region
+    Genesys Cloud region domain (e.g., mypurecloud.com, usw2.pure.cloud).
+
+  .PARAMETER ClientId
+    OAuth client ID.
+
+  .PARAMETER ClientSecret
+    OAuth client secret.
+
+  .PARAMETER Scopes
+    Optional scopes to request (space-separated by the server). If omitted, uses
+    the configured scopes.
+  #>
+  [CmdletBinding()]
+  param(
+    [string]$Region,
+    [string]$ClientId,
+    [string]$ClientSecret,
+    [string[]]$Scopes
+  )
+
+  $regionUse = if ($Region) { $Region } else { $script:GcAuthConfig.Region }
+  $clientIdUse = if ($ClientId) { $ClientId } else { $script:GcAuthConfig.ClientId }
+  $clientSecretUse = if ($ClientSecret) { $ClientSecret } else { $script:GcAuthConfig.ClientSecret }
+  $scopesUse = if ($Scopes) { $Scopes } else { $script:GcAuthConfig.Scopes }
+
+  if ([string]::IsNullOrWhiteSpace($regionUse)) { throw "Region is required for client credentials token." }
+  if ([string]::IsNullOrWhiteSpace($clientIdUse)) { throw "ClientId is required for client credentials token." }
+  if ([string]::IsNullOrWhiteSpace($clientSecretUse)) { throw "ClientSecret is required for client credentials token." }
+
+  $tokenUrl = "https://login.$regionUse/oauth/token"
+
+  $body = @{
+    grant_type = 'client_credentials'
+  }
+  if ($scopesUse -and @($scopesUse).Count -gt 0) {
+    $body['scope'] = (@($scopesUse) -join ' ').Trim()
+  }
+
+  $pair = "{0}:{1}" -f $clientIdUse, $clientSecretUse
+  $headers = @{
+    Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
+  }
+
+  Write-GcAuthDiag -Level INFO -Message "Client credentials token request" -Data @{
+    TokenUrl   = $tokenUrl
+    ClientId   = (ConvertTo-GcAuthSafeString -Value $clientIdUse)
+    ScopeCount = if ($scopesUse) { @($scopesUse).Count } else { 0 }
+  }
+
+  try {
+    $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Headers $headers -Body $body -ContentType 'application/x-www-form-urlencoded' -TimeoutSec 30
+
+    if ($null -eq $response) { throw "Token endpoint returned null response." }
+    if (-not $response.access_token) {
+      $keys = @()
+      try { $keys = @($response.PSObject.Properties.Name) } catch { }
+      throw ("Token response missing access_token. Keys: {0}" -f ($keys -join ', '))
+    }
+
+    $script:GcTokenState.AccessToken = $response.access_token
+    $script:GcTokenState.TokenType = $response.token_type
+    $script:GcTokenState.ExpiresIn = $response.expires_in
+    $script:GcTokenState.ExpiresAt = if ($response.expires_in) { (Get-Date).AddSeconds([int]$response.expires_in) } else { $null }
+    $script:GcTokenState.RefreshToken = $response.refresh_token
+
+    Write-GcAuthDiag -Level INFO -Message "Client credentials token acquired" -Data @{
+      TokenType  = $response.token_type
+      ExpiresIn  = $response.expires_in
+      HasRefresh = [bool]$response.refresh_token
+    }
+
+    return $response
+  } catch {
+    $exInfo = Get-GcAuthExceptionInfo -ErrorRecord $_
+    Write-GcAuthDiag -Level ERROR -Message "Client credentials token request failed" -Data $exInfo
+    $diag = Get-GcAuthDiagnostics
+    $suffix = if ($diag.LogPath) { " (Auth diagnostics: $($diag.LogPath))" } else { "" }
+    Write-Error ("Failed to retrieve client credentials token: {0}{1}" -f $_.Exception.Message, $suffix)
+    throw
+  }
+}
+
 function Get-GcTokenAsync {
   <#
   .SYNOPSIS
@@ -898,7 +991,7 @@ function Test-GcConnection {
 }
 
 Export-ModuleMember -Function Set-GcAuthConfig, Get-GcAuthConfig, `
-  Get-GcTokenAsync, Test-GcToken, Get-GcAccessToken, Get-GcTokenState, Clear-GcTokenState, `
+  Get-GcTokenAsync, Get-GcClientCredentialsToken, Test-GcToken, Get-GcAccessToken, Get-GcTokenState, Clear-GcTokenState, `
   Enable-GcAuthDiagnostics, Get-GcAuthDiagnostics, Test-GcConnection
 
 ### END: Core.Auth.psm1

@@ -378,7 +378,7 @@ function script:Build-ParameterPanel {
       $control.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(240, 240, 240))
       $control.ToolTip = "Auto-filled from current session context"
     }
-    
+
     # Add real-time validation for TextBox controls
     if ($control -is [System.Windows.Controls.TextBox] -and -not $control.IsReadOnly) {
       # Tag control with metadata for validation
@@ -387,7 +387,7 @@ function script:Build-ParameterPanel {
         Required = $paramDef.Required
         Type = $paramType
       }
-      
+
       # Add LostFocus event for validation feedback
       $control.Add_LostFocus({
         $tag = $this.Tag
@@ -1353,9 +1353,9 @@ function New-GcAddonLauncherView {
         <TextBlock Text="$escapedEntry" Foreground="#FF6B7280" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11"/>
 
         <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-          <Button x:Name="BtnOpenAddonFolder" Content="Open Folder" Height="30" Width="110" Margin="0,0,10,0" IsEnabled="False"/>
-          <Button x:Name="BtnOpenEntry" Content="Open Entry" Height="30" Width="110" Margin="0,0,10,0" IsEnabled="False"/>
-          <Button x:Name="BtnOpenManifest" Content="Open Manifest" Height="30" Width="120" Margin="0,0,0,0" IsEnabled="False"/>
+          <Button x:Name="BtnOpenAddonFolder" Content="Open Folder" Height="30" Width="110" Margin="0,0,10,0" IsEnabled="True"/>
+          <Button x:Name="BtnOpenEntry" Content="Open Entry" Height="30" Width="110" Margin="0,0,10,0" IsEnabled="True"/>
+          <Button x:Name="BtnOpenManifest" Content="Open Manifest" Height="30" Width="120" Margin="0,0,0,0" IsEnabled="True"/>
         </StackPanel>
       </StackPanel>
     </Border>
@@ -1440,9 +1440,8 @@ $xamlString = @"
 
       <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" Margin="0,0,12,0" VerticalAlignment="Center">
         <TextBlock x:Name="TxtContext" Text="Region:  | Org:  | Auth:  | Token:" Foreground="#FFE5E7EB" FontSize="12" Margin="0,0,12,0" VerticalAlignment="Center"/>
-        <Button x:Name="BtnLogin" Content="Login…" Width="92" Height="28" Margin="0,0,8,0" IsEnabled="False"/>
-        <Button x:Name="BtnTestToken" Content="Test Token" Width="92" Height="28" Margin="0,0,10,0" IsEnabled="False"/>
-        <Button x:Name="BtnBackstage" Content="Backstage" Width="110" Height="28" Margin="0,0,10,0" IsEnabled="False"/>
+        <Button x:Name="BtnAuth" Content="Authentication" Width="130" Height="28" Margin="0,0,10,0" IsEnabled="True"/>
+        <Button x:Name="BtnBackstage" Content="Backstage" Width="110" Height="28" Margin="0,0,10,0" IsEnabled="True"/>
       </StackPanel>
 
       <Border DockPanel.Dock="Right" Margin="0,0,12,0" VerticalAlignment="Center" CornerRadius="6" Background="#FF0B1220" BorderBrush="#FF374151" BorderThickness="1">
@@ -1628,8 +1627,7 @@ function Get-El([string]$name) { $global:Window.FindName($name) }
 
 # Top bar
 $global:TxtContext   = Get-El 'TxtContext'
-$global:BtnLogin     = Get-El 'BtnLogin'
-$global:BtnTestToken = Get-El 'BtnTestToken'
+$global:BtnAuth      = Get-El 'BtnAuth'
 $global:BtnBackstage = Get-El 'BtnBackstage'
 $global:TxtCommand   = Get-El 'TxtCommand'
 
@@ -1810,7 +1808,7 @@ function Set-OfflineDemoMode {
     $script:AppState.FocusConversationId = 'c-demo-001'
 
     try {
-      if ($BtnLogin) { $BtnLogin.Content = 'Offline (Disable)' }
+      if ($BtnAuth) { $BtnAuth.Content = 'Offline (Disable)' }
     } catch { }
 
     Write-GcTrace -Level 'INFO' -Message "Offline demo enabled"
@@ -1837,12 +1835,12 @@ function Set-OfflineDemoMode {
   }
 
   try {
-    if ($BtnLogin) { $BtnLogin.Content = if ($script:AppState.AccessToken) { 'Logout' } else { 'Login.' } }
+    if ($BtnAuth) { $BtnAuth.Content = 'Authentication' }
   } catch { }
 
-  Write-GcTrace -Level 'INFO' -Message (if ($Enabled) { 'Offline demo enabled' } else { 'Offline demo disabled' })
+  Write-GcTrace -Level 'INFO' -Message $(if ($Enabled) { 'Offline demo enabled' } else { 'Offline demo disabled' })
   try { Set-TopContext } catch { }
-  try { Set-Status (if ($Enabled) { 'Offline demo enabled.' } else { 'Offline demo disabled.' }) } catch { }
+  try { Set-Status $(if ($Enabled) { 'Offline demo enabled.' } else { 'Offline demo disabled.' }) } catch { }
 }
 
 function Add-OfflineDemoSampleEvents {
@@ -1981,7 +1979,6 @@ function Start-TokenTest {
 
     This function depends on:
     - $script:AppState (global AppState with AccessToken and Region)
-    - $BtnTestToken (UI button element for state management)
     - Invoke-AppGcRequest (from HttpRequests module)
     - Set-Status, Set-TopContext (UI helper functions)
     - Start-AppJob (job runner function)
@@ -1989,6 +1986,11 @@ function Start-TokenTest {
   .EXAMPLE
     Start-TokenTest
   #>
+
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$false)] $ProgressButton
+  )
 
   # Normalize copy/pasted region/token formats before testing.
   $normalizedRegion = Normalize-GcInstanceName -RegionText $script:AppState.Region
@@ -2011,9 +2013,15 @@ function Start-TokenTest {
 
   Write-GcDiag ("Start-TokenTest: begin (Region='{0}', Token={1})" -f $script:AppState.Region, (Format-GcDiagSecret -Value $script:AppState.AccessToken))
 
-  # Disable button during test
-  Set-ControlEnabled -Control $BtnTestToken -Enabled ($false)
-  $BtnTestToken.Content = "Testing..."
+  $btn = $ProgressButton
+  $originalContent = $null
+  try { if ($btn) { $originalContent = $btn.Content } } catch { }
+
+  try {
+    Set-ControlEnabled -Control $btn -Enabled ($false)
+    try { if ($btn) { $btn.Content = "Testing..." } } catch { }
+  } catch { }
+
   Set-Status "Testing token..."
 
   # Queue background job to test token via GET /api/v2/users/me
@@ -2107,6 +2115,8 @@ function Start-TokenTest {
     }
   } -ArgumentList @($script:AppState.Region, $script:AppState.AccessToken, $coreRoot) -OnCompleted {
     param($job)
+
+    try {
 
     # Dump diagnostics to console + job logs (UI thread safe)
     try {
@@ -2219,9 +2229,6 @@ function Start-TokenTest {
         )
 
         Set-Status "Token test: OK (client credentials). Some features require user-context OAuth."
-
-        $BtnTestToken.Content = "Test Token"
-        Set-ControlEnabled -Control $BtnTestToken -Enabled ($true)
         return
       }
 
@@ -2268,10 +2275,109 @@ function Start-TokenTest {
 
       Set-Status "Token test failed: $userMessage"
     }
+    } finally {
+      try {
+        Set-ControlEnabled -Control $btn -Enabled ($true)
+        if ($btn -and $null -ne $originalContent) { $btn.Content = $originalContent }
+        elseif ($btn) { $btn.Content = "Test Token" }
+      } catch { }
+    }
+  }
+}
 
-    # Re-enable button
-    $BtnTestToken.Content = "Test Token"
-    Set-ControlEnabled -Control $BtnTestToken -Enabled ($true)
+function Get-GcSavedAccessTokenPath {
+  [CmdletBinding()]
+  param()
+
+  $base = $null
+  try { $base = $env:LOCALAPPDATA } catch { $base = $null }
+  if ([string]::IsNullOrWhiteSpace($base)) {
+    try { $base = $env:APPDATA } catch { $base = $null }
+  }
+  if ([string]::IsNullOrWhiteSpace($base)) {
+    throw "Cannot resolve LOCALAPPDATA/APPDATA for saved token storage."
+  }
+
+  $dir = Join-Path -Path $base -ChildPath 'AGenesysToolKit'
+  if (-not (Test-Path -LiteralPath $dir)) {
+    New-Item -Path $dir -ItemType Directory -Force | Out-Null
+  }
+
+  return (Join-Path -Path $dir -ChildPath 'saved-access-token.json')
+}
+
+function Save-GcSavedAccessToken {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Region,
+    [Parameter(Mandatory)][string]$AccessToken
+  )
+
+  $regionNorm = Normalize-GcInstanceName -RegionText $Region
+  $tokenNorm = Normalize-GcAccessToken -TokenText $AccessToken
+  if ([string]::IsNullOrWhiteSpace($regionNorm)) { throw "Region is required." }
+  if ([string]::IsNullOrWhiteSpace($tokenNorm)) { throw "Access token is required." }
+
+  $secure = ConvertTo-SecureString -String $tokenNorm -AsPlainText -Force
+  $protected = ConvertFrom-SecureString -SecureString $secure
+
+  $payload = [pscustomobject]@{
+    Version       = 1
+    SavedAtUtc    = (Get-Date).ToUniversalTime().ToString('o')
+    Region        = $regionNorm
+    TokenProtected = $protected
+  }
+
+  $path = Get-GcSavedAccessTokenPath
+  ($payload | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $path -Encoding UTF8
+}
+
+function Get-GcSavedAccessToken {
+  [CmdletBinding()]
+  param()
+
+  $path = Get-GcSavedAccessTokenPath
+  if (-not (Test-Path -LiteralPath $path)) { return $null }
+
+  $json = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+  if ([string]::IsNullOrWhiteSpace($json)) { return $null }
+
+  $obj = $null
+  try { $obj = $json | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
+  if (-not $obj) { return $null }
+
+  $protected = $null
+  try { $protected = [string]$obj.TokenProtected } catch { $protected = $null }
+  if ([string]::IsNullOrWhiteSpace($protected)) { return $null }
+
+  $secure = ConvertTo-SecureString -String $protected
+
+  $bstr = [IntPtr]::Zero
+  try {
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+  } finally {
+    if ($bstr -ne [IntPtr]::Zero) {
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+  }
+
+  $regionLoaded = ''
+  try { $regionLoaded = [string]$obj.Region } catch { $regionLoaded = '' }
+
+  return [pscustomobject]@{
+    Region      = $regionLoaded
+    AccessToken = $plain
+  }
+}
+
+function Remove-GcSavedAccessToken {
+  [CmdletBinding()]
+  param()
+
+  $path = Get-GcSavedAccessTokenPath
+  if (Test-Path -LiteralPath $path) {
+    Remove-Item -LiteralPath $path -Force -ErrorAction Stop
   }
 }
 
@@ -2297,21 +2403,22 @@ function Show-SetTokenDialog {
   #>
 
   $xamlString = @"
- <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-         Title="Set Access Token"
-         Height="380" Width="760"
-         WindowStartupLocation="CenterOwner"
-         Background="#FFF7F7F9"
-         ResizeMode="NoResize">
-  <Grid Margin="16">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>   <!-- Header -->
-      <RowDefinition Height="Auto"/>   <!-- Region Input -->
-      <RowDefinition Height="Auto"/>   <!-- Token Label -->
-      <RowDefinition Height="*"/>      <!-- Token Input -->
-      <RowDefinition Height="Auto"/>   <!-- Buttons -->
-    </Grid.RowDefinitions>
+  <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+          xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+          Title="Set Access Token"
+         Height="440" Width="760"
+          WindowStartupLocation="CenterOwner"
+          Background="#FFF7F7F9"
+          ResizeMode="NoResize">
+   <Grid Margin="16">
+     <Grid.RowDefinitions>
+       <RowDefinition Height="Auto"/>   <!-- Header -->
+       <RowDefinition Height="Auto"/>   <!-- Region Input -->
+       <RowDefinition Height="Auto"/>   <!-- Token Label -->
+       <RowDefinition Height="*"/>      <!-- Token Input -->
+       <RowDefinition Height="Auto"/>   <!-- Storage -->
+       <RowDefinition Height="Auto"/>   <!-- Buttons -->
+     </Grid.RowDefinitions>
 
     <!-- Header -->
     <Border Grid.Row="0" Background="#FF111827" CornerRadius="6" Padding="12" Margin="0,0,0,16">
@@ -2335,24 +2442,43 @@ function Show-SetTokenDialog {
                  FontSize="10" Foreground="#FF6B7280" Margin="0,0,0,4"/>
     </StackPanel>
 
-    <Border Grid.Row="3" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="4"
-            Background="White" Padding="6" Margin="0,0,0,16">
-       <TextBox x:Name="TxtToken"
-                AcceptsReturn="True"
-                TextWrapping="NoWrap"
-                HorizontalScrollBarVisibility="Auto"
-                VerticalScrollBarVisibility="Auto"
-                BorderThickness="0"
-                FontFamily="Consolas"
-                FontSize="10"/>
-    </Border>
+     <Border Grid.Row="3" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="4"
+             Background="White" Padding="6" Margin="0,0,0,16">
+        <TextBox x:Name="TxtToken"
+                 AcceptsReturn="True"
+                 TextWrapping="NoWrap"
+                 HorizontalScrollBarVisibility="Auto"
+                 VerticalScrollBarVisibility="Auto"
+                 BorderThickness="0"
+                 FontFamily="Consolas"
+                 FontSize="10"/>
+     </Border>
 
-    <!-- Buttons -->
-    <Grid Grid.Row="4">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
+     <!-- Storage -->
+     <Border Grid.Row="4" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="6" Background="White" Padding="10" Margin="0,0,0,14">
+       <Grid>
+         <Grid.ColumnDefinitions>
+           <ColumnDefinition Width="*"/>
+           <ColumnDefinition Width="Auto"/>
+         </Grid.ColumnDefinitions>
+         <StackPanel Grid.Column="0" Orientation="Vertical">
+           <CheckBox x:Name="ChkRememberToken" Content="Save token securely for this Windows user (DPAPI)" Margin="0,0,0,2"/>
+           <TextBlock Text="Saved tokens are encrypted for the current Windows user and machine."
+                      FontSize="10" Foreground="#FF6B7280"/>
+         </StackPanel>
+         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+           <Button x:Name="BtnLoadSaved" Content="Load Saved" Width="92" Height="28" Margin="0,0,8,0"/>
+           <Button x:Name="BtnClearSaved" Content="Clear Saved" Width="92" Height="28"/>
+         </StackPanel>
+       </Grid>
+     </Border>
+
+     <!-- Buttons -->
+     <Grid Grid.Row="5">
+       <Grid.ColumnDefinitions>
+         <ColumnDefinition Width="*"/>
+         <ColumnDefinition Width="Auto"/>
+       </Grid.ColumnDefinitions>
 
       <Button x:Name="BtnClearToken" Grid.Column="0" Content="Clear Token"
               Width="100" Height="30" HorizontalAlignment="Left"/>
@@ -2377,12 +2503,79 @@ function Show-SetTokenDialog {
 
     $txtRegion = $dialog.FindName('TxtRegion')
     $txtToken = $dialog.FindName('TxtToken')
+    $chkRememberToken = $dialog.FindName('ChkRememberToken')
+    $btnLoadSaved = $dialog.FindName('BtnLoadSaved')
+    $btnClearSaved = $dialog.FindName('BtnClearSaved')
     $btnSetTest = $dialog.FindName('BtnSetTest')
     $btnCancel = $dialog.FindName('BtnCancel')
     $btnClearToken = $dialog.FindName('BtnClearToken')
 
     # Prefill region from current AppState
     $txtRegion.Text = $script:AppState.Region
+
+    $refreshSavedButtons = {
+      $saved = $null
+      try { $saved = Get-GcSavedAccessToken } catch { $saved = $null }
+      $hasSaved = [bool]$saved
+      Set-ControlEnabled -Control $btnLoadSaved -Enabled $hasSaved
+      Set-ControlEnabled -Control $btnClearSaved -Enabled $hasSaved
+    }
+
+    & $refreshSavedButtons
+
+    $btnLoadSaved.Add_Click({
+      try {
+        $saved = Get-GcSavedAccessToken
+        if (-not $saved -or [string]::IsNullOrWhiteSpace($saved.AccessToken)) {
+          [System.Windows.MessageBox]::Show(
+            "No saved token found for this Windows user.",
+            "No Saved Token",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information
+          )
+          & $refreshSavedButtons
+          return
+        }
+
+        if ($saved.Region) { $txtRegion.Text = [string]$saved.Region }
+        $txtToken.Text = [string]$saved.AccessToken
+        try { $chkRememberToken.IsChecked = $true } catch { }
+        Set-Status "Loaded saved token (encrypted)."
+      } catch {
+        [System.Windows.MessageBox]::Show(
+          "Failed to load saved token: $($_.Exception.Message)",
+          "Load Failed",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Error
+        )
+      } finally {
+        & $refreshSavedButtons
+      }
+    })
+
+    $btnClearSaved.Add_Click({
+      $result = [System.Windows.MessageBox]::Show(
+        "This will remove the saved token from this computer for the current Windows user. Continue?",
+        "Clear Saved Token",
+        [System.Windows.MessageBoxButton]::YesNo,
+        [System.Windows.MessageBoxImage]::Question
+      )
+      if ($result -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+      try {
+        Remove-GcSavedAccessToken
+        Set-Status "Saved token cleared."
+      } catch {
+        [System.Windows.MessageBox]::Show(
+          "Failed to clear saved token: $($_.Exception.Message)",
+          "Clear Failed",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Error
+        )
+      } finally {
+        & $refreshSavedButtons
+      }
+    })
 
     # Set + Test button handler
     $btnSetTest.Add_Click({
@@ -2451,6 +2644,24 @@ function Show-SetTokenDialog {
       $script:AppState.Auth = "Manual token"
       Write-GcDiag ("Manual token entry: AppState updated (Region='{0}', AccessToken={1})" -f $script:AppState.Region, (Format-GcDiagSecret -Value $script:AppState.AccessToken))
 
+      $remember = $false
+      try { $remember = [bool]$chkRememberToken.IsChecked } catch { $remember = $false }
+      if ($remember) {
+        try {
+          Save-GcSavedAccessToken -Region $script:AppState.Region -AccessToken $script:AppState.AccessToken
+          Set-Status "Token set and saved securely."
+        } catch {
+          [System.Windows.MessageBox]::Show(
+            "Token was set, but saving failed: $($_.Exception.Message)",
+            "Save Failed",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning
+          )
+        } finally {
+          & $refreshSavedButtons
+        }
+      }
+
       # Update UI context
       Set-TopContext
 
@@ -2505,6 +2716,643 @@ function Show-SetTokenDialog {
       [System.Windows.MessageBoxButton]::OK,
       [System.Windows.MessageBoxImage]::Error
     )
+  }
+}
+
+function Invoke-GcLogoutUi {
+  [CmdletBinding()]
+  param()
+
+  try { Clear-GcTokenState } catch { }
+
+  $script:AppState.AccessToken = $null
+  $script:AppState.Auth = "Not logged in"
+  $script:AppState.TokenStatus = "No token"
+  try { $script:AppState.Org = '' } catch { }
+
+  try { Set-TopContext } catch { }
+  try { Set-Status "Logged out." } catch { }
+}
+
+function Start-GcOAuthLoginUi {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$false)] $ProgressButton,
+    [Parameter(Mandatory=$false)] [scriptblock] $OnSuccess,
+    [Parameter(Mandatory=$false)] [scriptblock] $OnFailure
+  )
+
+  $authConfig = Get-GcAuthConfig
+
+  $clientIdTrim = ''
+  try { $clientIdTrim = [string]($authConfig.ClientId ?? '') } catch { $clientIdTrim = [string]$authConfig.ClientId }
+  $clientIdTrim = $clientIdTrim.Trim()
+  $isPlaceholderClientId = (-not $clientIdTrim) -or ($clientIdTrim -in @('YOUR_CLIENT_ID_HERE','your-client-id','clientid','client-id'))
+  if ($isPlaceholderClientId) {
+    [System.Windows.MessageBox]::Show(
+      "Please configure your OAuth Client ID in the script.`n`nSet-GcAuthConfig -ClientId 'your-client-id' -Region 'your-region'",
+      "Configuration Required",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Warning
+    ) | Out-Null
+    return
+  }
+
+  $redirectUriTrim = ''
+  try { $redirectUriTrim = [string]($authConfig.RedirectUri ?? '') } catch { $redirectUriTrim = [string]$authConfig.RedirectUri }
+  $redirectUriTrim = $redirectUriTrim.Trim()
+  if (-not $redirectUriTrim) {
+    [System.Windows.MessageBox]::Show(
+      "Please configure your OAuth Redirect URI in the script (must match your Genesys OAuth client).`n`nExample:`nhttp://localhost:8085/callback",
+      "Configuration Required",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Warning
+    ) | Out-Null
+    return
+  }
+
+  $originalContent = $null
+  try { if ($ProgressButton) { $originalContent = $ProgressButton.Content } } catch { }
+
+  try {
+    Set-ControlEnabled -Control $ProgressButton -Enabled ($false)
+    try { if ($ProgressButton) { $ProgressButton.Content = "Authenticating..." } } catch { }
+  } catch { }
+
+  try { Set-Status "Starting OAuth flow..." } catch { }
+
+  $authModulePath = Join-Path -Path $coreRoot -ChildPath 'Auth.psm1'
+  $authConfigSnapshot = Get-GcAuthConfig
+
+  Start-AppJob -Name "OAuth Login" -Type "Auth" -ScriptBlock {
+    param($authModulePath, $authConfigSnapshot, $artifactsDir)
+
+    Import-Module $authModulePath -Force
+    Enable-GcAuthDiagnostics -LogDirectory $artifactsDir | Out-Null
+
+    Set-GcAuthConfig `
+      -Region $authConfigSnapshot.Region `
+      -ClientId $authConfigSnapshot.ClientId `
+      -RedirectUri $authConfigSnapshot.RedirectUri `
+      -Scopes $authConfigSnapshot.Scopes `
+      -ClientSecret $authConfigSnapshot.ClientSecret
+
+    $diag = $null
+    try { $diag = Get-GcAuthDiagnostics } catch { }
+
+    try {
+      $tokenResponse = Get-GcTokenAsync -TimeoutSeconds 300
+      if (-not $tokenResponse -or -not $tokenResponse.access_token) {
+        try { $diag = Get-GcAuthDiagnostics } catch { }
+        return [PSCustomObject]@{
+          Success     = $false
+          Error       = "OAuth flow returned no access_token."
+          AccessToken = $null
+          TokenType   = $null
+          ExpiresIn   = $null
+          UserInfo    = $null
+          AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
+        }
+      }
+
+      $userInfo = $null
+      try { $userInfo = Test-GcToken } catch { }
+
+      try { $diag = Get-GcAuthDiagnostics } catch { }
+
+      return [PSCustomObject]@{
+        Success     = $true
+        Error       = $null
+        AccessToken = $tokenResponse.access_token
+        TokenType   = $tokenResponse.token_type
+        ExpiresIn   = $tokenResponse.expires_in
+        UserInfo    = $userInfo
+        AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
+      }
+    } catch {
+      try { $diag = Get-GcAuthDiagnostics } catch { }
+      $msg = $_.Exception.Message
+      Write-Error $_
+      return [PSCustomObject]@{
+        Success     = $false
+        Error       = $msg
+        AccessToken = $null
+        TokenType   = $null
+        ExpiresIn   = $null
+        UserInfo    = $null
+        AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
+      }
+    }
+  } -ArgumentList @($authModulePath, $authConfigSnapshot, $script:ArtifactsDir) -OnCompleted {
+    param($job)
+
+    try {
+      if ($job.Result -and $job.Result.Success) {
+        $script:AppState.AccessToken = $job.Result.AccessToken
+        $script:AppState.Auth = "Logged in"
+        $script:AppState.TokenStatus = "Token OK"
+        if ($job.Result.UserInfo) {
+          try { $script:AppState.Auth = "Logged in as $($job.Result.UserInfo.name)" } catch { }
+        }
+
+        Set-TopContext
+        Set-Status "Authentication successful!"
+        if ($OnSuccess) { & $OnSuccess $job.Result }
+      } else {
+        $err = $null
+        if ($job.Result) { $err = $job.Result.Error }
+
+        $script:AppState.Auth = "Login failed"
+        $script:AppState.TokenStatus = "No token"
+        Set-TopContext
+        Set-Status "Authentication failed. Check job logs for details."
+        if ($OnFailure) { & $OnFailure $job.Result }
+      }
+    } finally {
+      try {
+        Set-ControlEnabled -Control $ProgressButton -Enabled ($true)
+        if ($ProgressButton -and $null -ne $originalContent) { $ProgressButton.Content = $originalContent }
+      } catch { }
+    }
+  }
+}
+
+function Start-GcClientCredentialsTokenUi {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Region,
+    [Parameter(Mandatory)][string]$ClientId,
+    [Parameter(Mandatory)][string]$ClientSecret,
+    [Parameter(Mandatory=$false)][string[]]$Scopes,
+    [Parameter(Mandatory=$false)] $ProgressButton,
+    [Parameter(Mandatory=$false)] [scriptblock] $OnSuccess,
+    [Parameter(Mandatory=$false)] [scriptblock] $OnFailure
+  )
+
+  $regionNorm = Normalize-GcInstanceName -RegionText $Region
+  if ([string]::IsNullOrWhiteSpace($regionNorm)) { throw "Region is required." }
+
+  $clientIdTrim = ([string]$ClientId).Trim()
+  if ([string]::IsNullOrWhiteSpace($clientIdTrim)) { throw "Client ID is required." }
+
+  $clientSecretTrim = [string]$ClientSecret
+  if ([string]::IsNullOrWhiteSpace($clientSecretTrim)) { throw "Client secret is required." }
+
+  $originalContent = $null
+  try { if ($ProgressButton) { $originalContent = $ProgressButton.Content } } catch { }
+
+  try {
+    Set-ControlEnabled -Control $ProgressButton -Enabled ($false)
+    try { if ($ProgressButton) { $ProgressButton.Content = "Getting token..." } } catch { }
+  } catch { }
+
+  try { Set-Status "Requesting client credentials token..." } catch { }
+
+  $authModulePath = Join-Path -Path $coreRoot -ChildPath 'Auth.psm1'
+  $scopesSnapshot = @()
+  if ($Scopes) { $scopesSnapshot = @($Scopes) }
+
+  Start-AppJob -Name "Client Credentials Token" -Type "Auth" -ScriptBlock {
+    param($authModulePath, $region, $clientId, $clientSecret, $scopes, $artifactsDir)
+
+    Import-Module $authModulePath -Force
+    Enable-GcAuthDiagnostics -LogDirectory $artifactsDir | Out-Null
+
+    try {
+      $tokenResponse = Get-GcClientCredentialsToken -Region $region -ClientId $clientId -ClientSecret $clientSecret -Scopes $scopes
+      return [pscustomobject]@{
+        Success     = $true
+        Error       = $null
+        Region      = $region
+        AccessToken = $tokenResponse.access_token
+        TokenType   = $tokenResponse.token_type
+        ExpiresIn   = $tokenResponse.expires_in
+      }
+    } catch {
+      return [pscustomobject]@{
+        Success     = $false
+        Error       = $_.Exception.Message
+        Region      = $region
+        AccessToken = $null
+        TokenType   = $null
+        ExpiresIn   = $null
+      }
+    }
+  } -ArgumentList @($authModulePath, $regionNorm, $clientIdTrim, $clientSecretTrim, $scopesSnapshot, $script:ArtifactsDir) -OnCompleted {
+    param($job)
+
+    try {
+      if ($job.Result -and $job.Result.Success) {
+        $script:AppState.Region = $job.Result.Region
+        $script:AppState.AccessToken = $job.Result.AccessToken
+        $script:AppState.Auth = "Client credentials"
+        $script:AppState.TokenStatus = "Token set (client credentials)"
+        Set-TopContext
+        Set-Status "Client credentials token acquired."
+        if ($OnSuccess) { & $OnSuccess $job.Result }
+      } else {
+        $err = if ($job.Result) { $job.Result.Error } else { "Unknown error" }
+        $script:AppState.Auth = "Client credentials failed"
+        $script:AppState.TokenStatus = "No token"
+        Set-TopContext
+        Set-Status "Client credentials token failed."
+        if ($OnFailure) { & $OnFailure $job.Result }
+        try {
+          [System.Windows.MessageBox]::Show(
+            "Client credentials token request failed: $err",
+            "Authentication Failed",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error
+          ) | Out-Null
+        } catch { }
+      }
+    } finally {
+      try {
+        Set-ControlEnabled -Control $ProgressButton -Enabled ($true)
+        if ($ProgressButton -and $null -ne $originalContent) { $ProgressButton.Content = $originalContent }
+      } catch { }
+    }
+  }
+}
+
+function Show-AuthenticationDialog {
+  [CmdletBinding()]
+  param()
+
+  $authConfig = $null
+  try { $authConfig = Get-GcAuthConfig } catch { $authConfig = $null }
+
+  $xamlString = @"
+  <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+          xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+          Title="Authentication"
+          Height="560" Width="900"
+          WindowStartupLocation="CenterOwner"
+          Background="#FFF7F7F9"
+          ResizeMode="NoResize">
+    <Grid Margin="16">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+
+      <Border Grid.Row="0" Background="#FF111827" CornerRadius="6" Padding="12">
+        <StackPanel>
+          <TextBlock Text="Authentication" FontSize="14" FontWeight="SemiBold" Foreground="White"/>
+          <TextBlock Text="OAuth (PKCE), Client Credentials, or a saved token"
+                     FontSize="11" Foreground="#FFA0AEC0" Margin="0,4,0,0"/>
+        </StackPanel>
+      </Border>
+
+      <TabControl Grid.Row="1" Margin="0,12,0,12">
+        <TabItem Header="OAuth (PKCE)">
+          <Grid Margin="12">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0"
+                       Text="Authorization Code + PKCE (browser-based consent)"
+                       Foreground="#FF111827" FontWeight="SemiBold"/>
+
+            <Border Grid.Row="1" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="6" Background="White" Padding="10" Margin="0,8,0,10">
+              <TextBlock x:Name="TxtOauthConfig" FontFamily="Consolas" FontSize="11" Foreground="#FF111827"/>
+            </Border>
+
+            <TextBlock Grid.Row="2"
+                       Text="Tip: PKCE does not require a client secret. If you have a confidential client, set -ClientSecret to use Basic auth during token exchange."
+                       TextWrapping="Wrap" FontSize="11" Foreground="#FF6B7280"/>
+
+            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button x:Name="BtnOAuthLogin" Content="Login via Browser" Width="150" Height="30" Margin="0,0,8,0"/>
+              <Button x:Name="BtnOAuthLogout" Content="Logout" Width="90" Height="30" Margin="0,0,8,0"/>
+              <Button x:Name="BtnOAuthTest" Content="Test Token" Width="100" Height="30"/>
+            </StackPanel>
+          </Grid>
+        </TabItem>
+
+        <TabItem Header="Client Credentials">
+          <Grid Margin="12">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Text="Client Credentials (grant_type=client_credentials)" Foreground="#FF111827" FontWeight="SemiBold"/>
+
+            <StackPanel Grid.Row="1" Margin="0,10,0,0">
+              <TextBlock Text="Region:" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
+              <TextBox x:Name="TxtClientRegion" Height="28" Padding="6,4" FontSize="12"/>
+            </StackPanel>
+
+            <StackPanel Grid.Row="2" Margin="0,10,0,0">
+              <TextBlock Text="Client ID:" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
+              <TextBox x:Name="TxtClientId" Height="28" Padding="6,4" FontSize="12"/>
+            </StackPanel>
+
+            <StackPanel Grid.Row="3" Margin="0,10,0,0">
+              <TextBlock Text="Client Secret:" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
+              <PasswordBox x:Name="PwdClientSecret" Height="28" Padding="6,4" FontSize="12"/>
+            </StackPanel>
+
+            <StackPanel Grid.Row="4" Margin="0,10,0,0">
+              <TextBlock Text="Scopes (optional, space-separated):" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
+              <TextBox x:Name="TxtClientScopes" Height="28" Padding="6,4" FontSize="12"/>
+            </StackPanel>
+
+            <TextBlock Grid.Row="5"
+                       Text="Note: client-credentials tokens have no user context and cannot call /api/v2/users/me. Some UI workflows require a user token (OAuth PKCE)."
+                       TextWrapping="Wrap" FontSize="11" Foreground="#FF6B7280" Margin="0,12,0,0"/>
+
+            <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+              <Button x:Name="BtnClientGetToken" Content="Get Token" Width="100" Height="30" Margin="0,0,8,0"/>
+              <Button x:Name="BtnClientTest" Content="Test Token" Width="100" Height="30"/>
+            </StackPanel>
+          </Grid>
+        </TabItem>
+
+        <TabItem Header="Token">
+          <Grid Margin="12">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Text="Paste or load an access token" Foreground="#FF111827" FontWeight="SemiBold"/>
+
+            <StackPanel Grid.Row="1" Margin="0,10,0,0">
+              <TextBlock Text="Region:" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
+              <TextBox x:Name="TxtTokenRegion" Height="28" Padding="6,4" FontSize="12"/>
+            </StackPanel>
+
+            <StackPanel Grid.Row="2" Margin="0,10,0,6">
+              <TextBlock Text="Access Token:" FontWeight="SemiBold" Foreground="#FF111827" Margin="0,0,0,4"/>
+              <TextBlock Text="(Bearer prefix will be automatically removed if present)" FontSize="10" Foreground="#FF6B7280"/>
+            </StackPanel>
+
+            <Border Grid.Row="3" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="6" Background="White" Padding="6">
+              <TextBox x:Name="TxtTokenValue"
+                       AcceptsReturn="True"
+                       TextWrapping="NoWrap"
+                       HorizontalScrollBarVisibility="Auto"
+                       VerticalScrollBarVisibility="Auto"
+                       BorderThickness="0"
+                       FontFamily="Consolas"
+                       FontSize="10"/>
+            </Border>
+
+            <Border Grid.Row="4" BorderBrush="#FFE5E7EB" BorderThickness="1" CornerRadius="6" Background="White" Padding="10" Margin="0,10,0,0">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Vertical">
+                  <CheckBox x:Name="ChkTokenRemember" Content="Save token securely for this Windows user (DPAPI)" Margin="0,0,0,2"/>
+                  <TextBlock Text="Saved tokens are encrypted for the current Windows user and machine."
+                             FontSize="10" Foreground="#FF6B7280"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                  <Button x:Name="BtnTokenLoadSaved" Content="Load Saved" Width="92" Height="28" Margin="0,0,8,0"/>
+                  <Button x:Name="BtnTokenClearSaved" Content="Clear Saved" Width="92" Height="28"/>
+                </StackPanel>
+              </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+              <Button x:Name="BtnTokenSet" Content="Set Token" Width="100" Height="30" Margin="0,0,8,0"/>
+              <Button x:Name="BtnTokenSetTest" Content="Set + Test" Width="100" Height="30" Margin="0,0,8,0"/>
+              <Button x:Name="BtnTokenTest" Content="Test Token" Width="100" Height="30" Margin="0,0,8,0"/>
+              <Button x:Name="BtnTokenLogout" Content="Logout" Width="90" Height="30"/>
+            </StackPanel>
+          </Grid>
+        </TabItem>
+      </TabControl>
+
+      <Grid Grid.Row="2">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock x:Name="TxtAuthDialogStatus" Grid.Column="0" Foreground="#FF374151" FontSize="11" VerticalAlignment="Center"/>
+        <Button x:Name="BtnAuthClose" Grid.Column="1" Content="Close" Width="90" Height="30" />
+      </Grid>
+    </Grid>
+  </Window>
+"@
+
+  try {
+    $dialog = ConvertFrom-GcXaml -XamlString $xamlString
+    if ($Window) { $dialog.Owner = $Window }
+
+    $txtOauthConfig = $dialog.FindName('TxtOauthConfig')
+    $btnOAuthLogin = $dialog.FindName('BtnOAuthLogin')
+    $btnOAuthLogout = $dialog.FindName('BtnOAuthLogout')
+    $btnOAuthTest = $dialog.FindName('BtnOAuthTest')
+
+    $txtClientRegion = $dialog.FindName('TxtClientRegion')
+    $txtClientId = $dialog.FindName('TxtClientId')
+    $pwdClientSecret = $dialog.FindName('PwdClientSecret')
+    $txtClientScopes = $dialog.FindName('TxtClientScopes')
+    $btnClientGetToken = $dialog.FindName('BtnClientGetToken')
+    $btnClientTest = $dialog.FindName('BtnClientTest')
+
+    $txtTokenRegion = $dialog.FindName('TxtTokenRegion')
+    $txtTokenValue = $dialog.FindName('TxtTokenValue')
+    $chkTokenRemember = $dialog.FindName('ChkTokenRemember')
+    $btnTokenLoadSaved = $dialog.FindName('BtnTokenLoadSaved')
+    $btnTokenClearSaved = $dialog.FindName('BtnTokenClearSaved')
+    $btnTokenSet = $dialog.FindName('BtnTokenSet')
+    $btnTokenSetTest = $dialog.FindName('BtnTokenSetTest')
+    $btnTokenTest = $dialog.FindName('BtnTokenTest')
+    $btnTokenLogout = $dialog.FindName('BtnTokenLogout')
+
+    $txtDialogStatus = $dialog.FindName('TxtAuthDialogStatus')
+    $btnClose = $dialog.FindName('BtnAuthClose')
+
+    $setDialogStatus = {
+      param([string]$Text)
+      try { if ($txtDialogStatus) { $txtDialogStatus.Text = $Text } } catch { }
+    }
+
+    $region = $script:AppState.Region
+    if ($txtClientRegion) { $txtClientRegion.Text = $region }
+    if ($txtTokenRegion) { $txtTokenRegion.Text = $region }
+
+    if ($authConfig -and $txtOauthConfig) {
+      $txtOauthConfig.Text = @(
+        ("Region:       {0}" -f ($authConfig.Region ?? ''))
+        ("ClientId:     {0}" -f ($authConfig.ClientId ?? ''))
+        ("RedirectUri:  {0}" -f ($authConfig.RedirectUri ?? ''))
+        ("Scopes:       {0}" -f (($authConfig.Scopes ?? @()) -join ' '))
+        ("HasSecret:    {0}" -f (-not [string]::IsNullOrWhiteSpace($authConfig.ClientSecret)))
+      ) -join "`n"
+    }
+
+    $refreshSavedButtons = {
+      $saved = $null
+      try { $saved = Get-GcSavedAccessToken } catch { $saved = $null }
+      $hasSaved = [bool]$saved
+      Set-ControlEnabled -Control $btnTokenLoadSaved -Enabled $hasSaved
+      Set-ControlEnabled -Control $btnTokenClearSaved -Enabled $hasSaved
+    }
+    & $refreshSavedButtons
+
+    $btnTokenLoadSaved.Add_Click({
+      try {
+        $saved = Get-GcSavedAccessToken
+        if (-not $saved -or [string]::IsNullOrWhiteSpace($saved.AccessToken)) {
+          & $setDialogStatus "No saved token found."
+          & $refreshSavedButtons
+          return
+        }
+
+        if ($saved.Region) { $txtTokenRegion.Text = [string]$saved.Region }
+        $txtTokenValue.Text = [string]$saved.AccessToken
+        try { $chkTokenRemember.IsChecked = $true } catch { }
+        & $setDialogStatus "Loaded saved token (encrypted)."
+      } catch {
+        [System.Windows.MessageBox]::Show(
+          "Failed to load saved token: $($_.Exception.Message)",
+          "Load Failed",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Error
+        ) | Out-Null
+      } finally {
+        & $refreshSavedButtons
+      }
+    })
+
+    $btnTokenClearSaved.Add_Click({
+      $result = [System.Windows.MessageBox]::Show(
+        "This will remove the saved token from this computer for the current Windows user. Continue?",
+        "Clear Saved Token",
+        [System.Windows.MessageBoxButton]::YesNo,
+        [System.Windows.MessageBoxImage]::Question
+      )
+      if ($result -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+      try {
+        Remove-GcSavedAccessToken
+        & $setDialogStatus "Saved token cleared."
+      } catch {
+        [System.Windows.MessageBox]::Show(
+          "Failed to clear saved token: $($_.Exception.Message)",
+          "Clear Failed",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Error
+        ) | Out-Null
+      } finally {
+        & $refreshSavedButtons
+      }
+    })
+
+    $applyTokenFromFields = {
+      $regionRaw = $txtTokenRegion.Text
+      $tokenRaw = $txtTokenValue.Text
+      $regionNorm = Normalize-GcInstanceName -RegionText $regionRaw
+      $tokenNorm = Normalize-GcAccessToken -TokenText $tokenRaw
+
+      if ([string]::IsNullOrWhiteSpace($regionNorm)) { & $setDialogStatus "Region is required."; return $false }
+      if ([string]::IsNullOrWhiteSpace($tokenNorm)) { & $setDialogStatus "Token is required."; return $false }
+
+      $script:AppState.Region = $regionNorm
+      $script:AppState.AccessToken = $tokenNorm
+      $script:AppState.TokenStatus = "Token set (manual)"
+      $script:AppState.Auth = "Manual token"
+      Set-TopContext
+
+      $remember = $false
+      try { $remember = [bool]$chkTokenRemember.IsChecked } catch { $remember = $false }
+      if ($remember) {
+        try { Save-GcSavedAccessToken -Region $script:AppState.Region -AccessToken $script:AppState.AccessToken } catch { }
+        & $refreshSavedButtons
+        & $setDialogStatus "Token set and saved securely."
+      } else {
+        & $setDialogStatus "Token set."
+      }
+
+      return $true
+    }
+
+    $btnTokenSet.Add_Click({
+      $null = & $applyTokenFromFields
+    })
+
+    $btnTokenSetTest.Add_Click({
+      if (& $applyTokenFromFields) {
+        Start-TokenTest
+      }
+    })
+
+    $btnTokenTest.Add_Click({ Start-TokenTest })
+    $btnTokenLogout.Add_Click({ Invoke-GcLogoutUi; & $setDialogStatus "Logged out." })
+
+    $btnOAuthLogout.Add_Click({ Invoke-GcLogoutUi; & $setDialogStatus "Logged out." })
+    $btnOAuthTest.Add_Click({ Start-TokenTest })
+    $btnOAuthLogin.Add_Click({
+      Start-GcOAuthLoginUi -ProgressButton $btnOAuthLogin -OnSuccess { & $setDialogStatus "OAuth login succeeded." } -OnFailure { & $setDialogStatus "OAuth login failed." }
+    })
+
+    $btnClientTest.Add_Click({ Start-TokenTest })
+    $btnClientGetToken.Add_Click({
+      try {
+        $regionRaw = [string]$txtClientRegion.Text
+        $clientIdRaw = [string]$txtClientId.Text
+        $clientSecretRaw = [string]$pwdClientSecret.Password
+        $scopesText = ''
+        try { $scopesText = [string]$txtClientScopes.Text } catch { $scopesText = '' }
+
+        $scopes = @()
+        if (-not [string]::IsNullOrWhiteSpace($scopesText)) {
+          $scopes = @($scopesText -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        }
+
+        Start-GcClientCredentialsTokenUi `
+          -Region $regionRaw `
+          -ClientId $clientIdRaw `
+          -ClientSecret $clientSecretRaw `
+          -Scopes $scopes `
+          -ProgressButton $btnClientGetToken `
+          -OnSuccess { & $setDialogStatus "Client credentials token acquired." } `
+          -OnFailure { & $setDialogStatus "Client credentials token failed." }
+      } catch {
+        & $setDialogStatus "Client credentials token failed."
+        [System.Windows.MessageBox]::Show(
+          "Client credentials token failed: $($_.Exception.Message)",
+          "Authentication Failed",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Error
+        ) | Out-Null
+      }
+    })
+
+    $btnClose.Add_Click({ $dialog.DialogResult = $true; $dialog.Close() })
+
+    & $setDialogStatus ("Current: {0} | {1}" -f ($script:AppState.Auth ?? ''), ($script:AppState.TokenStatus ?? ''))
+
+    $dialog.ShowDialog() | Out-Null
+  } catch {
+    Write-Error "Failed to show authentication dialog: $_"
+    [System.Windows.MessageBox]::Show(
+      "Failed to show authentication dialog: $_",
+      "Error",
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Error
+    ) | Out-Null
   }
 }
 
@@ -8572,18 +9420,18 @@ function New-ReportsExportsView {
       $selectedItem = Get-UiSelectionSafe -Control $h.LstTemplates
       if ($selectedItem -and $selectedItem.Tag) {
         $template = $selectedItem.Tag
-        
+
         # Update template description with visual highlight
-        try { 
-          if ($h.TxtTemplateDescription) { 
+        try {
+          if ($h.TxtTemplateDescription) {
             $h.TxtTemplateDescription.Text = $template.Description
             $h.TxtTemplateDescription.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(255, 255, 224)) # LightYellow
-          } 
+          }
         } catch { }
-        
+
         # Show selection confirmation
         try { Set-Status "Template selected: $($template.Name)" } catch { }
-        
+
         # Enable Run Report button
         try {
           if ($h.BtnRunReport) {
@@ -8591,7 +9439,7 @@ function New-ReportsExportsView {
             $h.BtnRunReport.Content = "Run Report ▶"
           }
         } catch { }
-        
+
         # Build parameter panel
         & $buildParameterPanel $template
 
@@ -8628,7 +9476,7 @@ function New-ReportsExportsView {
         }
 
         $template = $selectedItem.Tag
-        
+
         # Visual feedback - disable button and show progress
         $originalButtonContent = $h.BtnRunReport.Content
         try {
@@ -8636,7 +9484,7 @@ function New-ReportsExportsView {
           $h.BtnRunReport.Content = "⏳ Running..."
           Set-Status "Validating parameters..."
         } catch { }
-        
+
         $params = & $getParameterValues
 
         # Validate parameters
@@ -8705,13 +9553,13 @@ function New-ReportsExportsView {
             } catch { }
           } else {
             try { Set-Status "✗ Report failed: See job logs for details" } catch { }
-            
+
             # Get error details from job if available
             $errorDetails = "Check job logs for details."
             if ($job.Error) {
               $errorDetails = $job.Error
             }
-            
+
             [System.Windows.MessageBox]::Show(
               "Report generation failed:`n`n$errorDetails",
               "Report Failed",
@@ -8722,12 +9570,12 @@ function New-ReportsExportsView {
         }.GetNewClosure())
       } catch {
         Write-GcTrace -Level 'ERROR' -Message "BtnRunReport.Click error: $($_.Exception.Message)"
-        try { 
+        try {
           Set-Status "✗ Error: $($_.Exception.Message)"
           $h.BtnRunReport.IsEnabled = $true
           $h.BtnRunReport.Content = "Run Report ▶"
         } catch { }
-        
+
         [System.Windows.MessageBox]::Show(
           "An error occurred:`n`n$($_.Exception.Message)",
           "Error",
@@ -9248,31 +10096,43 @@ $NavModules.Add_SelectionChanged({
 # -----------------------------
 
 ### BEGIN: Manual Token Entry
-# Add right-click context menu to Login button for manual token entry
-$loginContextMenu = New-Object System.Windows.Controls.ContextMenu
+# Add right-click context menu to Authentication button for quick auth helpers
+$authContextMenu = New-Object System.Windows.Controls.ContextMenu
+
+$authDialogMenuItem = New-Object System.Windows.Controls.MenuItem
+$authDialogMenuItem.Header = "Authentication…"
+$authDialogMenuItem.Add_Click({ Show-AuthenticationDialog })
+$authContextMenu.Items.Add($authDialogMenuItem) | Out-Null
 
 $pasteTokenMenuItem = New-Object System.Windows.Controls.MenuItem
 $pasteTokenMenuItem.Header = "Paste Token…"
-$pasteTokenMenuItem.Add_Click({
-  Show-SetTokenDialog
-})
+$pasteTokenMenuItem.Add_Click({ Show-SetTokenDialog })
+$authContextMenu.Items.Add($pasteTokenMenuItem) | Out-Null
 
-$loginContextMenu.Items.Add($pasteTokenMenuItem) | Out-Null
+$testTokenMenuItem = New-Object System.Windows.Controls.MenuItem
+$testTokenMenuItem.Header = "Test Token"
+$testTokenMenuItem.Add_Click({ Start-TokenTest })
+$authContextMenu.Items.Add($testTokenMenuItem) | Out-Null
+
+$logoutMenuItem = New-Object System.Windows.Controls.MenuItem
+$logoutMenuItem.Header = "Logout"
+$logoutMenuItem.Add_Click({ Invoke-GcLogoutUi })
+$authContextMenu.Items.Add($logoutMenuItem) | Out-Null
 
 $offlineEnableMenuItem = New-Object System.Windows.Controls.MenuItem
 $offlineEnableMenuItem.Header = "Offline Demo: Enable"
 $offlineEnableMenuItem.Add_Click({ Set-OfflineDemoMode -Enabled $true })
-$loginContextMenu.Items.Add($offlineEnableMenuItem) | Out-Null
+$authContextMenu.Items.Add($offlineEnableMenuItem) | Out-Null
 
 $offlineDisableMenuItem = New-Object System.Windows.Controls.MenuItem
 $offlineDisableMenuItem.Header = "Offline Demo: Disable"
 $offlineDisableMenuItem.Add_Click({ Set-OfflineDemoMode -Enabled $false })
-$loginContextMenu.Items.Add($offlineDisableMenuItem) | Out-Null
+$authContextMenu.Items.Add($offlineDisableMenuItem) | Out-Null
 
 $offlineSeedMenuItem = New-Object System.Windows.Controls.MenuItem
 $offlineSeedMenuItem.Header = "Offline Demo: Seed Sample Events"
 $offlineSeedMenuItem.Add_Click({ Add-OfflineDemoSampleEvents -Count 18 })
-$loginContextMenu.Items.Add($offlineSeedMenuItem) | Out-Null
+$authContextMenu.Items.Add($offlineSeedMenuItem) | Out-Null
 
 $traceLogMenuItem = New-Object System.Windows.Controls.MenuItem
 $traceLogMenuItem.Header = "Open Trace Log"
@@ -9285,213 +10145,18 @@ $traceLogMenuItem.Add_Click({
     }
   } catch { }
 })
-$loginContextMenu.Items.Add($traceLogMenuItem) | Out-Null
+$authContextMenu.Items.Add($traceLogMenuItem) | Out-Null
 
-$BtnLogin.ContextMenu = $loginContextMenu
+$BtnAuth.ContextMenu = $authContextMenu
 ### END: Manual Token Entry
 
-$BtnLogin.Add_Click({
+$BtnAuth.Add_Click({
   if (Test-OfflineDemoEnabled) {
     Set-OfflineDemoMode -Enabled $false
     return
   }
 
-  Write-GcDiag ("Login button clicked (HasToken={0}, Region='{1}')" -f [bool]$script:AppState.AccessToken, $script:AppState.Region)
-  # Check if already logged in - if so, logout
-  if ($script:AppState.AccessToken) {
-    Write-GcDiag "Login button: logging out (clearing token state)"
-    # Logout: Clear token and reset UI
-    # Clear-GcTokenState clears the Auth module's token state
-    # We also clear AppState.AccessToken (application-level state) for complete logout
-    Clear-GcTokenState
-    $script:AppState.AccessToken = $null
-    $script:AppState.Auth = "Not logged in"
-    $script:AppState.TokenStatus = "No token"
-
-    Set-TopContext
-    Set-Status "Logged out successfully."
-
-    $BtnLogin.Content = "Login…"
-    Set-ControlEnabled -Control $BtnTestToken -Enabled ($false)
-    return
-  }
-
-  # Login flow
-  $authConfig = Get-GcAuthConfig
-  Write-GcDiag ("OAuth config snapshot: Region='{0}' ClientId='{1}' RedirectUri='{2}' Scopes='{3}' HasClientSecret={4}" -f $authConfig.Region, $authConfig.ClientId, $authConfig.RedirectUri, ($authConfig.Scopes -join ' '), (-not [string]::IsNullOrWhiteSpace($authConfig.ClientSecret)))
-
-  # Check if client ID is configured
-  $clientIdTrim = ''
-  try { $clientIdTrim = [string]($authConfig.ClientId ?? '') } catch { $clientIdTrim = [string]$authConfig.ClientId }
-  $clientIdTrim = $clientIdTrim.Trim()
-  $isPlaceholderClientId = (-not $clientIdTrim) -or ($clientIdTrim -in @('YOUR_CLIENT_ID_HERE','your-client-id','clientid','client-id'))
-  if ($isPlaceholderClientId) {
-    [System.Windows.MessageBox]::Show(
-      "Please configure your OAuth Client ID in the script.`n`nSet-GcAuthConfig -ClientId 'your-client-id' -Region 'your-region'",
-      "Configuration Required",
-      [System.Windows.MessageBoxButton]::OK,
-      [System.Windows.MessageBoxImage]::Warning
-    )
-    return
-  }
-
-  $redirectUriTrim = ''
-  try { $redirectUriTrim = [string]($authConfig.RedirectUri ?? '') } catch { $redirectUriTrim = [string]$authConfig.RedirectUri }
-  $redirectUriTrim = $redirectUriTrim.Trim()
-  if (-not $redirectUriTrim) {
-    [System.Windows.MessageBox]::Show(
-      "Please configure your OAuth Redirect URI in the script (must match your Genesys OAuth client).`n`nExample:`nhttp://localhost:8085/callback",
-      "Configuration Required",
-      [System.Windows.MessageBoxButton]::OK,
-      [System.Windows.MessageBoxImage]::Warning
-    )
-    return
-  }
-
-  # Disable button during auth
-  Set-ControlEnabled -Control $BtnLogin -Enabled ($false)
-  $BtnLogin.Content = "Authenticating..."
-  Set-Status "Starting OAuth flow..."
-
-  # Run OAuth flow in background
-  $authModulePath = Join-Path -Path $coreRoot -ChildPath 'Auth.psm1'
-  $authConfigSnapshot = Get-GcAuthConfig
-  Write-GcDiag ("Starting OAuth Login job (AuthModule='{0}', ArtifactsDir='{1}')" -f $authModulePath, $script:ArtifactsDir)
-
-  Start-AppJob -Name "OAuth Login" -Type "Auth" -ScriptBlock {
-    param($authModulePath, $authConfigSnapshot, $artifactsDir)
-
-    Import-Module $authModulePath -Force
-    Enable-GcAuthDiagnostics -LogDirectory $artifactsDir | Out-Null
-
-    # Re-apply auth configuration inside the job runspace (module state is per-runspace).
-    Set-GcAuthConfig `
-      -Region $authConfigSnapshot.Region `
-      -ClientId $authConfigSnapshot.ClientId `
-      -RedirectUri $authConfigSnapshot.RedirectUri `
-      -Scopes $authConfigSnapshot.Scopes `
-      -ClientSecret $authConfigSnapshot.ClientSecret
-
-    $diag = $null
-    try { $diag = Get-GcAuthDiagnostics } catch { }
-
-    try {
-      $tokenResponse = Get-GcTokenAsync -TimeoutSeconds 300
-      if (-not $tokenResponse -or -not $tokenResponse.access_token) {
-        try { $diag = Get-GcAuthDiagnostics } catch { }
-        return [PSCustomObject]@{
-          Success     = $false
-          Error       = "OAuth flow returned no access_token."
-          AccessToken = $null
-          TokenType   = $null
-          ExpiresIn   = $null
-          UserInfo    = $null
-          AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
-        }
-      }
-
-      $userInfo = $null
-      try { $userInfo = Test-GcToken } catch { }
-
-      try { $diag = Get-GcAuthDiagnostics } catch { }
-
-      return [PSCustomObject]@{
-        Success     = $true
-        Error       = $null
-        AccessToken = $tokenResponse.access_token
-        TokenType   = $tokenResponse.token_type
-        ExpiresIn   = $tokenResponse.expires_in
-        UserInfo    = $userInfo
-        AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
-      }
-    } catch {
-      try { $diag = Get-GcAuthDiagnostics } catch { }
-      $msg = $_.Exception.Message
-      Write-Error $_
-      return [PSCustomObject]@{
-        Success     = $false
-        Error       = $msg
-        AccessToken = $null
-        TokenType   = $null
-        ExpiresIn   = $null
-        UserInfo    = $null
-        AuthLogPath = if ($diag) { $diag.LogPath } else { $null }
-      }
-    }
-  } -ArgumentList @($authModulePath, $authConfigSnapshot, $script:ArtifactsDir) -OnCompleted {
-    param($job)
-
-    if ($job.Result -and $job.Result.Success) {
-      Write-GcDiag ("OAuth Login: SUCCESS (Token={0})" -f (Format-GcDiagSecret -Value $job.Result.AccessToken))
-      if ($job.Result.AuthLogPath) { Write-GcDiag ("OAuth Login: Auth diagnostics log: {0}" -f $job.Result.AuthLogPath) }
-
-      $script:AppState.AccessToken = $job.Result.AccessToken
-      $script:AppState.Auth = "Logged in"
-      $script:AppState.TokenStatus = "Token OK"
-
-      if ($job.Result.UserInfo) {
-        $script:AppState.Auth = "Logged in as $($job.Result.UserInfo.name)"
-      }
-
-      Set-TopContext
-      Set-Status "Authentication successful!"
-      $BtnLogin.Content = "Logout"
-      Set-ControlEnabled -Control $BtnLogin -Enabled ($true)
-      Set-ControlEnabled -Control $BtnTestToken -Enabled ($true)
-    } else {
-      $err = $null
-      if ($job.Result) { $err = $job.Result.Error }
-      Write-GcDiag ("OAuth Login: FAILED (Error='{0}')" -f $err)
-      Set-ControlEnabled -Control $BtnTestToken -Enabled ($false)
-
-      $script:AppState.Auth = "Login failed"
-      $script:AppState.TokenStatus = "No token"
-      Set-TopContext
-      $authLogPath = $null
-      if ($job.Result -and $job.Result.AuthLogPath) { $authLogPath = $job.Result.AuthLogPath }
-      try {
-        $combined = @()
-        if ($job.Errors) { $combined += @($job.Errors) }
-        if ($job.Logs) { $combined += @($job.Logs) }
-        $text = ($combined -join "`n")
-        if ($text -match 'Auth diagnostics:\s*(?<p>[^)\r\n]+)') {
-          $authLogPath = $matches['p'].Trim()
-        }
-      } catch { }
-
-      if ($authLogPath) {
-        Write-GcDiag ("OAuth Login: Auth diagnostics log: {0}" -f $authLogPath)
-        try {
-          if (Test-Path -LiteralPath $authLogPath) {
-            $tail = Get-Content -LiteralPath $authLogPath -Tail 80 -ErrorAction SilentlyContinue
-            Write-GcDiag ("OAuth Login: last {0} auth log lines:" -f @($tail).Count)
-            foreach ($l in @($tail)) { Write-Host $l }
-          }
-        } catch { }
-        Set-Status "Authentication failed. Auth log: $authLogPath"
-      } else {
-        Set-Status "Authentication failed. Check job logs for details."
-      }
-      $BtnLogin.Content = "Login…"
-      Set-ControlEnabled -Control $BtnLogin -Enabled ($true)
-    }
-  }
-})
-
-$BtnTestToken.Add_Click({
-  Write-GcDiag ("Test Token button clicked (HasToken={0}, Region='{1}')" -f [bool]$script:AppState.AccessToken, $script:AppState.Region)
-  ### BEGIN: Manual Token Entry
-  # If no token exists, open the manual token entry dialog instead of showing an error
-  if (-not $script:AppState.AccessToken) {
-    Write-GcDiag "Test Token: no token set -> opening manual token dialog"
-    Show-SetTokenDialog
-    return
-  }
-
-  # Use the dedicated token test function
-  Write-GcDiag "Test Token: token exists -> running Start-TokenTest"
-  Start-TokenTest
-  ### END: Manual Token Entry
+  Show-AuthenticationDialog
 })
 
 $BtnBackstage.Add_Click({ Open-Backstage -Tab 'Jobs' })
