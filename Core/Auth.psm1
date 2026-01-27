@@ -824,8 +824,81 @@ function Clear-GcTokenState {
   $script:GcTokenState.UserInfo = $null
 }
 
+function Test-GcConnection {
+  <#
+  .SYNOPSIS
+    Tests connection to Genesys Cloud API with provided credentials.
+  
+  .DESCRIPTION
+    Performs a comprehensive connection test including:
+    - API reachability
+    - Authentication validation
+    - Basic permissions check
+  
+  .PARAMETER Region
+    Genesys Cloud region (e.g., 'usw2.pure.cloud', 'mypurecloud.com')
+  
+  .PARAMETER AccessToken
+    OAuth access token to test
+  
+  .OUTPUTS
+    Hashtable with test results
+  
+  .EXAMPLE
+    $result = Test-GcConnection -Region 'usw2.pure.cloud' -AccessToken $token
+    if ($result.Success) { Write-Host "Connection OK" }
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]
+    [string]$Region,
+    
+    [Parameter(Mandatory)]
+    [string]$AccessToken
+  )
+  
+  $tests = @{
+    'API Reachability' = $false
+    'Authentication' = $false
+    'Basic Permissions' = $false
+  }
+  
+  try {
+    # Test 1: API reachability
+    $uri = "https://api.$Region/api/v2/users/me"
+    
+    $headers = @{
+      'Authorization' = "Bearer $AccessToken"
+      'Content-Type' = 'application/json'
+    }
+    
+    $response = Invoke-RestMethod -Uri $uri -Method GET -Headers $headers -TimeoutSec 10
+    
+    $tests['API Reachability'] = $true
+    $tests['Authentication'] = $true
+    
+    # Test 2: Parse user info
+    if ($null -ne $response.id) {
+      $tests['Basic Permissions'] = $true
+    }
+    
+    return @{
+      Success = $true
+      Tests = $tests
+      UserInfo = $response
+    }
+    
+  } catch {
+    return @{
+      Success = $false
+      Tests = $tests
+      Error = $_.Exception.Message
+    }
+  }
+}
+
 Export-ModuleMember -Function Set-GcAuthConfig, Get-GcAuthConfig, `
   Get-GcTokenAsync, Test-GcToken, Get-GcAccessToken, Get-GcTokenState, Clear-GcTokenState, `
-  Enable-GcAuthDiagnostics, Get-GcAuthDiagnostics
+  Enable-GcAuthDiagnostics, Get-GcAuthDiagnostics, Test-GcConnection
 
 ### END: Core.Auth.psm1

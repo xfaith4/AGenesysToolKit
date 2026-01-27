@@ -293,6 +293,12 @@ function script:Build-ParameterPanel {
     if ($paramDef.Required) { $labelText += " *" }
     $label.Text = $labelText
     $label.FontWeight = [System.Windows.FontWeights]::SemiBold
+    # Required fields in dark red
+    if ($paramDef.Required) {
+      $label.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(139, 0, 0)) # DarkRed
+    } else {
+      $label.Foreground = [System.Windows.Media.Brushes]::Black
+    }
     [System.Windows.Controls.Grid]::SetRow($label, 0)
     [void]$paramGrid.Children.Add($label)
 
@@ -371,6 +377,32 @@ function script:Build-ParameterPanel {
       $control.IsReadOnly = $true
       $control.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(240, 240, 240))
       $control.ToolTip = "Auto-filled from current session context"
+    }
+    
+    # Add real-time validation for TextBox controls
+    if ($control -is [System.Windows.Controls.TextBox] -and -not $control.IsReadOnly) {
+      # Tag control with metadata for validation
+      $control.Tag = @{
+        ParameterName = $paramName
+        Required = $paramDef.Required
+        Type = $paramType
+      }
+      
+      # Add LostFocus event for validation feedback
+      $control.Add_LostFocus({
+        $tag = $this.Tag
+        if ($tag.Required -and [string]::IsNullOrWhiteSpace($this.Text)) {
+          # Required field is empty - show red border
+          $this.BorderBrush = [System.Windows.Media.Brushes]::Red
+          $this.BorderThickness = New-Object System.Windows.Thickness(2)
+          $this.ToolTip = "$($tag.ParameterName) is required"
+        } else {
+          # Valid input - show green border
+          $this.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(34, 197, 94)) # Green
+          $this.BorderThickness = New-Object System.Windows.Thickness(1)
+          $this.ToolTip = $null
+        }
+      }.GetNewClosure())
     }
 
     $control.Margin = New-Object System.Windows.Thickness(0, 4, 0, 0)
@@ -8540,11 +8572,42 @@ function New-ReportsExportsView {
       $selectedItem = Get-UiSelectionSafe -Control $h.LstTemplates
       if ($selectedItem -and $selectedItem.Tag) {
         $template = $selectedItem.Tag
-        try { if ($h.TxtTemplateDescription) { $h.TxtTemplateDescription.Text = $template.Description } } catch { }
+        
+        # Update template description with visual highlight
+        try { 
+          if ($h.TxtTemplateDescription) { 
+            $h.TxtTemplateDescription.Text = $template.Description
+            $h.TxtTemplateDescription.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(255, 255, 224)) # LightYellow
+          } 
+        } catch { }
+        
+        # Show selection confirmation
+        try { Set-Status "Template selected: $($template.Name)" } catch { }
+        
+        # Enable Run Report button
+        try {
+          if ($h.BtnRunReport) {
+            $h.BtnRunReport.IsEnabled = $true
+            $h.BtnRunReport.Content = "Run Report ▶"
+          }
+        } catch { }
+        
+        # Build parameter panel
         & $buildParameterPanel $template
 
         # Reset current report
         $currentReportBundle = $null
+      } else {
+        # No selection - disable Run Report button
+        try {
+          if ($h.BtnRunReport) {
+            $h.BtnRunReport.IsEnabled = $false
+            $h.BtnRunReport.Content = "Run Report (Select a template first)"
+          }
+          if ($h.TxtTemplateDescription) {
+            $h.TxtTemplateDescription.Background = [System.Windows.Media.Brushes]::White
+          }
+        } catch { }
       }
     }.GetNewClosure())
   }
@@ -8556,7 +8619,7 @@ function New-ReportsExportsView {
         $selectedItem = Get-UiSelectionSafe -Control $h.LstTemplates
         if (-not $selectedItem -or -not $selectedItem.Tag) {
           [System.Windows.MessageBox]::Show(
-            "Please select a report template first.",
+            "Please select a report template from the list on the left.",
             "No Template Selected",
             [System.Windows.MessageBoxButton]::OK,
             [System.Windows.MessageBoxImage]::Warning
@@ -8565,22 +8628,36 @@ function New-ReportsExportsView {
         }
 
         $template = $selectedItem.Tag
+        
+        # Visual feedback - disable button and show progress
+        $originalButtonContent = $h.BtnRunReport.Content
+        try {
+          $h.BtnRunReport.IsEnabled = $false
+          $h.BtnRunReport.Content = "⏳ Running..."
+          Set-Status "Validating parameters..."
+        } catch { }
+        
         $params = & $getParameterValues
 
         # Validate parameters
         $validationErrors = Validate-ReportParameters -Template $template -ParameterValues $params
         if ($validationErrors -and $validationErrors.Count -gt 0) {
-          $errorMsg = "Validation errors:`n" + ($validationErrors -join "`n")
+          $errorMsg = "Please fix the following errors:`n`n" + ($validationErrors -join "`n")
           [System.Windows.MessageBox]::Show(
             $errorMsg,
-            "Validation Error",
+            "Validation Failed",
             [System.Windows.MessageBoxButton]::OK,
-            [System.Windows.MessageBoxImage]::Warning
+            [System.Windows.MessageBoxImage]::Error
           )
+          # Re-enable button
+          try {
+            $h.BtnRunReport.IsEnabled = $true
+            $h.BtnRunReport.Content = $originalButtonContent
+          } catch { }
           return
         }
 
-        try { Set-Status "Running report: $($template.Name)..." } catch { }
+        try { Set-Status "Starting report generation..." } catch { }
 
         Start-AppJob -Name "Run Report — $($template.Name)" -Type 'Report' -ScriptBlock {
           param($templateName, $params)
@@ -8595,12 +8672,17 @@ function New-ReportsExportsView {
         } -ArgumentList @($template.Name, $params) -OnCompleted ({
           param($job)
 
+          # Re-enable button
+          try {
+            $h.BtnRunReport.IsEnabled = $true
+            $h.BtnRunReport.Content = "Run Report ▶"
+          } catch { }
 
           if ($job.Result) {
             $bundle = $job.Result
             $currentReportBundle = $bundle
 
-            try { Set-Status "Report completed: $($bundle.BundlePath)" } catch { }
+            try { Set-Status "✓ Report complete: $($template.Name)" } catch { }
 
             # Load HTML preview
             if ($bundle.ReportHtmlPath -and (Test-Path $bundle.ReportHtmlPath)) {
@@ -8622,10 +8704,17 @@ function New-ReportsExportsView {
               }.GetNewClosure()
             } catch { }
           } else {
-            try { Set-Status "Report failed. See job logs for details." } catch { }
+            try { Set-Status "✗ Report failed: See job logs for details" } catch { }
+            
+            # Get error details from job if available
+            $errorDetails = "Check job logs for details."
+            if ($job.Error) {
+              $errorDetails = $job.Error
+            }
+            
             [System.Windows.MessageBox]::Show(
-              "Report execution failed. Check job logs for details.",
-              "Report Error",
+              "Report generation failed:`n`n$errorDetails",
+              "Report Failed",
               [System.Windows.MessageBoxButton]::OK,
               [System.Windows.MessageBoxImage]::Error
             )
@@ -8633,7 +8722,18 @@ function New-ReportsExportsView {
         }.GetNewClosure())
       } catch {
         Write-GcTrace -Level 'ERROR' -Message "BtnRunReport.Click error: $($_.Exception.Message)"
-        try { Set-Status "⚠️ Error running report: $($_.Exception.Message)" } catch { }
+        try { 
+          Set-Status "✗ Error: $($_.Exception.Message)"
+          $h.BtnRunReport.IsEnabled = $true
+          $h.BtnRunReport.Content = "Run Report ▶"
+        } catch { }
+        
+        [System.Windows.MessageBox]::Show(
+          "An error occurred:`n`n$($_.Exception.Message)",
+          "Error",
+          [System.Windows.MessageBoxButton]::OK,
+          [System.Windows.MessageBoxImage]::Error
+        )
       }
     }.GetNewClosure())
   }

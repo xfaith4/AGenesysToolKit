@@ -924,84 +924,120 @@ function Invoke-GcReportTemplate {
     [string]$OutputDirectory
   )
   
-  # Find template
-  $templates = Get-GcReportTemplates
-  $template = $templates | Where-Object { $_.Name -eq $TemplateName }
+  $errors = @()
   
-  if (-not $template) {
-    throw "Report template '$TemplateName' not found. Available templates: $($templates.Name -join ', ')"
+  try {
+    Write-Verbose "Loading template: $TemplateName"
+    
+    # Find template
+    $templates = Get-GcReportTemplates
+    $template = $templates | Where-Object { $_.Name -eq $TemplateName }
+    
+    if (-not $template) {
+      throw "Template not found: $TemplateName. Available templates: $($templates.Name -join ', ')"
+    }
+    
+    Write-Verbose "Validating parameters..."
+    
+    # Validate required parameters
+    foreach ($paramName in $template.Parameters.Keys) {
+      $paramDef = $template.Parameters[$paramName]
+      if ($paramDef.Required -and -not $Parameters.ContainsKey($paramName)) {
+        $errors += "Missing required parameter: $paramName"
+      }
+    }
+    
+    if ($errors.Count -gt 0) {
+      throw "Parameter validation failed:`n" + ($errors -join "`n")
+    }
+    
+    Write-Verbose "Executing template script..."
+    
+    # Execute template
+    Write-Output "Executing report template: $TemplateName"
+    $reportData = & $template.InvokeScript @Parameters
+    
+    if (-not $reportData) {
+      throw "Template execution returned no data"
+    }
+    
+    Write-Verbose "Creating artifact bundle..."
+    
+    # Create artifact bundle
+    $runId = New-GcReportRunId
+    $metadata = [ordered]@{
+      TemplateName = $TemplateName
+      Parameters = $Parameters
+      Region = if ($Parameters.Region) { $Parameters.Region } else { 'N/A' }
+      RowCount = if ($reportData.Rows) { $reportData.Rows.Count } else { 0 }
+      Status = if ($reportData.Summary.Status) { $reportData.Summary.Status } else { 'Unknown' }
+      Warnings = if ($reportData.Warnings) { $reportData.Warnings } else { @() }
+    }
+    
+    $bundle = New-GcArtifactBundle `
+      -ReportName $TemplateName `
+      -OutputDirectory $OutputDirectory `
+      -RunId $runId `
+      -Metadata $metadata
+    
+    # Write HTML report
+    Write-GcReportHtml `
+      -Path $bundle.ReportHtmlPath `
+      -Title $TemplateName `
+      -Summary $reportData.Summary `
+      -Rows $reportData.Rows `
+      -Warnings $reportData.Warnings
+    
+    # Write data artifacts
+    $artifactResults = Write-GcDataArtifacts `
+      -Rows $reportData.Rows `
+      -JsonPath $bundle.DataJsonPath `
+      -CsvPath $bundle.DataCsvPath `
+      -XlsxPath $bundle.DataXlsxPath `
+      -CreateXlsx $true
+    
+    # Update metadata with artifact creation results
+    $metadataContent = Get-Content -Path $bundle.MetadataPath -Raw | ConvertFrom-Json
+    $metadataContent.Status = if ($reportData.Warnings.Count -gt 0) { 'Warnings' } else { 'OK' }
+    $metadataContent.ArtifactsCreated = @{
+      Html = $true
+      Json = $artifactResults.JsonCreated
+      Csv = $artifactResults.CsvCreated
+      Xlsx = $artifactResults.XlsxCreated
+    }
+    if ($artifactResults.XlsxSkippedReason) {
+      $metadataContent.XlsxSkippedReason = $artifactResults.XlsxSkippedReason
+    }
+    
+    $metadataContent | ConvertTo-Json -Depth 10 | Set-Content -Path $bundle.MetadataPath -Encoding UTF8
+    
+    # Update artifact index
+    Update-GcArtifactIndex -Entry @{
+      ReportName = $TemplateName
+      RunId = $runId
+      Timestamp = (Get-Date -Format o)
+      BundlePath = $bundle.BundlePath
+      RowCount = $reportData.Rows.Count
+      Status = if ($reportData.Warnings.Count -gt 0) { 'Warnings' } else { 'OK' }
+      Warnings = $reportData.Warnings
+    }
+    
+    Write-Output "Report complete: $($bundle.BundlePath)"
+    
+    return $bundle
+    
+  } catch {
+    Write-Verbose "Report generation failed: $_"
+    Write-Verbose "Stack trace: $($_.ScriptStackTrace)"
+    
+    # Return error object for UI consumption
+    return @{
+      Success = $false
+      Error = $_.Exception.Message
+      StackTrace = $_.ScriptStackTrace
+      TemplateName = $TemplateName
+    }
   }
-  
-  # Execute template
-  Write-Output "Executing report template: $TemplateName"
-  $reportData = & $template.InvokeScript @Parameters
-  
-  if (-not $reportData) {
-    throw "Template execution returned no data."
-  }
-  
-  # Create artifact bundle
-  $runId = New-GcReportRunId
-  $metadata = [ordered]@{
-    TemplateName = $TemplateName
-    Parameters = $Parameters
-    Region = if ($Parameters.Region) { $Parameters.Region } else { 'N/A' }
-    RowCount = if ($reportData.Rows) { $reportData.Rows.Count } else { 0 }
-    Status = if ($reportData.Summary.Status) { $reportData.Summary.Status } else { 'Unknown' }
-    Warnings = if ($reportData.Warnings) { $reportData.Warnings } else { @() }
-  }
-  
-  $bundle = New-GcArtifactBundle `
-    -ReportName $TemplateName `
-    -OutputDirectory $OutputDirectory `
-    -RunId $runId `
-    -Metadata $metadata
-  
-  # Write HTML report
-  Write-GcReportHtml `
-    -Path $bundle.ReportHtmlPath `
-    -Title $TemplateName `
-    -Summary $reportData.Summary `
-    -Rows $reportData.Rows `
-    -Warnings $reportData.Warnings
-  
-  # Write data artifacts
-  $artifactResults = Write-GcDataArtifacts `
-    -Rows $reportData.Rows `
-    -JsonPath $bundle.DataJsonPath `
-    -CsvPath $bundle.DataCsvPath `
-    -XlsxPath $bundle.DataXlsxPath `
-    -CreateXlsx $true
-  
-  # Update metadata with artifact creation results
-  $metadataContent = Get-Content -Path $bundle.MetadataPath -Raw | ConvertFrom-Json
-  $metadataContent.Status = if ($reportData.Warnings.Count -gt 0) { 'Warnings' } else { 'OK' }
-  $metadataContent.ArtifactsCreated = @{
-    Html = $true
-    Json = $artifactResults.JsonCreated
-    Csv = $artifactResults.CsvCreated
-    Xlsx = $artifactResults.XlsxCreated
-  }
-  if ($artifactResults.XlsxSkippedReason) {
-    $metadataContent.XlsxSkippedReason = $artifactResults.XlsxSkippedReason
-  }
-  
-  $metadataContent | ConvertTo-Json -Depth 10 | Set-Content -Path $bundle.MetadataPath -Encoding UTF8
-  
-  # Update artifact index
-  Update-GcArtifactIndex -Entry @{
-    ReportName = $TemplateName
-    RunId = $runId
-    Timestamp = (Get-Date -Format o)
-    BundlePath = $bundle.BundlePath
-    RowCount = $reportData.Rows.Count
-    Status = if ($reportData.Warnings.Count -gt 0) { 'Warnings' } else { 'OK' }
-    Warnings = $reportData.Warnings
-  }
-  
-  Write-Output "Report complete: $($bundle.BundlePath)"
-  
-  return $bundle
 }
 
 # Export functions
