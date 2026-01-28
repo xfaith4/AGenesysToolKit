@@ -188,6 +188,44 @@ function Write-GcAuthDiag {
   } catch { }
 }
 
+function Get-GcToolkitAppLogPath {
+  [CmdletBinding()]
+  param()
+  try {
+    $p = [Environment]::GetEnvironmentVariable('GC_TOOLKIT_APP_LOG')
+    if (-not [string]::IsNullOrWhiteSpace($p)) { return $p }
+  } catch { }
+  return $null
+}
+
+function Write-GcToolkitAppLog {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Message,
+    [ValidateSet('TRACE','DEBUG','INFO','WARN','ERROR','AUTH')]
+    [string]$Level = 'INFO',
+    [string]$Category = 'auth',
+    [hashtable]$Data
+  )
+
+  $path = Get-GcToolkitAppLogPath
+  if (-not $path) { return }
+
+  $ts = (Get-Date).ToString('o')
+  $line = "[{0}] [{1}] [{2}] {3}" -f $ts, $Level.ToUpperInvariant(), $Category, $Message
+  if ($Data) {
+    try {
+      $safe = ConvertTo-GcAuthSafeData -Data $Data
+      $json = ($safe | ConvertTo-Json -Depth 12 -Compress)
+      $line += " | data=$json"
+    } catch {
+      $line += " | data=<unserializable>"
+    }
+  }
+
+  try { Add-Content -LiteralPath $path -Value $line -Encoding UTF8 } catch { }
+}
+
 function Get-GcAuthExceptionInfo {
   [CmdletBinding()]
   param(
@@ -358,6 +396,58 @@ function Get-GcPkceChallenge {
   }
 }
 
+function Start-GcBrowser {
+  <#
+  .SYNOPSIS
+    Opens a URL in the default browser with fallbacks.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Url
+  )
+
+  Write-GcAuthDiag -Level INFO -Message "Launching browser" -Data @{ Url = $Url }
+  Write-GcToolkitAppLog -Level 'AUTH' -Category 'auth' -Message 'Launching browser' -Data @{ Url = $Url }
+
+  # Attempt 1: Start-Process URL (standard)
+  try {
+    Start-Process -FilePath $Url -ErrorAction Stop | Out-Null
+    Write-GcAuthDiag -Level INFO -Message "Browser launched (Start-Process)" -Data @{ Url = $Url }
+    Write-GcToolkitAppLog -Level 'AUTH' -Category 'auth' -Message 'Browser launched (Start-Process)' -Data @{ Url = $Url }
+    return $true
+  } catch {
+    Write-GcAuthDiag -Level WARN -Message "Start-Process URL failed" -Data @{ Error = $_.Exception.Message }
+    Write-GcToolkitAppLog -Level 'WARN' -Category 'auth' -Message 'Start-Process URL failed' -Data @{ Error = $_.Exception.Message }
+  }
+
+  # Attempt 2: UseShellExecute ProcessStartInfo (often more reliable)
+  try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Url
+    $psi.UseShellExecute = $true
+    [void][System.Diagnostics.Process]::Start($psi)
+    Write-GcAuthDiag -Level INFO -Message "Browser launched (ProcessStartInfo)" -Data @{ Url = $Url }
+    Write-GcToolkitAppLog -Level 'AUTH' -Category 'auth' -Message 'Browser launched (ProcessStartInfo)' -Data @{ Url = $Url }
+    return $true
+  } catch {
+    Write-GcAuthDiag -Level WARN -Message "ProcessStartInfo URL failed" -Data @{ Error = $_.Exception.Message }
+    Write-GcToolkitAppLog -Level 'WARN' -Category 'auth' -Message 'ProcessStartInfo URL failed' -Data @{ Error = $_.Exception.Message }
+  }
+
+  # Attempt 3: cmd.exe start
+  try {
+    Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c','start','""', $Url) -WindowStyle Hidden -ErrorAction Stop | Out-Null
+    Write-GcAuthDiag -Level INFO -Message "Browser launched (cmd start)" -Data @{ Url = $Url }
+    Write-GcToolkitAppLog -Level 'AUTH' -Category 'auth' -Message 'Browser launched (cmd start)' -Data @{ Url = $Url }
+    return $true
+  } catch {
+    Write-GcAuthDiag -Level ERROR -Message "cmd start URL failed" -Data @{ Error = $_.Exception.Message }
+    Write-GcToolkitAppLog -Level 'ERROR' -Category 'auth' -Message 'cmd start URL failed' -Data @{ Error = $_.Exception.Message }
+  }
+
+  return $false
+}
+
 function Start-GcAuthCodeFlow {
   <#
   .SYNOPSIS
@@ -389,6 +479,12 @@ function Start-GcAuthCodeFlow {
   }
 
   Write-GcAuthDiag -Level INFO -Message "Start auth code flow" -Data @{
+    Region      = $script:GcAuthConfig.Region
+    RedirectUri = $script:GcAuthConfig.RedirectUri
+    ScopesCount = @($script:GcAuthConfig.Scopes).Count
+    ClientId    = (ConvertTo-GcAuthSafeString -Value $script:GcAuthConfig.ClientId)
+  }
+  Write-GcToolkitAppLog -Level 'AUTH' -Category 'auth' -Message 'Start auth code flow' -Data @{
     Region      = $script:GcAuthConfig.Region
     RedirectUri = $script:GcAuthConfig.RedirectUri
     ScopesCount = @($script:GcAuthConfig.Scopes).Count
@@ -491,7 +587,12 @@ function Start-GcAuthCodeFlow {
     Write-Output ("OAuth: Waiting for callback on {0}" -f $redirectUri)
     Write-Output ("OAuth: Listener prefixes: {0}" -f (@($listener.Prefixes) -join ' | '))
 
-    Start-Process $authUrl
+    if (-not (Start-GcBrowser -Url $authUrl)) {
+      $msg = "Failed to launch the system browser for OAuth login. Please open this URL manually: $authUrl"
+      Write-GcAuthDiag -Level ERROR -Message $msg
+      Write-GcToolkitAppLog -Level 'ERROR' -Category 'auth' -Message 'Browser launch failed' -Data @{ Url = $authUrl }
+      throw $msg
+    }
 
     # Wait for callback
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)

@@ -159,6 +159,94 @@ Set-GcAppState -State ([ref]$script:AppState)
 $script:ArtifactsDir = Join-Path -Path $PSScriptRoot -ChildPath 'artifacts'
 New-Item -ItemType Directory -Path $script:ArtifactsDir -Force | Out-Null
 
+# -----------------------------
+# App log (always-on transparency)
+# -----------------------------
+$script:GcAppLogEnvVar = 'GC_TOOLKIT_APP_LOG'
+$script:GcAppLogPath = Join-Path -Path $script:ArtifactsDir -ChildPath ("toolkit-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+try { [Environment]::SetEnvironmentVariable($script:GcAppLogEnvVar, $script:GcAppLogPath, 'Process') } catch { }
+
+function ConvertTo-GcAppLogSafeString {
+  [CmdletBinding()]
+  param(
+    [AllowNull()] $Value,
+    [int] $KeepStart = 8,
+    [int] $KeepEnd = 4
+  )
+
+  if ($null -eq $Value) { return $null }
+  $s = [string]$Value
+  if ([string]::IsNullOrWhiteSpace($s)) { return '<empty>' }
+  if ($s.Length -le ($KeepStart + $KeepEnd + 3)) { return ("<{0} chars>" -f $s.Length) }
+  return ("{0}…{1} (<{2} chars>)" -f $s.Substring(0, $KeepStart), $s.Substring($s.Length - $KeepEnd), $s.Length)
+}
+
+function ConvertTo-GcAppLogSafeData {
+  [CmdletBinding()]
+  param(
+    [AllowNull()] $Data,
+    [int] $Depth = 0
+  )
+
+  if ($null -eq $Data) { return $null }
+  if ($Depth -gt 6) { return '[MaxDepth]' }
+
+  if ($Data -is [hashtable]) {
+    $out = @{}
+    foreach ($k in $Data.Keys) {
+      $key = [string]$k
+      $v = $Data[$k]
+      if ($key -match '(?i)secret|token|authorization|code_verifier|verifier|authcode|code|access_token|refresh_token') {
+        $out[$key] = ConvertTo-GcAppLogSafeString -Value $v
+      } else {
+        $out[$key] = ConvertTo-GcAppLogSafeData -Data $v -Depth ($Depth + 1)
+      }
+    }
+    return $out
+  }
+
+  if ($Data -is [System.Collections.IEnumerable] -and -not ($Data -is [string])) {
+    $arr = @()
+    foreach ($item in $Data) {
+      $arr += (ConvertTo-GcAppLogSafeData -Data $item -Depth ($Depth + 1))
+    }
+    return $arr
+  }
+
+  return $Data
+}
+
+function Write-GcAppLog {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string] $Message,
+    [ValidateSet('TRACE','DEBUG','INFO','WARN','ERROR','DIAG','JOB','UI','HTTP','AUTH')]
+    [string] $Level = 'INFO',
+    [string] $Category,
+    [hashtable] $Data
+  )
+
+  $ts = (Get-Date).ToString('o')
+  $cat = if ($Category) { $Category } else { 'app' }
+  $line = "[{0}] [{1}] [{2}] {3}" -f $ts, $Level.ToUpperInvariant(), $cat, $Message
+
+  if ($Data) {
+    try {
+      $safe = ConvertTo-GcAppLogSafeData -Data $Data
+      $json = ($safe | ConvertTo-Json -Depth 12 -Compress)
+      $line += " | data=$json"
+    } catch {
+      $line += " | data=<unserializable>"
+    }
+  }
+
+  try {
+    $path = $null
+    try { $path = [Environment]::GetEnvironmentVariable($script:GcAppLogEnvVar) } catch { $path = $null }
+    if ($path) { Add-Content -LiteralPath $path -Value $line -Encoding utf8 }
+  } catch { }
+}
+
 # When this script is executed (not dot-sourced), WPF event handlers run in global scope.
 # Publish key state/paths to global so handlers can resolve them reliably.
 $global:repoRoot = $repoRoot
@@ -200,6 +288,15 @@ function Write-GcTrace {
     if ($path) { Add-Content -LiteralPath $path -Value $line -Encoding utf8 }
   } catch { }
 }
+
+try {
+  Write-GcAppLog -Level 'INFO' -Category 'startup' -Message 'Toolkit started' -Data @{
+    ScriptPath   = $PSCommandPath
+    ArtifactsDir = $script:ArtifactsDir
+    TraceLog     = $script:GcTraceLogPath
+    AppLog       = $script:GcAppLogPath
+  }
+} catch { }
 
 ### BEGIN: Compatibility Helpers (Convert-XamlToControl / Get-NamedElements)
 # Some older prompts and modules refer to these helper names. Provide them as thin wrappers.
@@ -655,6 +752,7 @@ function Sync-AppStateFromUi {
       if ($normalized) {
         $script:AppState.Region = $normalized
         Write-GcTrace -Level 'INFO' -Message "AppState.Region updated: $normalized"
+        try { Write-GcAppLog -Level 'INFO' -Category 'state' -Message 'AppState.Region updated' -Data @{ Region = $normalized } } catch { }
       }
     }
   }
@@ -667,6 +765,7 @@ function Sync-AppStateFromUi {
       if ($normalized) {
         $script:AppState.AccessToken = $normalized
         Write-GcTrace -Level 'INFO' -Message "AppState.AccessToken updated (length: $($normalized.Length))"
+        try { Write-GcAppLog -Level 'INFO' -Category 'state' -Message 'AppState.AccessToken updated' -Data @{ TokenLength = $normalized.Length } } catch { }
       }
     }
   }
@@ -958,6 +1057,7 @@ function Start-AppJob {
   $script:AppState.Jobs.Add($job) | Out-Null
   Add-GcJobLog -Job $job -Message "Queued."
   Write-GcTrace -Level 'JOB' -Message ("Queued job: Name='{0}' Type='{1}'" -f $Name, $Type)
+  try { Write-GcAppLog -Level 'JOB' -Category 'job' -Message 'Queued job' -Data @{ Name = $Name; Type = $Type } } catch { }
 
   # Start the job in a fresh runspace that needs:
   # - core modules imported (Invoke-GcRequest, Invoke-GcPagedRequest, Export-GcConversationPacket, etc.)
@@ -1019,13 +1119,33 @@ function Start-AppJob {
     & $sb @userArgs
   }
 
+  $onComplete = $null
+  if ($OnCompleted) {
+    $userOnCompleted = $OnCompleted
+    $onComplete = {
+      param($job)
+      try {
+        $resultKeys = @()
+        try { if ($job -and $job.Result) { $resultKeys = @($job.Result.PSObject.Properties.Name) } } catch { $resultKeys = @() }
+        Write-GcAppLog -Level 'JOB' -Category 'job' -Message 'Job completed' -Data @{
+          Name      = (try { [string]$job.Name } catch { '' })
+          Type      = (try { [string]$job.Type } catch { '' })
+          Status    = (try { [string]$job.Status } catch { '' })
+          ErrorCount = (try { @($job.Errors).Count } catch { 0 })
+          ResultKeys = $resultKeys
+        }
+      } catch { }
+      & $userOnCompleted $job
+    }.GetNewClosure()
+  }
+
   Start-GcJob -Job $job -ScriptBlock $wrappedScriptBlock -ArgumentList @(
     $coreRootForJob,
     $appStateSnapshot,
     $artifactsDirSnapshot,
     $userScriptText,
     $userArgs
-  ) -OnComplete $OnCompleted
+  ) -OnComplete $onComplete
 
   return $job
 }
@@ -1964,6 +2084,7 @@ function Write-GcDiag {
   if ($script:GcConsoleDiagnosticsEnabled) {
     Write-Host $line
   }
+  try { Write-GcAppLog -Level 'DIAG' -Category 'diag' -Message $Message } catch { }
   Write-GcTrace -Level 'DIAG' -Message $Message
 }
 
@@ -2730,6 +2851,7 @@ function Invoke-GcLogoutUi {
   $script:AppState.TokenStatus = "No token"
   try { $script:AppState.Org = '' } catch { }
 
+  try { Write-GcAppLog -Level 'AUTH' -Category 'auth' -Message 'Logout' } catch { }
   try { Set-TopContext } catch { }
   try { Set-Status "Logged out." } catch { }
 }
@@ -2780,6 +2902,14 @@ function Start-GcOAuthLoginUi {
   } catch { }
 
   try { Set-Status "Starting OAuth flow..." } catch { }
+  try {
+    Write-GcAppLog -Level 'AUTH' -Category 'auth' -Message 'OAuth login started' -Data @{
+      Region      = $authConfig.Region
+      RedirectUri = $authConfig.RedirectUri
+      ScopesCount = @($authConfig.Scopes).Count
+      ClientId    = ConvertTo-GcAppLogSafeString -Value $authConfig.ClientId
+    }
+  } catch { }
 
   $authModulePath = Join-Path -Path $coreRoot -ChildPath 'Auth.psm1'
   $authConfigSnapshot = Get-GcAuthConfig
@@ -2857,6 +2987,14 @@ function Start-GcOAuthLoginUi {
 
         Set-TopContext
         Set-Status "Authentication successful!"
+        try {
+          Write-GcAppLog -Level 'AUTH' -Category 'auth' -Message 'OAuth login succeeded' -Data @{
+            Region      = $script:AppState.Region
+            TokenLength = (try { [int]$script:AppState.AccessToken.Length } catch { 0 })
+            User        = (try { [string]$job.Result.UserInfo.name } catch { $null })
+            AuthLogPath = (try { [string]$job.Result.AuthLogPath } catch { $null })
+          }
+        } catch { }
         if ($OnSuccess) { & $OnSuccess $job.Result }
       } else {
         $err = $null
@@ -2866,6 +3004,12 @@ function Start-GcOAuthLoginUi {
         $script:AppState.TokenStatus = "No token"
         Set-TopContext
         Set-Status "Authentication failed. Check job logs for details."
+        try {
+          Write-GcAppLog -Level 'AUTH' -Category 'auth' -Message 'OAuth login failed' -Data @{
+            Error      = $err
+            AuthLogPath = (try { [string]$job.Result.AuthLogPath } catch { $null })
+          }
+        } catch { }
         if ($OnFailure) { & $OnFailure $job.Result }
       }
     } finally {
@@ -2907,6 +3051,14 @@ function Start-GcClientCredentialsTokenUi {
   } catch { }
 
   try { Set-Status "Requesting client credentials token..." } catch { }
+  try {
+    Write-GcAppLog -Level 'AUTH' -Category 'auth' -Message 'Client credentials token request started' -Data @{
+      Region          = $regionNorm
+      ClientId        = ConvertTo-GcAppLogSafeString -Value $clientIdTrim
+      ScopesCount     = if ($Scopes) { @($Scopes).Count } else { 0 }
+      HasClientSecret = $true
+    }
+  } catch { }
 
   $authModulePath = Join-Path -Path $coreRoot -ChildPath 'Auth.psm1'
   $scopesSnapshot = @()
@@ -2949,6 +3101,12 @@ function Start-GcClientCredentialsTokenUi {
         $script:AppState.TokenStatus = "Token set (client credentials)"
         Set-TopContext
         Set-Status "Client credentials token acquired."
+        try {
+          Write-GcAppLog -Level 'AUTH' -Category 'auth' -Message 'Client credentials token acquired' -Data @{
+            Region      = $script:AppState.Region
+            TokenLength = (try { [int]$script:AppState.AccessToken.Length } catch { 0 })
+          }
+        } catch { }
         if ($OnSuccess) { & $OnSuccess $job.Result }
       } else {
         $err = if ($job.Result) { $job.Result.Error } else { "Unknown error" }
@@ -2956,6 +3114,12 @@ function Start-GcClientCredentialsTokenUi {
         $script:AppState.TokenStatus = "No token"
         Set-TopContext
         Set-Status "Client credentials token failed."
+        try {
+          Write-GcAppLog -Level 'AUTH' -Category 'auth' -Message 'Client credentials token failed' -Data @{
+            Error = $err
+            Region = $regionNorm
+          }
+        } catch { }
         if ($OnFailure) { & $OnFailure $job.Result }
         try {
           [System.Windows.MessageBox]::Show(
@@ -3274,6 +3438,13 @@ function Show-AuthenticationDialog {
       $script:AppState.TokenStatus = "Token set (manual)"
       $script:AppState.Auth = "Manual token"
       Set-TopContext
+      try {
+        Write-GcAppLog -Level 'AUTH' -Category 'auth' -Message 'Manual token set (auth dialog)' -Data @{
+          Region      = $script:AppState.Region
+          TokenLength = (try { [int]$script:AppState.AccessToken.Length } catch { 0 })
+          Remember    = (try { [bool]$chkTokenRemember.IsChecked } catch { $false })
+        }
+      } catch { }
 
       $remember = $false
       try { $remember = [bool]$chkTokenRemember.IsChecked } catch { $remember = $false }
@@ -10184,6 +10355,19 @@ $traceLogMenuItem.Add_Click({
   } catch { }
 })
 $authContextMenu.Items.Add($traceLogMenuItem) | Out-Null
+
+$appLogMenuItem = New-Object System.Windows.Controls.MenuItem
+$appLogMenuItem.Header = "Open App Log"
+$appLogMenuItem.Add_Click({
+  try {
+    if ($script:GcAppLogPath -and (Test-Path -LiteralPath $script:GcAppLogPath)) {
+      Start-Process -FilePath $script:GcAppLogPath | Out-Null
+    } else {
+      Start-Process -FilePath $script:ArtifactsDir | Out-Null
+    }
+  } catch { }
+})
+$authContextMenu.Items.Add($appLogMenuItem) | Out-Null
 
 $BtnAuth.ContextMenu = $authContextMenu
 ### END: Manual Token Entry

@@ -89,6 +89,93 @@ function Write-GcToolkitTrace {
   try { Write-Verbose $line } catch { }
 }
 
+function Get-GcToolkitAppLogPath {
+  [CmdletBinding()]
+  param()
+  try {
+    $p = [Environment]::GetEnvironmentVariable('GC_TOOLKIT_APP_LOG')
+    if (-not [string]::IsNullOrWhiteSpace($p)) { return $p }
+  } catch { }
+  return $null
+}
+
+function ConvertTo-GcToolkitAppLogSafeString {
+  [CmdletBinding()]
+  param(
+    [AllowNull()] $Value,
+    [int] $KeepStart = 8,
+    [int] $KeepEnd = 4
+  )
+
+  if ($null -eq $Value) { return $null }
+  $s = [string]$Value
+  if ([string]::IsNullOrWhiteSpace($s)) { return '<empty>' }
+  if ($s.Length -le ($KeepStart + $KeepEnd + 3)) { return ("<{0} chars>" -f $s.Length) }
+  return ("{0}…{1} (<{2} chars>)" -f $s.Substring(0, $KeepStart), $s.Substring($s.Length - $KeepEnd), $s.Length)
+}
+
+function ConvertTo-GcToolkitAppLogSafeData {
+  [CmdletBinding()]
+  param(
+    [AllowNull()] $Data,
+    [int] $Depth = 0
+  )
+
+  if ($null -eq $Data) { return $null }
+  if ($Depth -gt 6) { return '[MaxDepth]' }
+
+  if ($Data -is [hashtable]) {
+    $out = @{}
+    foreach ($k in $Data.Keys) {
+      $key = [string]$k
+      $v = $Data[$k]
+      if ($key -match '(?i)secret|token|authorization|code_verifier|verifier|authcode|code|access_token|refresh_token') {
+        $out[$key] = ConvertTo-GcToolkitAppLogSafeString -Value $v
+      } else {
+        $out[$key] = ConvertTo-GcToolkitAppLogSafeData -Data $v -Depth ($Depth + 1)
+      }
+    }
+    return $out
+  }
+
+  if ($Data -is [System.Collections.IEnumerable] -and -not ($Data -is [string])) {
+    $arr = @()
+    foreach ($item in $Data) {
+      $arr += (ConvertTo-GcToolkitAppLogSafeData -Data $item -Depth ($Depth + 1))
+    }
+    return $arr
+  }
+
+  return $Data
+}
+
+function Write-GcToolkitAppLog {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Message,
+    [ValidateSet('TRACE','DEBUG','INFO','WARN','ERROR','HTTP')]
+    [string]$Level = 'INFO',
+    [string]$Category = 'http',
+    [hashtable]$Data
+  )
+
+  $path = Get-GcToolkitAppLogPath
+  if (-not $path) { return }
+
+  $ts = (Get-Date).ToString('o')
+  $line = "[{0}] [{1}] [{2}] {3}" -f $ts, $Level.ToUpperInvariant(), $Category, $Message
+  if ($Data) {
+    try {
+      $safe = ConvertTo-GcToolkitAppLogSafeData -Data $Data
+      $json = ($safe | ConvertTo-Json -Depth 12 -Compress)
+      $line += " | data=$json"
+    } catch {
+      $line += " | data=<unserializable>"
+    }
+  }
+  try { Add-Content -LiteralPath $path -Value $line -Encoding UTF8 } catch { }
+}
+
 function Set-GcAppState {
   <#
   .SYNOPSIS
@@ -339,10 +426,16 @@ function Invoke-GcRequest {
   $resolvedPath = Resolve-GcEndpoint -Path $Path -PathParams $PathParams
   $qs  = ConvertTo-GcQueryString -Query $Query
   $uri = Join-GcUri -BaseUri $BaseUri -RelativePath $resolvedPath -QueryString $qs
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
   # Offline demo: serve responses from local sample data (no network).
   if (Test-GcOfflineDemoEnabled) {
     Write-GcToolkitTrace -Level INFO -Message ("OFFLINE {0} {1}" -f $Method, $uri)
+    Write-GcToolkitAppLog -Level 'HTTP' -Category 'http' -Message 'OFFLINE request' -Data @{
+      Method      = $Method
+      Uri         = $uri
+      InstanceName = $InstanceName
+    }
     if (Test-GcToolkitTraceBodyEnabled -and $Method -in @('POST','PUT','PATCH') -and $null -ne $Body) {
       Write-GcToolkitTrace -Level DEBUG -Message ("OFFLINE body: {0}" -f (ConvertTo-GcTraceSnippet -Value $Body))
     }
@@ -378,6 +471,15 @@ function Invoke-GcRequest {
 
   Write-Verbose ("GC {0} {1}" -f $Method, $uri)
   Write-GcToolkitTrace -Level INFO -Message ("HTTP {0} {1}" -f $Method, $uri)
+  Write-GcToolkitAppLog -Level 'HTTP' -Category 'http' -Message 'Request' -Data @{
+    Method       = $Method
+    Uri          = $uri
+    InstanceName = $InstanceName
+    Path         = $resolvedPath
+    QueryKeys    = if ($Query) { @($Query.Keys) } else { @() }
+    HasBody      = [bool]($Method -in @('POST','PUT','PATCH') -and $null -ne $Body)
+    TokenLength  = if ($AccessToken) { $AccessToken.Length } else { 0 }
+  }
 
   $irmParams = @{
     Uri     = $uri
@@ -403,17 +505,48 @@ function Invoke-GcRequest {
     try {
       $result = Invoke-RestMethod @irmParams
       Write-GcToolkitTrace -Level INFO -Message ("HTTP OK {0} {1}" -f $Method, $uri)
+      try {
+        $sw.Stop()
+        Write-GcToolkitAppLog -Level 'HTTP' -Category 'http' -Message 'Response OK' -Data @{
+          Method     = $Method
+          Uri        = $uri
+          ElapsedMs  = $sw.ElapsedMilliseconds
+        }
+      } catch { }
       return $result
     } catch {
       $attempt++
 
       if ($attempt -gt $RetryCount) {
         Write-GcToolkitTrace -Level ERROR -Message ("HTTP FAIL {0} {1} :: {2}" -f $Method, $uri, $_.Exception.Message)
+        try {
+          $sw.Stop()
+          $statusCode = $null
+          try {
+            if ($_.Exception.Response -is [System.Net.HttpWebResponse]) { $statusCode = [int]$_.Exception.Response.StatusCode }
+            if ($_.Exception.Response -is [System.Net.Http.HttpResponseMessage]) { $statusCode = [int]$_.Exception.Response.StatusCode }
+          } catch { }
+          Write-GcToolkitAppLog -Level 'ERROR' -Category 'http' -Message 'Request failed' -Data @{
+            Method     = $Method
+            Uri        = $uri
+            StatusCode = $statusCode
+            Error      = $_.Exception.Message
+            ElapsedMs  = $sw.ElapsedMilliseconds
+          }
+        } catch { }
         throw
       }
 
       Write-GcToolkitTrace -Level WARN -Message ("HTTP RETRY {0}/{1} {2} :: {3}" -f $attempt, $RetryCount, $uri, $_.Exception.Message)
       Write-Verbose ("Retry {0}/{1} after error: {2}" -f $attempt, $RetryCount, $_.Exception.Message)
+      try {
+        Write-GcToolkitAppLog -Level 'WARN' -Category 'http' -Message 'Retry' -Data @{
+          Attempt    = $attempt
+          RetryCount = $RetryCount
+          Uri        = $uri
+          Error      = $_.Exception.Message
+        }
+      } catch { }
       Start-Sleep -Seconds $RetryDelaySeconds
     }
   }
