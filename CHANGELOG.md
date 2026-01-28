@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 - `docs/REMAINING_WORK.md` - Updated to reflect 100% completion
 - `docs/ROADMAP.md` - Updated with v0.6.0 achievements
-- `docs/AUDIT_SUMMARY.md` - Comprehensive parameter flow audit
+- `docs/Archive/AUDIT_SUMMARY.md` - Comprehensive parameter flow audit (archived)
 
 ### Fixed
 - Jobs.psm1 parameter passing (19 functions now properly pass AccessToken/InstanceName)

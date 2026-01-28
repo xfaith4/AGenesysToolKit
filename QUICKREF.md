@@ -361,17 +361,17 @@ Location: `./artifacts/` (relative to repository root)
 
 ## Quick Links
 
-- **Full Documentation**: [README.md](README.md)
-- **Configuration Guide**: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
-- **Testing Guide**: [TESTING.md](TESTING.md)
-- **Deployment Guide**: [DEPLOYMENT.md](DEPLOYMENT.md)
-- **Developer Guide**: [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Security Policy**: [SECURITY.md](SECURITY.md)
+- **Full Documentation**: [README.md](README.md) - Start here for project overview
+- **Configuration Guide**: [docs/CONFIGURATION.md](docs/CONFIGURATION.md) - OAuth setup
+- **Testing Guide**: [TESTING.md](TESTING.md) - Running tests
+- **Deployment Guide**: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) - Production deployment
+- **Developer Guide**: [CONTRIBUTING.md](CONTRIBUTING.md) - Contributing to the project
+- **Security Policy**: [SECURITY.md](SECURITY.md) - Security practices and reporting
 
-## Getting Help
+## Need Help?
 
-- **Documentation**: Check `/docs` directory
-- **Issues**: Open an issue on GitHub
+- **Documentation**: Check `/docs` directory for detailed guides
+- **Issues**: [Open an issue on GitHub](https://github.com/xfaith4/AGenesysToolKit/issues)
 - **Questions**: Issue with `question` label
 - **Security**: See [SECURITY.md](SECURITY.md) for responsible disclosure
 
