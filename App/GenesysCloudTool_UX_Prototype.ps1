@@ -4022,7 +4022,7 @@ function New-OperationalEventLogsView {
     $startTime = $endTime.AddHours(-$hours)
 
     Start-AppJob -Name "Query Operational Events" -Type "Query" -ScriptBlock {
-      param($startTime, $endTime)
+      param($startTime, $endTime, $accessToken, $region)
 
       # Build query body for audit logs
       $queryBody = @{
@@ -4035,14 +4035,14 @@ function New-OperationalEventLogsView {
       $maxItems = 500  # Limit to prevent excessive API calls
       try {
         $results = Invoke-GcPagedRequest -Path '/api/v2/audits/query' -Method POST -Body $queryBody `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
+          -InstanceName $region -AccessToken $accessToken -MaxItems $maxItems
 
         return $results
       } catch {
         Write-Error "Failed to query operational events: $_"
         return @()
       }
-    } -ArgumentList @($startTime, $endTime) -OnCompleted ({
+    } -ArgumentList @($startTime, $endTime, $script:AppState.AccessToken, $script:AppState.Region) -OnCompleted ({
       param($job)
 
       Set-ControlEnabled -Control $h.BtnOpQuery -Enabled $true
@@ -4297,7 +4297,7 @@ function New-AuditLogsView {
     $startTime = $endTime.AddHours(-$hours)
 
     Start-AppJob -Name "Query Audit Logs" -Type "Query" -ScriptBlock {
-      param($startTime, $endTime)
+      param($startTime, $endTime, $accessToken, $region)
 
       # Build query body for audit logs
       $queryBody = @{
@@ -4310,14 +4310,14 @@ function New-AuditLogsView {
       $maxItems = 500  # Limit to prevent excessive API calls
       try {
         $results = Invoke-GcPagedRequest -Path '/api/v2/audits/query' -Method POST -Body $queryBody `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
+          -InstanceName $region -AccessToken $accessToken -MaxItems $maxItems
 
         return $results
       } catch {
         Write-Error "Failed to query audit logs: $_"
         return @()
       }
-    } -ArgumentList @($startTime, $endTime) -OnCompleted ({
+    } -ArgumentList @($startTime, $endTime, $script:AppState.AccessToken, $script:AppState.Region) -OnCompleted ({
       param($job)
 
       Set-ControlEnabled -Control $h.BtnAuditQuery -Enabled $true
@@ -4551,18 +4551,19 @@ function New-OAuthTokenUsageView {
     Set-ControlEnabled -Control $h.BtnTokenExportCsv -Enabled $false
 
     Start-AppJob -Name "Query OAuth Clients" -Type "Query" -ScriptBlock {
+      param($accessToken, $region)
       # Use Invoke-GcPagedRequest to query OAuth clients
       $maxItems = 500  # Limit to prevent excessive API calls
       try {
         $results = Invoke-GcPagedRequest -Path '/api/v2/oauth/clients' -Method GET `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
+          -InstanceName $region -AccessToken $accessToken -MaxItems $maxItems
 
         return $results
       } catch {
         Write-Error "Failed to query OAuth clients: $_"
         return @()
       }
-    } -OnCompleted ({
+    } -ArgumentList @($script:AppState.AccessToken, $script:AppState.Region) -OnCompleted ({
       param($job)
 
       Set-ControlEnabled -Control $h.BtnTokenQuery -Enabled $true
@@ -6744,18 +6745,19 @@ function New-FlowsView {
     Set-Status "Loading flows..."
 
     Start-AppJob -Name "Load Flows" -Type "Query" -ScriptBlock {
+      param($accessToken, $region)
       # Query flows using Genesys Cloud API
       $maxItems = 500  # Limit to prevent excessive API calls
       try {
         $results = Invoke-GcPagedRequest -Path '/api/v2/flows' -Method GET `
-          -InstanceName $script:AppState.Region -AccessToken $script:AppState.AccessToken -MaxItems $maxItems
+          -InstanceName $region -AccessToken $accessToken -MaxItems $maxItems
 
         return $results
       } catch {
         Write-Error "Failed to load flows: $_"
         return @()
       }
-    } -OnCompleted {
+    } -ArgumentList @($script:AppState.AccessToken, $script:AppState.Region) -OnCompleted {
       param($job)
 
 
