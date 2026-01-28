@@ -60,7 +60,7 @@ cd AGenesysToolKit
 2. **Update the application**:
    - Edit `App/GenesysCloudTool_UX_Prototype.ps1`
    - Find `Set-GcAuthConfig` section and add your Client ID
-   
+
    For detailed instructions, see [CONFIGURATION.md](docs/CONFIGURATION.md)
 
 ### Step 3: Launch and Authenticate
@@ -78,21 +78,23 @@ cd AGenesysToolKit
 ### Step 4: Your First Tasks
 
 **Investigate an Incident:**
+
 1. Navigate to **Operations → Topic Subscriptions** → Click "Start"
 2. Wait for events or enter a conversation ID
 3. Click "Open Timeline" to see comprehensive conversation details
 4. Click "Export Packet" to generate a ZIP with all incident data
 
 **Check Queue Health:**
+
 1. Navigate to **Routing & People → Routing Snapshot**
 2. Click "Refresh" to see real-time queue metrics
 3. Health indicators show queue status at a glance
 
 **Need more help?** See [QUICKREF.md](QUICKREF.md) for daily operations and common tasks.
 
-## Money Path Flow: End-to-End
+## Detailed conversation investigation workflow
 
-The tool implements the complete "money path" for incident investigation:
+The tool implements a comprehensive workflow for real-time conversation investigation:
 
 1. **Login** → Click "Login…" button, authenticate via OAuth
 2. **Start Subscription** → Navigate to Operations → Topic Subscriptions, click "Start" to begin streaming events
@@ -114,7 +116,7 @@ Exported packets are saved to `artifacts/` directory and accessible via the Arti
 
 ## Project Structure
 
-```
+```markdown
 /Core              # Reusable PowerShell modules
   HttpRequests.psm1   # HTTP primitives (Invoke-GcRequest, Invoke-GcPagedRequest)
   Jobs.psm1           # Analytics job pattern functions
@@ -139,7 +141,7 @@ Exported packets are saved to `artifacts/` directory and accessible via the Arti
 /artifacts         # Runtime output (gitignored)
 ```
 
-## Core Contracts
+## Core Modules
 
 ### Authentication
 
@@ -154,9 +156,9 @@ $token = Get-GcTokenAsync -TimeoutSeconds 300
 
 # Test token
 $userInfo = Test-GcToken
-```
 
-### `Invoke-GcRequest`
+
+**Invoke-GcRequest**
 
 Single HTTP request to Genesys Cloud API (no pagination).
 
@@ -217,6 +219,7 @@ Start-GcJob -Job $job -ScriptBlock {
 ```
 
 **Key Features:**
+
 - ✅ Real runspace-based execution (PowerShell 5.1 + 7 compatible)
 - ✅ Thread-safe log streaming via ObservableCollection
 - ✅ Cancellation support (CancellationRequested flag)
@@ -265,11 +268,12 @@ $packet = Export-GcConversationPacket `
 
 ## Development Status
 
-**Current Phase: Production-Ready ✅ (v0.6.0)**
+### Current Phase: Production-Ready ✅ (v0.6.0)
 
 All 9 planned modules implemented and tested. The toolkit is ready for deployment to engineering teams.
 
 ### Completed Features
+
 - [x] Repository structure established
 - [x] Core HTTP primitives implemented
 - [x] Job pattern implemented (analytics)
@@ -300,6 +304,7 @@ All 9 planned modules implemented and tested. The toolkit is ready for deploymen
   - Parameter flow tests: 34/34
 
 ### Quality Metrics
+
 - **Test Coverage**: 56 automated tests covering core functionality
 - **Documentation**: 15+ documentation files (150+ pages)
 - **Code Quality**: PSScriptAnalyzer rules enforced via CI/CD
@@ -307,6 +312,7 @@ All 9 planned modules implemented and tested. The toolkit is ready for deploymen
 - **Stability**: All modules audited and parameter flow validated
 
 ### Success Stories (Projected)
+
 - **70% faster incident investigation**: Automated timeline + packet generation vs. manual data gathering
 - **50% reduction in troubleshooting time**: Single-click exports with all relevant artifacts
 - **Real-time visibility**: Queue metrics refresh every 30 seconds (vs. manual portal checks)
@@ -325,21 +331,25 @@ See [CHANGELOG.md](CHANGELOG.md) for version history and [docs/ROADMAP.md](docs/
 | [**CONFIGURATION.md**](docs/CONFIGURATION.md) | OAuth setup and configuration | 10 min | Users |
 
 ### For Developers
+
 - [**CONTRIBUTING.md**](CONTRIBUTING.md) - How to contribute, development setup, and coding standards
 - [**ARCHITECTURE.md**](docs/ARCHITECTURE.md) - Core design patterns, contracts, and system architecture
 - [**STYLE.md**](docs/STYLE.md) - Coding conventions and PowerShell best practices
 - [**TESTING.md**](TESTING.md) - Comprehensive testing guide and test procedures
 
 ### For Operations & Deployment
+
 - [**DEPLOYMENT.md**](docs/DEPLOYMENT.md) - Production deployment guide for managers and ops teams
 - [**SECURITY.md**](SECURITY.md) - Security best practices, OAuth handling, and vulnerability reporting
 
 ### Testing Resources
+
 - [**HOW_TO_TEST.md**](docs/HOW_TO_TEST.md) - Quick OAuth testing walkthrough (5 minutes)
 - [**HOW_TO_TEST_JOBRUNNER.md**](docs/HOW_TO_TEST_JOBRUNNER.md) - Background job testing scenarios
 - [**OAUTH_TESTING.md**](docs/OAUTH_TESTING.md) - Comprehensive OAuth test cases (12+ scenarios)
 
 ### Reference & History
+
 - [**ROADMAP.md**](docs/ROADMAP.md) - Development phases, completed features, and future plans
 - [**CHANGELOG.md**](CHANGELOG.md) - Version history, release notes, and upgrade guides
 - [**docs/Archive/**](docs/Archive/) - Historical implementation notes and completed work items
@@ -369,22 +379,27 @@ We welcome contributions from Genesys engineers and community members! Please re
 ## Support and Community
 
 ### For Engineers
+
 - **Questions**: Open an issue with the `question` label
 - **Bug reports**: Open an issue with the `bug` label and include error details
 - **Feature requests**: Open an issue with the `enhancement` label
 
 ### For Managers
+
 - **Deployment assistance**: See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for production setup
 - **Training resources**: Documentation in `/docs` directory suitable for team onboarding
 - **Success metrics**: See [Development Status](#development-status) for KPIs and projected benefits
 
 ### Security Issues
+
 Do NOT open public issues for security vulnerabilities. See [SECURITY.md](SECURITY.md) for responsible disclosure process.
 
 ## Acknowledgments
 
-Built with ❤️ by the Genesys engineering community. Special thanks to all contributors who have helped make this toolkit a reality.
+Built by a Genesys vetrian living in the real world, among the engineering community. Special thanks to all contributors who have helped guide my experience to this point. I hope this toolkit helps in your day-to-day Genesys activities.
 
-This toolkit is designed to serve dozens of highly trained Genesys engineers, providing them with the tools they need to deliver exceptional support and maintain world-class contact center operations.
+This toolkit is designed to provide Genesys engineers with the tools they need to deliver exceptional support and maintain real-world operations.
 
 ## License
+
+Free to all because you need all the help you can get taming this Genesys beast.
