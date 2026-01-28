@@ -25,19 +25,22 @@ Thank you for your interest in contributing to AGenesysToolKit! This document pr
 ### First-Time Setup
 
 1. **Fork and Clone**
+
    ```powershell
    # Fork the repository on GitHub first, then clone your fork
-   git clone https://github.com/YOUR-USERNAME/AGenesysToolKit.git
+   git clone https://github.com/xfaith4/AGenesysToolKit.git
    cd AGenesysToolKit
-   
+
    # Add upstream remote for syncing with main repository
    git remote add upstream https://github.com/xfaith4/AGenesysToolKit.git
    ```
 
 2. **Run Smoke Tests**
+
    ```powershell
    ./tests/smoke.ps1
    ```
+
    All tests should pass (10/10).
 
 3. **Configure OAuth Credentials**
@@ -101,6 +104,7 @@ Get-ChildItem ./Core/*.psm1 | ForEach-Object {
 All public functions MUST follow the `Verb-GcNoun` pattern:
 
 ✅ **Good:**
+
 ```powershell
 function Get-GcUser { }
 function Invoke-GcRequest { }
@@ -108,6 +112,7 @@ function Start-GcJob { }
 ```
 
 ❌ **Bad:**
+
 ```powershell
 function Gc-GetUser { }      # Wrong order
 function FetchUser { }       # Missing Gc prefix
@@ -130,12 +135,12 @@ function Get-GcUser {
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
         [string]$UserId,
-        
+
         [string]$AccessToken,
-        
+
         [string]$InstanceName = 'mypurecloud.com'
     )
-    
+
     # Implementation...
 }
 ```
@@ -149,23 +154,23 @@ function Get-GcUser {
     <#
     .SYNOPSIS
         Retrieves a user by ID from Genesys Cloud.
-    
+
     .DESCRIPTION
         Fetches user details including name, email, roles, and department
         using the Genesys Cloud API.
-    
+
     .PARAMETER UserId
         The unique identifier (GUID) of the user.
-    
+
     .PARAMETER AccessToken
         OAuth bearer token for authentication.
-    
+
     .EXAMPLE
         Get-GcUser -UserId 'abc-123-def' -AccessToken $token
-        
+
     .EXAMPLE
         $users | ForEach-Object { Get-GcUser -UserId $_.id -AccessToken $token }
-    
+
     .OUTPUTS
         PSCustomObject representing the user.
     #>
@@ -197,6 +202,7 @@ try {
 ALL HTTP calls MUST go through the core primitives:
 
 ✅ **Good:**
+
 ```powershell
 # Single request
 $user = Invoke-GcRequest -Path '/api/v2/users/me' -Method GET -AccessToken $token
@@ -206,6 +212,7 @@ $allUsers = Invoke-GcPagedRequest -Path '/api/v2/users' -Method GET -AccessToken
 ```
 
 ❌ **Bad:**
+
 ```powershell
 # Don't bypass the core primitives
 $user = Invoke-RestMethod -Uri "https://api.usw2.pure.cloud/api/v2/users/me" -Headers $headers
@@ -274,12 +281,14 @@ if ($ErrorCount -eq 0) {
 ### Before Submitting
 
 1. **Run all tests** and ensure they pass
+
    ```powershell
    ./tests/smoke.ps1
    ./tests/test-jobrunner.ps1
    ```
 
 2. **Lint your code** and fix issues
+
    ```powershell
    Invoke-ScriptAnalyzer -Path ./Core/YourModule.psm1 -Settings ./PSScriptAnalyzerSettings.psd1
    ```
@@ -290,6 +299,7 @@ if ($ErrorCount -eq 0) {
    - Configuration requirements
 
 4. **Test manually** with the UI if you've changed app-facing code:
+
    ```powershell
    ./App/GenesysCloudTool_UX_Prototype_v2_1.ps1
    ```

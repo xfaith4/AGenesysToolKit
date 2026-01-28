@@ -6987,7 +6987,7 @@ function New-DataActionsView {
               <TextBlock Text="Action Detail" FontWeight="SemiBold" Foreground="#FF111827"/>
               <TextBox x:Name="TxtDataActionDetail" Margin="0,10,0,0" AcceptsReturn="True" Height="520"
                        VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11" TextWrapping="NoWrap"
-                       Text="{ } { &quot;hint&quot;: &quot;Select a data action to view the raw payload.&quot; }"/>
+                       Text="{} { &quot;hint&quot;: &quot;Select a data action to view the raw payload.&quot; }"/>
             </StackPanel>
           </Border>
         </Grid>
