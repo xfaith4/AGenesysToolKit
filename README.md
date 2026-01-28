@@ -374,7 +374,7 @@ We welcome contributions from Genesys engineers and community members! Please re
 - **Feature requests**: Open an issue with the `enhancement` label
 
 ### For Managers
-- **Deployment assistance**: See [DEPLOYMENT.md](DEPLOYMENT.md) for production setup
+- **Deployment assistance**: See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for production setup
 - **Training resources**: Documentation in `/docs` directory suitable for team onboarding
 - **Success metrics**: See [Development Status](#development-status) for KPIs and projected benefits
 
