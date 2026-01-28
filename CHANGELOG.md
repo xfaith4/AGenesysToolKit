@@ -15,11 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DEPLOYMENT.md for production deployment guidance
 - CI/CD workflow for automated testing and linting
 - Enhanced .gitignore for comprehensive file exclusion
+- docs/Archive/ folder for historical implementation documentation
+
+### Changed
+- Reorganized documentation for better new user experience
+- Enhanced README.md with clear 4-step Quick Start process
+- Restructured README.md documentation section by audience (Essential, Developers, Operations)
+- Improved QUICKREF.md quick links section
 
 ### Documentation
 - Improved README.md with business value metrics
 - Added cross-references between documentation files
 - Enhanced onboarding documentation for new developers
+- Archived 22 historical implementation summaries and completed roadmaps
+- Created Archive/README.md explaining archived content and retention policy
 
 ## [0.6.0] - 2026-01-13
 
@@ -36,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 - `docs/REMAINING_WORK.md` - Updated to reflect 100% completion
 - `docs/ROADMAP.md` - Updated with v0.6.0 achievements
-- `docs/AUDIT_SUMMARY.md` - Comprehensive parameter flow audit
+- `docs/Archive/AUDIT_SUMMARY.md` - Comprehensive parameter flow audit (archived)
 
 ### Fixed
 - Jobs.psm1 parameter passing (19 functions now properly pass AccessToken/InstanceName)

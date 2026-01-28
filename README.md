@@ -28,7 +28,7 @@ AGenesysToolKit delivers **decision-grade insights** from Genesys Cloud APIs, lo
 - **Complete pagination by default**: Engineers get full datasets unless explicitly capped
 - **Centralized HTTP primitives**: Consistent error handling, retry logic, and rate limiting
 
-## Quick Start
+## 🚀 Quick Start for New Users
 
 ### Prerequisites
 
@@ -36,39 +36,59 @@ AGenesysToolKit delivers **decision-grade insights** from Genesys Cloud APIs, lo
 - Windows (for WPF UI components)
 - Genesys Cloud OAuth client credentials
 
-### Configuration
-
-Before running the application, you need to configure OAuth credentials. See [CONFIGURATION.md](docs/CONFIGURATION.md) for detailed setup instructions.
-
-Quick summary:
-1. Create an OAuth client in Genesys Cloud (Admin → Integrations → OAuth)
-2. Edit `App/GenesysCloudTool_UX_Prototype.ps1` and update the `Set-GcAuthConfig` section with your Client ID
-3. Launch the application
-
-**Testing**: 
-- See [HOW_TO_TEST.md](docs/HOW_TO_TEST.md) for OAuth and general testing instructions.
-- See [HOW_TO_TEST_JOBRUNNER.md](docs/HOW_TO_TEST_JOBRUNNER.md) for JobRunner-specific testing scenarios.
-
-### Running Tests
-
-Verify the installation and core module loading:
+### Step 1: Verify Installation
 
 ```powershell
-# From repository root
+# Clone the repository
+git clone https://github.com/xfaith4/AGenesysToolKit.git
+cd AGenesysToolKit
 
-# Run smoke tests (10 tests - module loading)
+# Run smoke tests to verify all modules load correctly
 ./tests/smoke.ps1
-
-# Run JobRunner tests (12 tests - background job execution)
-./tests/test-jobrunner.ps1
+# Expected: 10/10 tests pass
 ```
 
-### Launching the Application
+### Step 2: Configure OAuth Authentication
+
+1. **Create OAuth client in Genesys Cloud**:
+   - Navigate to Admin → Integrations → OAuth
+   - Click "Add Client"
+   - Grant Type: **Code Authorization** (with PKCE)
+   - Redirect URI: `http://localhost:8080/oauth/callback`
+   - Required scopes: `conversations`, `analytics`, `users`, `routing`
+
+2. **Update the application**:
+   - Edit `App/GenesysCloudTool_UX_Prototype.ps1`
+   - Find `Set-GcAuthConfig` section and add your Client ID
+   
+   For detailed instructions, see [CONFIGURATION.md](docs/CONFIGURATION.md)
+
+### Step 3: Launch and Authenticate
 
 ```powershell
-# From repository root
+# Launch the application
 ./App/GenesysCloudTool_UX_Prototype.ps1
+
+# In the UI:
+# 1. Click "Login..." button
+# 2. Complete OAuth flow in browser
+# 3. Start exploring features!
 ```
+
+### Step 4: Your First Tasks
+
+**Investigate an Incident:**
+1. Navigate to **Operations → Topic Subscriptions** → Click "Start"
+2. Wait for events or enter a conversation ID
+3. Click "Open Timeline" to see comprehensive conversation details
+4. Click "Export Packet" to generate a ZIP with all incident data
+
+**Check Queue Health:**
+1. Navigate to **Routing & People → Routing Snapshot**
+2. Click "Refresh" to see real-time queue metrics
+3. Health indicators show queue status at a glance
+
+**Need more help?** See [QUICKREF.md](QUICKREF.md) for daily operations and common tasks.
 
 ## Money Path Flow: End-to-End
 
@@ -294,29 +314,35 @@ All 9 planned modules implemented and tested. The toolkit is ready for deploymen
 
 See [CHANGELOG.md](CHANGELOG.md) for version history and [docs/ROADMAP.md](docs/ROADMAP.md) for future enhancements.
 
-## Documentation
+## 📚 Documentation
 
-### Getting Started
-- [**README.md**](README.md) - This file - overview and quick start
-- [**CONFIGURATION.md**](docs/CONFIGURATION.md) - Setup guide for OAuth and configuration
-- [**TESTING.md**](TESTING.md) - Comprehensive testing guide
-- [**DEPLOYMENT.md**](DEPLOYMENT.md) - Production deployment guide for managers
+### Essential Reading (Start Here)
 
-### Developer Resources
-- [**CONTRIBUTING.md**](CONTRIBUTING.md) - Developer onboarding and contribution guidelines
-- [**ARCHITECTURE.md**](docs/ARCHITECTURE.md) - Core contracts and design patterns
-- [**STYLE.md**](docs/STYLE.md) - Coding conventions and best practices
-- [**SECURITY.md**](SECURITY.md) - Security best practices and vulnerability reporting
+| Document | Purpose | Time | Audience |
+|----------|---------|------|----------|
+| [**README.md**](README.md) | Project overview, features, quick start | 10 min | Everyone |
+| [**QUICKREF.md**](QUICKREF.md) | Daily operations and common tasks | 5 min | Users |
+| [**CONFIGURATION.md**](docs/CONFIGURATION.md) | OAuth setup and configuration | 10 min | Users |
 
-### Testing Guides
-- [**HOW_TO_TEST.md**](docs/HOW_TO_TEST.md) - Quick OAuth testing (5 minutes)
-- [**HOW_TO_TEST_JOBRUNNER.md**](docs/HOW_TO_TEST_JOBRUNNER.md) - JobRunner scenarios
-- [**OAUTH_TESTING.md**](docs/OAUTH_TESTING.md) - Comprehensive OAuth tests (12+ scenarios)
+### For Developers
+- [**CONTRIBUTING.md**](CONTRIBUTING.md) - How to contribute, development setup, and coding standards
+- [**ARCHITECTURE.md**](docs/ARCHITECTURE.md) - Core design patterns, contracts, and system architecture
+- [**STYLE.md**](docs/STYLE.md) - Coding conventions and PowerShell best practices
+- [**TESTING.md**](TESTING.md) - Comprehensive testing guide and test procedures
 
-### Reference
-- [**ROADMAP.md**](docs/ROADMAP.md) - Development phases and version history
-- [**CHANGELOG.md**](CHANGELOG.md) - Version history and upgrade guide
-- [**AUDIT_SUMMARY.md**](docs/AUDIT_SUMMARY.md) - Security and parameter flow audit
+### For Operations & Deployment
+- [**DEPLOYMENT.md**](docs/DEPLOYMENT.md) - Production deployment guide for managers and ops teams
+- [**SECURITY.md**](SECURITY.md) - Security best practices, OAuth handling, and vulnerability reporting
+
+### Testing Resources
+- [**HOW_TO_TEST.md**](docs/HOW_TO_TEST.md) - Quick OAuth testing walkthrough (5 minutes)
+- [**HOW_TO_TEST_JOBRUNNER.md**](docs/HOW_TO_TEST_JOBRUNNER.md) - Background job testing scenarios
+- [**OAUTH_TESTING.md**](docs/OAUTH_TESTING.md) - Comprehensive OAuth test cases (12+ scenarios)
+
+### Reference & History
+- [**ROADMAP.md**](docs/ROADMAP.md) - Development phases, completed features, and future plans
+- [**CHANGELOG.md**](CHANGELOG.md) - Version history, release notes, and upgrade guides
+- [**docs/Archive/**](docs/Archive/) - Historical implementation notes and completed work items
 
 ## Contributing
 
@@ -348,7 +374,7 @@ We welcome contributions from Genesys engineers and community members! Please re
 - **Feature requests**: Open an issue with the `enhancement` label
 
 ### For Managers
-- **Deployment assistance**: See [DEPLOYMENT.md](DEPLOYMENT.md) for production setup
+- **Deployment assistance**: See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for production setup
 - **Training resources**: Documentation in `/docs` directory suitable for team onboarding
 - **Success metrics**: See [Development Status](#development-status) for KPIs and projected benefits
 
