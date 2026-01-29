@@ -6,6 +6,7 @@ Set-StrictMode -Version Latest
 
 $script:LogPath = $null
 $script:LogToHost = $true
+$script:GcSensitiveLogKeyPattern = '(?i)^(authorization|access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret)$'
 $script:GcApiStats = [ordered]@{
   TotalCalls = 0
   ByMethod   = @{}
@@ -14,20 +15,82 @@ $script:GcApiStats = [ordered]@{
 }
 
 function Set-GcLogPath {
-  [CmdletBinding()]
+  [CmdletBinding(SupportsShouldProcess)]
   param(
     [Parameter(Mandatory)] [string] $Path,
     [Parameter()] [switch] $Append
   )
-  $script:LogPath = $Path
-  $dir = Split-Path -Parent $Path
-  if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
-    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  try {
+    if (-not $PSCmdlet.ShouldProcess($Path, "Initialize logging")) {
+      $script:LogPath = $null
+      return
+    }
+
+    $dir = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
+      New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+    }
+
+    if (-not $Append -and (Test-Path -LiteralPath $Path)) {
+      Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    }
+
+    $script:LogPath = $Path
+    Write-Log -Level INFO -Message "Logging initialized" -Data ([ordered]@{ LogPath = $Path; Append = [bool]$Append })
+  } catch {
+    $script:LogPath = $null
+    throw "Failed to initialize logging at path '$Path': $($_.Exception.Message)"
   }
-  if (-not $Append -and (Test-Path -LiteralPath $Path)) {
-    Remove-Item -LiteralPath $Path -Force
+}
+
+function Protect-GcLogData {
+  [CmdletBinding()]
+  param(
+    [Parameter()] $Data
+  )
+
+  function ProtectValue([object]$Value) {
+    if ($null -eq $Value) { return $null }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+      $out = [ordered]@{}
+      foreach ($k in @($Value.Keys)) {
+        $key = [string]$k
+        if ($key -match $script:GcSensitiveLogKeyPattern) {
+          $out[$key] = '***REDACTED***'
+        } else {
+          $out[$key] = ProtectValue $Value[$k]
+        }
+      }
+      return $out
+    }
+
+    if (($Value -is [System.Collections.IEnumerable]) -and -not ($Value -is [string])) {
+      $list = New-Object System.Collections.Generic.List[object]
+      foreach ($item in $Value) { $list.Add((ProtectValue $item)) }
+      return @($list)
+    }
+
+    if ($Value -is [psobject] -and -not ($Value -is [string])) {
+      $props = $Value.PSObject.Properties
+      if ($props -and $props.Count -gt 0) {
+        $out = [ordered]@{}
+        foreach ($p in $props) {
+          $name = [string]$p.Name
+          if ($name -match $script:GcSensitiveLogKeyPattern) {
+            $out[$name] = '***REDACTED***'
+          } else {
+            $out[$name] = ProtectValue $p.Value
+          }
+        }
+        return $out
+      }
+    }
+
+    return $Value
   }
-  Write-Log -Level INFO -Message "Logging initialized" -Data @{ LogPath = $Path; Append = [bool]$Append }
+
+  return (ProtectValue $Data)
 }
 
 function Write-Log {
@@ -43,7 +106,8 @@ function Write-Log {
 
   if ($null -ne $Data) {
     try {
-      $json = ($Data | ConvertTo-Json -Depth 20 -Compress)
+      $safeData = Protect-GcLogData -Data $Data
+      $json = ($safeData | ConvertTo-Json -Depth 20 -Compress)
       $line = "$line | $json"
     } catch {
       $line = "$line | (Data serialization failed: $($_.Exception.Message))"
@@ -60,7 +124,15 @@ function Write-Log {
   }
 
   if (-not [string]::IsNullOrWhiteSpace($script:LogPath)) {
-    Add-Content -LiteralPath $script:LogPath -Value $line
+    try {
+      Add-Content -LiteralPath $script:LogPath -Value $line -Encoding utf8 -ErrorAction Stop
+    } catch {
+      # Avoid recursive logging failures; fall back to host only.
+      $script:LogPath = $null
+      if ($script:LogToHost) {
+        Write-Host "[{0}] [WARN] Logging to file disabled: {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff'), $_.Exception.Message -ForegroundColor Yellow
+      }
+    }
   }
 }
 
@@ -87,9 +159,16 @@ function Invoke-GcApi {
     [Parameter(Mandatory)] [string] $AccessToken,
     [Parameter(Mandatory)] [string] $PathAndQuery,
     [Parameter()] $Body,
-    [Parameter()] [int] $MaxRetries = 5,
-    [Parameter()] [int] $InitialBackoffMs = 500
+    [Parameter()] [ValidateRange(0,50)] [int] $MaxRetries = 5,
+    [Parameter()] [ValidateRange(0,60000)] [int] $InitialBackoffMs = 500
   )
+
+  # Genesys Cloud requires TLS 1.2+; ensure TLS 1.2 is enabled for Windows PowerShell 5.1.
+  try {
+    if (([Net.ServicePointManager]::SecurityProtocol -band [Net.SecurityProtocolType]::Tls12) -eq 0) {
+      [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    }
+  } catch { $null = $_ }
 
   if ($ApiBaseUri.EndsWith('/')) { $ApiBaseUri = $ApiBaseUri.TrimEnd('/') }
   if (-not $PathAndQuery.StartsWith('/')) { $PathAndQuery = "/$PathAndQuery" }
@@ -144,7 +223,7 @@ function Invoke-GcApi {
         if ($ex.Response -and $ex.Response.Headers -and $ex.Response.Headers['Retry-After']) {
           $retryAfterSec = [int]$ex.Response.Headers['Retry-After']
         }
-      } catch { }
+      } catch { $null = $_ }
 
       $isRetryable = $false
       if ($statusCode -eq 429 -or ($statusCode -ge 500 -and $statusCode -le 599)) { $isRetryable = $true }
@@ -185,7 +264,7 @@ function Get-GcUsersAll {
     [Parameter(Mandatory)] [string] $ApiBaseUri,
     [Parameter(Mandatory)] [string] $AccessToken,
     [Parameter()] [switch] $IncludeInactive,
-    [Parameter()] [int] $PageSize = 200
+    [Parameter()] [int] $PageSize = 500
   )
 
   Write-Log -Level INFO -Message "Fetching users (paged)" -Data @{ IncludeInactive = [bool]$IncludeInactive; PageSize = $PageSize }
@@ -458,7 +537,7 @@ function Find-DuplicateUserExtensionAssignments {
   foreach ($k in $byExt.Keys) {
     if (@($byExt[$k]).Count -gt 1) {
       foreach ($row in $byExt[$k]) {
-        $dups.Add([pscustomobject]@{
+        $dups.Add([pscustomobject][ordered]@{
           ProfileExtension = $k
           UserId = $row.UserId
           UserName = $row.UserName
@@ -470,7 +549,7 @@ function Find-DuplicateUserExtensionAssignments {
   }
 
   Write-Log -Level INFO -Message "Duplicate user extension assignments" -Data @{ DuplicateRows = $dups.Count; DuplicateExtensions = (@($dups | Select-Object -ExpandProperty ProfileExtension -Unique)).Count }
-  return @($dups)
+  return $dups
 }
 
 function Find-DuplicateExtensionRecords {
@@ -484,7 +563,7 @@ function Find-DuplicateExtensionRecords {
     $arr = @($Context.ExtensionsByNumber[$k])
     if ($arr.Count -gt 1) {
       foreach ($e in $arr) {
-        $dups.Add([pscustomobject]@{
+        $dups.Add([pscustomobject][ordered]@{
           ExtensionNumber = $k
           ExtensionId = $e.id
           OwnerType = $e.ownerType
@@ -496,7 +575,7 @@ function Find-DuplicateExtensionRecords {
   }
 
   Write-Log -Level INFO -Message "Duplicate extension records" -Data @{ DuplicateRows = $dups.Count; DuplicateNumbers = (@($dups | Select-Object -ExpandProperty ExtensionNumber -Unique)).Count }
-  return @($dups)
+  return $dups
 }
 
 function Find-ExtensionDiscrepancies {
@@ -529,7 +608,7 @@ function Find-ExtensionDiscrepancies {
     $ownerId   = [string]$e.owner.id
 
     if ($ownerType -ne 'USER') {
-      $rows.Add([pscustomobject]@{
+      $rows.Add([pscustomobject][ordered]@{
         Issue = 'OwnerTypeNotUser'
         ProfileExtension = $n
         UserId = $u.UserId
@@ -543,7 +622,7 @@ function Find-ExtensionDiscrepancies {
     }
 
     if ($ownerId -and $ownerId -ne $u.UserId) {
-      $rows.Add([pscustomobject]@{
+      $rows.Add([pscustomobject][ordered]@{
         Issue = 'OwnerMismatch'
         ProfileExtension = $n
         UserId = $u.UserId
@@ -557,7 +636,7 @@ function Find-ExtensionDiscrepancies {
   }
 
   Write-Log -Level INFO -Message "Extension discrepancies found" -Data @{ Count = $rows.Count }
-  return @($rows)
+  return $rows
 }
 
 function Find-MissingExtensionAssignments {
@@ -582,7 +661,7 @@ function Find-MissingExtensionAssignments {
 
     $hasAny = ($Context.ExtensionsByNumber.ContainsKey($n) -and @($Context.ExtensionsByNumber[$n]).Count -gt 0)
     if (-not $hasAny) {
-      $rows.Add([pscustomobject]@{
+      $rows.Add([pscustomobject][ordered]@{
         Issue = 'NoExtensionRecord'
         ProfileExtension = $n
         UserId = $u.UserId
@@ -594,7 +673,7 @@ function Find-MissingExtensionAssignments {
   }
 
   Write-Log -Level INFO -Message "Missing assignments found (profile ext not in extension list)" -Data @{ Count = $rows.Count }
-  return @($rows)
+  return $rows
 }
 
 #endregion Findings
@@ -612,17 +691,11 @@ function New-ExtensionDryRunReport {
   $disc      = Find-ExtensionDiscrepancies -Context $Context
   $missing   = Find-MissingExtensionAssignments -Context $Context
 
-  $dupUserSet = @{}
-  foreach ($d in $dupsUsers) { $dupUserSet[[string]$d.ProfileExtension] = $true }
-
-  $dupExtSet = @{}
-  foreach ($d in $dupsExts) { $dupExtSet[[string]$d.ExtensionNumber] = $true }
-
   $rows = New-Object System.Collections.Generic.List[object]
 
   # Missing (patch target)
   foreach ($m in $missing) {
-    $rows.Add([pscustomobject]@{
+    $rows.Add([pscustomobject][ordered]@{
       Action = 'PatchUserResyncExtension'
       Category = 'MissingAssignment'
       UserId = $m.UserId
@@ -637,14 +710,18 @@ function New-ExtensionDryRunReport {
 
   # Discrepancies (report-only)
   foreach ($d in $disc) {
-    $rows.Add([pscustomobject]@{
+    $beforeOwner = $d.ExtensionOwnerId
+    if (-not [string]::IsNullOrWhiteSpace([string]$d.ExtensionOwnerId) -and $Context.UserDisplayById.ContainsKey([string]$d.ExtensionOwnerId)) {
+      $beforeOwner = $Context.UserDisplayById[[string]$d.ExtensionOwnerId]
+    }
+    $rows.Add([pscustomobject][ordered]@{
       Action = 'ReportOnly'
       Category = $d.Issue
       UserId = $d.UserId
       User = $Context.UserDisplayById[$d.UserId]
       ProfileExtension = $d.ProfileExtension
       Before_ExtensionRecordFound = $true
-      Before_ExtOwner = if ($d.ExtensionOwnerId) { $Context.UserDisplayById[$d.ExtensionOwnerId] } else { $d.ExtensionOwnerId }
+      Before_ExtOwner = $beforeOwner
       After_Expected = 'N/A (extensions endpoints not reliably writable; fix via user assignment process)'
       Notes = "ExtensionId=$($d.ExtensionId); OwnerType=$($d.ExtensionOwnerType)"
     })
@@ -652,7 +729,7 @@ function New-ExtensionDryRunReport {
 
   # Duplicates summary rows for manual review
   foreach ($d in $dupsUsers) {
-    $rows.Add([pscustomobject]@{
+    $rows.Add([pscustomobject][ordered]@{
       Action = 'ManualReview'
       Category = 'DuplicateUserAssignment'
       UserId = $d.UserId
@@ -666,14 +743,18 @@ function New-ExtensionDryRunReport {
   }
 
   foreach ($d in $dupsExts) {
-    $rows.Add([pscustomobject]@{
+    $beforeOwner = $d.OwnerId
+    if (-not [string]::IsNullOrWhiteSpace([string]$d.OwnerId) -and $Context.UserDisplayById.ContainsKey([string]$d.OwnerId)) {
+      $beforeOwner = $Context.UserDisplayById[[string]$d.OwnerId]
+    }
+    $rows.Add([pscustomobject][ordered]@{
       Action = 'ManualReview'
       Category = 'DuplicateExtensionRecords'
       UserId = $null
       User = $null
       ProfileExtension = $d.ExtensionNumber
       Before_ExtensionRecordFound = $true
-      Before_ExtOwner = if ($d.OwnerId) { $Context.UserDisplayById[$d.OwnerId] } else { $d.OwnerId }
+      Before_ExtOwner = $beforeOwner
       After_Expected = 'Manual decision required'
       Notes = "Multiple extension records exist for number; ExtensionId=$($d.ExtensionId)"
     })
@@ -688,7 +769,16 @@ function New-ExtensionDryRunReport {
   }
 
   [pscustomobject]@{
-    Summary = [pscustomobject]@{
+    Metadata = [pscustomobject][ordered]@{
+      GeneratedAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+      ApiBaseUri = $Context.ApiBaseUri
+      ExtensionMode = $Context.ExtensionMode
+      UsersTotal = @($Context.Users).Count
+      UsersWithProfileExtension = @($Context.UsersWithProfileExtension).Count
+      DistinctProfileExtensions = @($Context.ProfileExtensionNumbers).Count
+      ExtensionsLoaded = @($Context.Extensions).Count
+    }
+    Summary = [pscustomobject][ordered]@{
       TotalRows = $rows.Count
       MissingAssignments = $missing.Count
       Discrepancies = $disc.Count
@@ -726,8 +816,20 @@ function Update-GcUserWithVersionBump {
     $PatchBody['addresses'] = @($u.addresses)
   }
 
-  if ($PSCmdlet.ShouldProcess("User $($UserId)", "PATCH /api/v2/users/$($UserId) with version $($PatchBody.version)")) {
-    return Invoke-GcApi -Method PATCH -ApiBaseUri $ApiBaseUri -AccessToken $AccessToken -PathAndQuery "/api/v2/users/$($UserId)" -Body $PatchBody
+  $path = "/api/v2/users/$($UserId)"
+  $target = "User $($UserId)"
+  $action = "PATCH $path (version=$($PatchBody.version))"
+
+  if ($PSCmdlet.ShouldProcess($target, $action)) {
+    $resp = Invoke-GcApi -Method PATCH -ApiBaseUri $ApiBaseUri -AccessToken $AccessToken -PathAndQuery $path -Body $PatchBody
+    return [pscustomobject][ordered]@{ Status='Patched'; UserId=$UserId; Version=[int]$PatchBody.version; Response=$resp }
+  }
+
+  return [pscustomobject][ordered]@{
+    Status = (if ($WhatIfPreference) { 'WhatIf' } else { 'Declined' })
+    UserId = $UserId
+    Version = [int]$PatchBody.version
+    Response = $null
   }
 }
 
@@ -765,7 +867,7 @@ function Set-UserProfileExtension {
 
   $patch = @{ addresses = $addresses }
 
-  Update-GcUserWithVersionBump -ApiBaseUri $ApiBaseUri -AccessToken $AccessToken -UserId $UserId -PatchBody $patch -WhatIf:$WhatIfPreference
+  return (Update-GcUserWithVersionBump -ApiBaseUri $ApiBaseUri -AccessToken $AccessToken -UserId $UserId -PatchBody $patch -WhatIf:$WhatIfPreference)
 }
 
 function Patch-MissingExtensionAssignments {
@@ -777,7 +879,7 @@ function Patch-MissingExtensionAssignments {
   )
 
   # Important note: direct PUT to extensions is not reliably functional; patch user to reassert extension.
-  # See note about extensions PUT endpoints being nonfunctional/removal in legacy dev forum. :contentReference[oaicite:2]{index=2}
+  # Reference: "Removal: DID and extension PUT endpoints" (Genesys community discussion).
   $missing = Find-MissingExtensionAssignments -Context $Context
   $dupsUsers = Find-DuplicateUserExtensionAssignments -Context $Context
   $dupSet = @{}
@@ -790,12 +892,12 @@ function Patch-MissingExtensionAssignments {
   $done = 0
   foreach ($m in $missing) {
     if ($dupSet.ContainsKey([string]$m.ProfileExtension)) {
-      $skipped.Add([pscustomobject]@{ Reason='DuplicateUserAssignment'; UserId=$m.UserId; User=$Context.UserDisplayById[$m.UserId]; Extension=$m.ProfileExtension })
+      $skipped.Add([pscustomobject][ordered]@{ Reason='DuplicateUserAssignment'; UserId=$m.UserId; User=$Context.UserDisplayById[$m.UserId]; Extension=$m.ProfileExtension })
       continue
     }
 
     if ($MaxUpdates -gt 0 -and $done -ge $MaxUpdates) {
-      $skipped.Add([pscustomobject]@{ Reason='MaxUpdatesReached'; UserId=$m.UserId; User=$Context.UserDisplayById[$m.UserId]; Extension=$m.ProfileExtension })
+      $skipped.Add([pscustomobject][ordered]@{ Reason='MaxUpdatesReached'; UserId=$m.UserId; User=$Context.UserDisplayById[$m.UserId]; Extension=$m.ProfileExtension })
       continue
     }
 
@@ -806,19 +908,30 @@ function Patch-MissingExtensionAssignments {
         Extension = $m.ProfileExtension
       }
 
-      Set-UserProfileExtension -ApiBaseUri $Context.ApiBaseUri -AccessToken $Context.AccessToken -UserId $m.UserId -ExtensionNumber $m.ProfileExtension -WhatIf:$WhatIfPreference
+      $result = Set-UserProfileExtension -ApiBaseUri $Context.ApiBaseUri -AccessToken $Context.AccessToken -UserId $m.UserId -ExtensionNumber $m.ProfileExtension -WhatIf:$WhatIfPreference
 
-      $updated.Add([pscustomobject]@{
-        UserId = $m.UserId
-        User   = $Context.UserDisplayById[$m.UserId]
-        Extension = $m.ProfileExtension
-        Status = if ($WhatIfPreference) { 'WhatIf' } else { 'Patched' }
+      if ($result.Status -eq 'Declined') {
+        $skipped.Add([pscustomobject][ordered]@{
+          Reason    = 'UserDeclined'
+          UserId    = $m.UserId
+          User      = $Context.UserDisplayById[$m.UserId]
+          Extension = $m.ProfileExtension
+        })
+        continue
+      }
+
+      $updated.Add([pscustomobject][ordered]@{
+        UserId          = $m.UserId
+        User            = $Context.UserDisplayById[$m.UserId]
+        Extension       = $m.ProfileExtension
+        Status          = $result.Status
+        PatchedVersion  = $result.Version
       })
 
       $done++
       if ($SleepMsBetween -gt 0) { Start-Sleep -Milliseconds $SleepMsBetween }
     } catch {
-      $failed.Add([pscustomobject]@{
+      $failed.Add([pscustomobject][ordered]@{
         UserId = $m.UserId
         User   = $Context.UserDisplayById[$m.UserId]
         Extension = $m.ProfileExtension
@@ -829,7 +942,7 @@ function Patch-MissingExtensionAssignments {
   }
 
   [pscustomobject]@{
-    Summary = [pscustomobject]@{
+    Summary = [pscustomobject][ordered]@{
       MissingFound = $missing.Count
       Updated = $updated.Count
       Skipped = $skipped.Count
@@ -856,8 +969,13 @@ function Export-ReportCsv {
   if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
   }
-  $Rows | Export-Csv -NoTypeInformation -Path $Path
-  Write-Log -Level INFO -Message "CSV exported" -Data @{ Path = $Path; Rows = @($Rows).Count }
+  try {
+    $Rows | Export-Csv -NoTypeInformation -Path $Path -Encoding utf8 -Force
+    Write-Log -Level INFO -Message "CSV exported" -Data ([ordered]@{ Path = $Path; Rows = @($Rows).Count })
+  } catch {
+    Write-Log -Level ERROR -Message "CSV export failed" -Data ([ordered]@{ Path = $Path; Error = $_.Exception.Message })
+    throw
+  }
 }
 
 #endregion Exports

@@ -10,14 +10,18 @@ Import-Module $modulePath -Force
 
 # ---- Config ----
 $defaultApiBaseUri = 'https://api.usw2.pure.cloud'
-$logPath = Join-Path $PSScriptRoot ("logs\GcExtensionAudit_{0}.log" -f (Get-Date).ToString('yyyyMMdd_HHmmss'))
+$logFolder = Join-Path $PSScriptRoot 'logs'
+$logPath = Join-Path $logFolder ("GcExtensionAudit_{0}.log" -f (Get-Date).ToString('yyyyMMdd_HHmmss'))
 Set-GcLogPath -Path $logPath
 
-function Read-NonEmpty([string]$Prompt) {
-  do {
-    $v = Read-Host $Prompt
-  } while ([string]::IsNullOrWhiteSpace($v))
-  return $v
+function ConvertTo-PlainText {
+  param([Parameter(Mandatory)][Security.SecureString]$SecureString)
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+  try {
+    return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+  } finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+  }
 }
 
 function New-ContextInteractive {
@@ -25,7 +29,11 @@ function New-ContextInteractive {
   if ([string]::IsNullOrWhiteSpace($apiBaseUri)) { $apiBaseUri = $defaultApiBaseUri }
 
   # Token handling: let you paste, or read from env var
-  $token = Read-Host "Access Token (paste) OR press Enter to use `$env:GC_ACCESS_TOKEN"
+  $token = $null
+  $secureToken = Read-Host "Access Token (input hidden) OR press Enter to use `$env:GC_ACCESS_TOKEN" -AsSecureString
+  if ($secureToken) {
+    $token = ConvertTo-PlainText -SecureString $secureToken
+  }
   if ([string]::IsNullOrWhiteSpace($token)) { $token = $env:GC_ACCESS_TOKEN }
   if ([string]::IsNullOrWhiteSpace($token)) { throw "No access token provided. Paste one or set `$env:GC_ACCESS_TOKEN." }
 
@@ -50,13 +58,12 @@ function Show-Menu {
 }
 
 $ctx = $null
-$lastReport = $null
 
 while ($true) {
   Show-Menu
   $choice = Read-Host "Select"
 
-  if ($choice -eq 'q') { break }
+  if ($choice -match '^(q|quit)$') { break }
 
   if (-not $ctx) {
     $ctx = New-ContextInteractive
@@ -72,7 +79,10 @@ while ($true) {
   switch ($choice) {
     '1' {
       $rep = New-ExtensionDryRunReport -Context $ctx
-      $lastReport = $rep
+
+      Write-Host ""
+      Write-Host "Dry Run Metadata:"
+      $rep.Metadata | Format-List
 
       Write-Host ""
       Write-Host "Dry Run Summary:"
@@ -80,9 +90,20 @@ while ($true) {
 
       $outFolder = Join-Path $PSScriptRoot 'out'
       $ts = (Get-Date).ToString('yyyyMMdd_HHmmss')
-      Export-ReportCsv -Rows $rep.Rows -Path (Join-Path $outFolder "DryRunReport_$ts.csv")
+      $rowsPath = Join-Path $outFolder "DryRunReport_$ts.csv"
+      $metaPath = Join-Path $outFolder "DryRunReport_Metadata_$ts.csv"
+      $summaryPath = Join-Path $outFolder "DryRunReport_Summary_$ts.csv"
 
-      Write-Log -Level INFO -Message "Dry run report complete" -Data @{ OutFolder = $outFolder }
+      Export-ReportCsv -Rows $rep.Rows -Path $rowsPath
+      Export-ReportCsv -Rows @($rep.Metadata) -Path $metaPath
+      Export-ReportCsv -Rows @($rep.Summary) -Path $summaryPath
+
+      Write-Log -Level INFO -Message "Dry run report complete" -Data @{ OutFolder = $outFolder; RowsCsv = $rowsPath }
+      Write-Host ""
+      Write-Host "Exported:"
+      Write-Host "  $rowsPath"
+      Write-Host "  $metaPath"
+      Write-Host "  $summaryPath"
     }
 
     '2' {
@@ -93,7 +114,9 @@ while ($true) {
 
       $outFolder = Join-Path $PSScriptRoot 'out'
       $ts = (Get-Date).ToString('yyyyMMdd_HHmmss')
-      Export-ReportCsv -Rows $dups -Path (Join-Path $outFolder "DuplicateUserAssignments_$ts.csv")
+      $path = Join-Path $outFolder "DuplicateUserAssignments_$ts.csv"
+      Export-ReportCsv -Rows $dups -Path $path
+      Write-Host "Exported: $path"
     }
 
     '3' {
@@ -104,7 +127,9 @@ while ($true) {
 
       $outFolder = Join-Path $PSScriptRoot 'out'
       $ts = (Get-Date).ToString('yyyyMMdd_HHmmss')
-      Export-ReportCsv -Rows $disc -Path (Join-Path $outFolder "Discrepancies_$ts.csv")
+      $path = Join-Path $outFolder "Discrepancies_$ts.csv"
+      Export-ReportCsv -Rows $disc -Path $path
+      Write-Host "Exported: $path"
     }
 
     '4' {
@@ -115,7 +140,9 @@ while ($true) {
 
       $outFolder = Join-Path $PSScriptRoot 'out'
       $ts = (Get-Date).ToString('yyyyMMdd_HHmmss')
-      Export-ReportCsv -Rows $missing -Path (Join-Path $outFolder "MissingAssignments_$ts.csv")
+      $path = Join-Path $outFolder "MissingAssignments_$ts.csv"
+      Export-ReportCsv -Rows $missing -Path $path
+      Write-Host "Exported: $path"
     }
 
     '5' {
@@ -141,9 +168,22 @@ while ($true) {
 
       $outFolder = Join-Path $PSScriptRoot 'out'
       $ts = (Get-Date).ToString('yyyyMMdd_HHmmss')
-      Export-ReportCsv -Rows $result.Updated -Path (Join-Path $outFolder "PatchUpdated_$ts.csv")
-      Export-ReportCsv -Rows $result.Skipped -Path (Join-Path $outFolder "PatchSkipped_$ts.csv")
-      Export-ReportCsv -Rows $result.Failed  -Path (Join-Path $outFolder "PatchFailed_$ts.csv")
+      $updatedPath = Join-Path $outFolder "PatchUpdated_$ts.csv"
+      $skippedPath = Join-Path $outFolder "PatchSkipped_$ts.csv"
+      $failedPath  = Join-Path $outFolder "PatchFailed_$ts.csv"
+      $summaryPath = Join-Path $outFolder "PatchSummary_$ts.csv"
+
+      Export-ReportCsv -Rows $result.Updated -Path $updatedPath
+      Export-ReportCsv -Rows $result.Skipped -Path $skippedPath
+      Export-ReportCsv -Rows $result.Failed  -Path $failedPath
+      Export-ReportCsv -Rows @($result.Summary) -Path $summaryPath
+
+      Write-Host ""
+      Write-Host "Exported:"
+      Write-Host "  $updatedPath"
+      Write-Host "  $skippedPath"
+      Write-Host "  $failedPath"
+      Write-Host "  $summaryPath"
 
       Write-Host ""
       Write-Host "Suggested next step: re-run option 4 to confirm missing assignments decreased."
