@@ -51,5 +51,30 @@ This tool is designed for **safe, observable operations**: it produces reviewabl
 .
 ├── GcExtensionAudit.psm1          # PowerShell module (all functions)
 ├── GcExtensionAuditMenu.ps1       # CLI menu runner (options 1–5)
+├── GcExtensionAuditUI.ps1         # Simple WPF UI runner
+├── GcExtensionAuditUI.xaml        # UI layout (XAML)
 ├── out/                           # CSV exports (created at runtime)
 └── logs/                          # Log files (created at runtime)
+```
+
+---
+
+## Quick Start
+
+### GUI (Recommended)
+
+Runs a simple Windows (WPF) front-end for building context, generating reports, exporting CSVs, and running the patch in `-WhatIf` or real mode.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\GcExtensionAuditUI.ps1
+```
+
+Notes:
+- If you prefer, set `$env:GC_ACCESS_TOKEN` and check **Use $env:GC_ACCESS_TOKEN** in the UI.
+- Exports go to `.\out\` and logs go to `.\logs\` (relative to `Addons/ExtensionAudit`).
+
+### CLI Menu
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\GcExtensionAuditMenu.ps1
+```
