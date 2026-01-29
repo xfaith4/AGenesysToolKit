@@ -1,5 +1,22 @@
 ### BEGIN: Build Dry-Run Before/After Report
+<#
+$ApiBaseUri  = 'https://api.usw2.pure.cloud'
+$AccessToken = $script:AccessToken
 
+$plan = New-GcExtensionOwnerDryRunReport `
+  -ApiBaseUri $ApiBaseUri `
+  -AccessToken $AccessToken `
+  -IncludeInactive
+
+$plan.Summary
+$plan.Rows |
+  Sort-Object Action, ProfileExtension, UserName |
+  Export-Csv -NoTypeInformation -Path "G:\Temp\GcExtFix\dryrun_before_after.csv"
+
+  $plan = New-GcExtensionOwnerDryRunReport -ApiBaseUri $ApiBaseUri -AccessToken $AccessToken -IncludeInactive -ResolveOwnerNames
+
+
+#>
 function Get-GcUserById {
   [CmdletBinding()]
   param(
