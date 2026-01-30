@@ -300,6 +300,10 @@ function ConvertFrom-GcJson {
 }
 
 function Invoke-GcApi {
+  # Changed: Add TimeoutSec parameter (default 120)
+  # - Support -TimeoutSec parameter and pass to Invoke-WebRequest
+  # - Ensure -UseBasicParsing is used for PowerShell 5.1 compatibility
+  
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)] [ValidateSet('GET','POST','PUT','PATCH','DELETE')] [string] $Method,
@@ -311,7 +315,8 @@ function Invoke-GcApi {
     [Parameter()] [ValidateRange(0,60000)] [int] $InitialBackoffMs = 500,
     [Parameter()] [ValidateRange(0,5000)] [int] $ThrottleMinRemaining = 2,
     [Parameter()] [ValidateRange(0,600000)] [int] $ThrottleResetBufferMs = 250,
-    [Parameter()] [ValidateRange(0,600000)] [int] $ThrottleMaxSleepMs = 60000
+    [Parameter()] [ValidateRange(0,600000)] [int] $ThrottleMaxSleepMs = 60000,
+    [Parameter()] [ValidateRange(1,600)] [int] $TimeoutSec = 120
   )
 
   # Genesys Cloud requires TLS 1.2+; ensure TLS 1.2 is enabled for Windows PowerShell 5.1.
@@ -352,6 +357,7 @@ function Invoke-GcApi {
         Headers     = $headers
         ErrorAction = 'Stop'
         UseBasicParsing = $true
+        TimeoutSec  = $TimeoutSec
       }
 
       if ($null -ne $Body) {
@@ -607,8 +613,12 @@ function New-GcExtensionAuditContext {
   $usersWithProfileExt = New-Object System.Collections.Generic.List[object]
   $profileExtNumbers = New-Object System.Collections.Generic.List[string]
 
+  Write-Log -Level INFO -Message "Extracting profile extensions from users" -Data @{ UsersTotal = $users.Count }
+  
+  $processedCount = 0
   foreach ($u in $users) {
     if (-not $u -or [string]::IsNullOrWhiteSpace($u.id)) { continue }
+    $processedCount++
     $userById[$u.id] = $u
 
     $disp = if (-not [string]::IsNullOrWhiteSpace($u.email)) { "$($u.name) <$($u.email)>" } else { "$($u.name)" }
@@ -625,6 +635,15 @@ function New-GcExtensionAuditContext {
       })
       $profileExtNumbers.Add([string]$ext)
     }
+    
+    # Log progress every 500 users
+    if (($processedCount % 500) -eq 0) {
+      Write-Log -Level INFO -Message "Profile extraction progress" -Data @{
+        ProcessedUsers = $processedCount
+        TotalUsers = $users.Count
+        UsersWithProfileExtension = $usersWithProfileExt.Count
+      }
+    }
   }
 
   Write-Log -Level INFO -Message "User profile extensions collected" -Data @{
@@ -634,8 +653,35 @@ function New-GcExtensionAuditContext {
   }
 
   # Decide extension fetch strategy with 1 page probe
-  $probe = Get-GcExtensionsPage -ApiBaseUri $ApiBaseUri -AccessToken $AccessToken -PageSize $ExtensionsPageSize -PageNumber 1
-  $pageCount = [int]$probe.pageCount
+  Write-Log -Level INFO -Message "Probing extensions pageCount" -Data @{ ExtensionsPageSize = $ExtensionsPageSize }
+  
+  $probe = $null
+  $pageCount = 0
+  try {
+    $probe = Get-GcExtensionsPage -ApiBaseUri $ApiBaseUri -AccessToken $AccessToken -PageSize $ExtensionsPageSize -PageNumber 1
+    $pageCount = [int]$probe.pageCount
+    
+    Write-Log -Level INFO -Message "Extensions probe successful" -Data @{ PageCount = $pageCount; MaxFullExtensionPages = $MaxFullExtensionPages }
+  } catch {
+    # Check for 401/403 and provide clearer error
+    $statusCode = $null
+    try {
+      if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+        $statusCode = [int]$_.Exception.Response.StatusCode
+      }
+    } catch { $null = $_ }
+    
+    $errMsg = $_.Exception.Message
+    if ($statusCode -eq 401 -or $statusCode -eq 403) {
+      $errMsg = "Token lacks telephony/extensions permissions or is invalid. Status: $statusCode. Original error: $errMsg"
+    }
+    
+    Write-Log -Level ERROR -Message "Extensions probe failed" -Data @{
+      StatusCode = $statusCode
+      Error = $errMsg
+    }
+    throw $errMsg
+  }
 
   $extensions = @()
   $extMode = $null
@@ -643,9 +689,11 @@ function New-GcExtensionAuditContext {
 
   if ($pageCount -le $MaxFullExtensionPages) {
     $extMode = 'FULL'
+    Write-Log -Level INFO -Message "Using FULL extensions mode" -Data @{ PageCount = $pageCount }
     $extensions = Get-GcExtensionsAll -ApiBaseUri $ApiBaseUri -AccessToken $AccessToken -PageSize $ExtensionsPageSize
   } else {
     $extMode = 'TARGETED'
+    Write-Log -Level INFO -Message "Using TARGETED extensions mode" -Data @{ PageCount = $pageCount; TargetNumbers = (@($profileExtNumbers | Select-Object -Unique)).Count }
     $targeted = Get-GcExtensionsByNumbers -ApiBaseUri $ApiBaseUri -AccessToken $AccessToken -Numbers @($profileExtNumbers) -SleepMs 75
     $extensions = @($targeted.Extensions)
     $extCache = $targeted.Cache

@@ -16,6 +16,7 @@ $script:LogTailTimer = $null
 $script:LogTailPath = $null
 $script:LogTailPosition = 0L
 $script:LogTailMaxChars = 200000
+$script:PauseLogTail = $false
 
 $modulePath = Join-Path $PSScriptRoot 'GcExtensionAudit.psm1'
 Import-Module $modulePath -Force
@@ -143,6 +144,12 @@ function Stop-LogTail {
 }
 
 function Update-LogTail {
+  # Changed: Pause support + byte cap per tick + safer trimming
+  # - Return immediately if $script:PauseLogTail is true
+  # - Cap appended text to 8KB per tick
+  # - Trim only when > MaxChars and avoid repeated full string rebuilds
+  
+  if ($script:PauseLogTail) { return }
   if (-not $script:TxtLogLive) { return }
   $path = $script:LogTailPath
   if ([string]::IsNullOrWhiteSpace($path)) { return }
@@ -156,12 +163,18 @@ function Update-LogTail {
       if ($script:LogTailPosition -gt $fs.Length) { $script:LogTailPosition = 0L }
       $null = $fs.Seek($script:LogTailPosition, [System.IO.SeekOrigin]::Begin)
 
-      $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8, $true)
-      try {
-        $text = $sr.ReadToEnd()
-        $script:LogTailPosition = $fs.Position
-      } finally {
-        try { $sr.Dispose() } catch { $null = $_ }
+      # Cap read to 8KB per tick to avoid UI lock
+      $maxBytes = 8192
+      $bytesAvail = $fs.Length - $script:LogTailPosition
+      $bytesToRead = [Math]::Min($bytesAvail, $maxBytes)
+      
+      if ($bytesToRead -gt 0) {
+        $buffer = New-Object byte[] $bytesToRead
+        $bytesRead = $fs.Read($buffer, 0, $bytesToRead)
+        if ($bytesRead -gt 0) {
+          $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $bytesRead)
+          $script:LogTailPosition = $fs.Position
+        }
       }
     } finally {
       try { $fs.Dispose() } catch { $null = $_ }
@@ -174,7 +187,8 @@ function Update-LogTail {
 
   $script:TxtLogLive.AppendText($text)
 
-  if ($script:TxtLogLive.Text.Length -gt $script:LogTailMaxChars) {
+  # Trim only when exceeds MaxChars by a reasonable margin to avoid repeated rebuilds
+  if ($script:TxtLogLive.Text.Length -gt ($script:LogTailMaxChars + 10000)) {
     $script:TxtLogLive.Text = $script:TxtLogLive.Text.Substring($script:TxtLogLive.Text.Length - $script:LogTailMaxChars)
   }
 
@@ -198,7 +212,7 @@ function Start-LogTail {
   } catch { $null = $_ }
 
   $script:LogTailTimer = New-Object System.Windows.Threading.DispatcherTimer
-  $script:LogTailTimer.Interval = [TimeSpan]::FromMilliseconds(350)
+  $script:LogTailTimer.Interval = [TimeSpan]::FromMilliseconds(1000)
   $script:LogTailTimer.Add_Tick({ Update-LogTail })
   $script:LogTailTimer.Start()
 }
@@ -230,6 +244,10 @@ function Update-BusyState {
 }
 
 function Start-UiTask {
+  # Changed: Pause log tail during task execution
+  # - Set $script:PauseLogTail = $true before BeginInvoke
+  # - Resume with $script:PauseLogTail = $false in finally block
+  
   [CmdletBinding(SupportsShouldProcess)]
   param(
     [Parameter(Mandatory)] [string] $Name,
@@ -263,6 +281,10 @@ function Start-UiTask {
   }
 
   [void]$ps.AddScript($runner).AddArgument($Task).AddArgument($Arguments)
+  
+  # Pause log tail before starting async work
+  $script:PauseLogTail = $true
+  
   $handle = $ps.BeginInvoke()
 
   $timer = New-Object System.Windows.Threading.DispatcherTimer
@@ -280,6 +302,8 @@ function Start-UiTask {
       try { $ps.Dispose() } catch { $null = $_ }
       $script:UiBusyCount--
       Update-BusyState -Status 'Ready' -IsBusy:($script:UiBusyCount -gt 0)
+      # Resume log tail after task completes
+      $script:PauseLogTail = $false
     }
   })
   $timer.Start()
