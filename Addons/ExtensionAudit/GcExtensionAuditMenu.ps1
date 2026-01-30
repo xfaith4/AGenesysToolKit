@@ -10,8 +10,7 @@ Import-Module $modulePath -Force
 
 # ---- Config ----
 $defaultApiBaseUri = 'https://api.usw2.pure.cloud'
-$logFolder = Join-Path $PSScriptRoot 'logs'
-$logPath = Join-Path $logFolder ("GcExtensionAudit_{0}.log" -f (Get-Date).ToString('yyyyMMdd_HHmmss'))
+$logPath = New-GcExtensionAuditLogPath -Prefix 'GcExtensionAudit'
 Set-GcLogPath -Path $logPath
 
 function ConvertTo-PlainText {
@@ -68,10 +67,10 @@ while ($true) {
   if (-not $ctx) {
     $ctx = New-ContextInteractive
     Write-Log -Level INFO -Message "Context ready" -Data @{
-      UsersTotal = $ctx.Users.Count
-      UsersWithProfileExt = $ctx.UsersWithProfileExtension.Count
-      DistinctProfileExt = $ctx.ProfileExtensionNumbers.Count
-      ExtensionsLoaded = $ctx.Extensions.Count
+      UsersTotal = @($ctx.Users).Count
+      UsersWithProfileExt = @($ctx.UsersWithProfileExtension).Count
+      DistinctProfileExt = @($ctx.ProfileExtensionNumbers).Count
+      ExtensionsLoaded = @($ctx.Extensions).Count
       ExtensionMode = $ctx.ExtensionMode
     }
   }
@@ -109,7 +108,7 @@ while ($true) {
     '2' {
       $dups = Find-DuplicateUserExtensionAssignments -Context $ctx
       Write-Host ""
-      Write-Host "Duplicate assignments rows: $($dups.Count)"
+      Write-Host "Duplicate assignments rows: $(@($dups).Count)"
       $dups | Sort-Object ProfileExtension, UserName | Select-Object -First 30 | Format-Table -AutoSize
 
       $outFolder = Join-Path $PSScriptRoot 'out'
@@ -122,7 +121,7 @@ while ($true) {
     '3' {
       $disc = Find-ExtensionDiscrepancies -Context $ctx
       Write-Host ""
-      Write-Host "Discrepancies rows: $($disc.Count)"
+      Write-Host "Discrepancies rows: $(@($disc).Count)"
       $disc | Sort-Object ProfileExtension, UserName | Select-Object -First 30 | Format-Table -AutoSize
 
       $outFolder = Join-Path $PSScriptRoot 'out'
@@ -135,7 +134,7 @@ while ($true) {
     '4' {
       $missing = Find-MissingExtensionAssignments -Context $ctx
       Write-Host ""
-      Write-Host "Missing assignment rows: $($missing.Count)"
+      Write-Host "Missing assignment rows: $(@($missing).Count)"
       $missing | Sort-Object ProfileExtension, UserName | Select-Object -First 30 | Format-Table -AutoSize
 
       $outFolder = Join-Path $PSScriptRoot 'out'

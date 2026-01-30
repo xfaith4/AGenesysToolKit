@@ -14,8 +14,7 @@ $modulePath = Join-Path $PSScriptRoot 'GcExtensionAudit.psm1'
 Import-Module $modulePath -Force
 
 $defaultApiBaseUri = 'https://api.usw2.pure.cloud'
-$logFolder = Join-Path $PSScriptRoot 'logs'
-$logPath = Join-Path $logFolder ("GcExtensionAuditUI_{0}.log" -f (Get-Date).ToString('yyyyMMdd_HHmmss'))
+$logPath = New-GcExtensionAuditLogPath -Prefix 'GcExtensionAuditUI'
 Set-GcLogPath -Path $logPath
 
 $script:ModulePathForTasks = $modulePath
@@ -359,7 +358,7 @@ $script:BtnMissing.Add_Click({
       -OnSuccess {
         param($out)
         $rows = @($out)
-        $script:TxtMissingSummary.Text = "Rows: $($rows.Count)"
+        $script:TxtMissingSummary.Text = "Rows: $(@($rows).Count)"
         $script:GridMissing.ItemsSource = $null
         $script:GridMissing.ItemsSource = $rows
       } `
@@ -370,7 +369,7 @@ $script:BtnMissing.Add_Click({
 $script:BtnMissingExport.Add_Click({
   try {
     $rows = @($script:GridMissing.ItemsSource)
-    if (-not $rows -or $rows.Count -eq 0) { throw 'No rows to export. Refresh Missing first.' }
+    if (@($rows).Count -eq 0) { throw 'No rows to export. Refresh Missing first.' }
     Ensure-FolderStructure
     $outFolder = Join-Path $PSScriptRoot 'out'
     $ts = (Get-Date).ToString('yyyyMMdd_HHmmss')
@@ -390,7 +389,7 @@ $script:BtnDiscrepancies.Add_Click({
       -OnSuccess {
         param($out)
         $rows = @($out)
-        $script:TxtDiscrepanciesSummary.Text = "Rows: $($rows.Count)"
+        $script:TxtDiscrepanciesSummary.Text = "Rows: $(@($rows).Count)"
         $script:GridDiscrepancies.ItemsSource = $null
         $script:GridDiscrepancies.ItemsSource = $rows
       } `
@@ -401,7 +400,7 @@ $script:BtnDiscrepancies.Add_Click({
 $script:BtnDiscrepanciesExport.Add_Click({
   try {
     $rows = @($script:GridDiscrepancies.ItemsSource)
-    if (-not $rows -or $rows.Count -eq 0) { throw 'No rows to export. Refresh Discrepancies first.' }
+    if (@($rows).Count -eq 0) { throw 'No rows to export. Refresh Discrepancies first.' }
     Ensure-FolderStructure
     $outFolder = Join-Path $PSScriptRoot 'out'
     $ts = (Get-Date).ToString('yyyyMMdd_HHmmss')
@@ -421,7 +420,7 @@ $script:BtnDupUsers.Add_Click({
       -OnSuccess {
         param($out)
         $rows = @($out)
-        $script:TxtDupUsersSummary.Text = "Rows: $($rows.Count)"
+        $script:TxtDupUsersSummary.Text = "Rows: $(@($rows).Count)"
         $script:GridDupUsers.ItemsSource = $null
         $script:GridDupUsers.ItemsSource = $rows
       } `
@@ -432,7 +431,7 @@ $script:BtnDupUsers.Add_Click({
 $script:BtnDupUsersExport.Add_Click({
   try {
     $rows = @($script:GridDupUsers.ItemsSource)
-    if (-not $rows -or $rows.Count -eq 0) { throw 'No rows to export. Refresh User Duplicates first.' }
+    if (@($rows).Count -eq 0) { throw 'No rows to export. Refresh User Duplicates first.' }
     Ensure-FolderStructure
     $outFolder = Join-Path $PSScriptRoot 'out'
     $ts = (Get-Date).ToString('yyyyMMdd_HHmmss')
@@ -452,7 +451,7 @@ $script:BtnDupExts.Add_Click({
       -OnSuccess {
         param($out)
         $rows = @($out)
-        $script:TxtDupExtsSummary.Text = "Rows: $($rows.Count)"
+        $script:TxtDupExtsSummary.Text = "Rows: $(@($rows).Count)"
         $script:GridDupExts.ItemsSource = $null
         $script:GridDupExts.ItemsSource = $rows
       } `
@@ -463,7 +462,7 @@ $script:BtnDupExts.Add_Click({
 $script:BtnDupExtsExport.Add_Click({
   try {
     $rows = @($script:GridDupExts.ItemsSource)
-    if (-not $rows -or $rows.Count -eq 0) { throw 'No rows to export. Refresh Extension Duplicates first.' }
+    if (@($rows).Count -eq 0) { throw 'No rows to export. Refresh Extension Duplicates first.' }
     Ensure-FolderStructure
     $outFolder = Join-Path $PSScriptRoot 'out'
     $ts = (Get-Date).ToString('yyyyMMdd_HHmmss')

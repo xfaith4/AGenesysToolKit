@@ -12,6 +12,29 @@ $script:GcApiStats = [ordered]@{
   ByMethod   = @{}
   ByPath     = @{}
   LastError  = $null
+  RateLimit  = $null
+}
+
+function New-GcExtensionAuditLogPath {
+  [CmdletBinding(SupportsShouldProcess)]
+  param(
+    [Parameter()] [ValidateNotNullOrEmpty()] [string] $Prefix = 'GcExtensionAudit'
+  )
+
+  $base = $env:LOCALAPPDATA
+  if ([string]::IsNullOrWhiteSpace($base)) { $base = $env:USERPROFILE }
+  if ([string]::IsNullOrWhiteSpace($base)) { $base = $env:TEMP }
+  if ([string]::IsNullOrWhiteSpace($base)) { $base = $PSScriptRoot }
+
+  $logDir = Join-Path $base 'AGenesysToolKit\Logs\ExtensionAudit'
+  if (-not (Test-Path -LiteralPath $logDir)) {
+    if ($PSCmdlet.ShouldProcess($logDir, 'Create log directory')) {
+      New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    }
+  }
+
+  $ts = (Get-Date).ToString('yyyyMMdd_HHmmss')
+  return (Join-Path $logDir ("{0}_{1}.log" -f $Prefix, $ts))
 }
 
 function Set-GcLogPath {
@@ -144,12 +167,137 @@ function Get-GcApiStats {
     ByMethod   = $script:GcApiStats.ByMethod
     ByPath     = $script:GcApiStats.ByPath
     LastError  = $script:GcApiStats.LastError
+    RateLimit  = $script:GcApiStats.RateLimit
   }
 }
 
 #endregion Logging + Stats
 
 #region Core API
+
+function Get-GcHeaderValue {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)] $Headers,
+    [Parameter(Mandatory)] [string] $Name
+  )
+
+  try {
+    $keys = $null
+    if ($Headers -is [System.Net.WebHeaderCollection]) {
+      $keys = @($Headers.AllKeys)
+    } else {
+      $keys = @($Headers.Keys)
+    }
+
+    foreach ($k in $keys) {
+      if ([string]$k -ieq $Name) {
+        $v = $Headers[$k]
+        if ($v -is [string[]]) { return ($v -join ',') }
+        return [string]$v
+      }
+    }
+  } catch {
+    return $null
+  }
+
+  return $null
+}
+
+function Get-GcRateLimitSnapshot {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)] $Headers
+  )
+
+  $limitRaw = Get-GcHeaderValue -Headers $Headers -Name 'X-RateLimit-Limit'
+  $remRaw   = Get-GcHeaderValue -Headers $Headers -Name 'X-RateLimit-Remaining'
+  $resetRaw = Get-GcHeaderValue -Headers $Headers -Name 'X-RateLimit-Reset'
+
+  if ([string]::IsNullOrWhiteSpace($limitRaw) -and [string]::IsNullOrWhiteSpace($remRaw) -and [string]::IsNullOrWhiteSpace($resetRaw)) {
+    return $null
+  }
+
+  $limit = $null
+  $remaining = $null
+  $resetUtc = $null
+
+  try { if (-not [string]::IsNullOrWhiteSpace($limitRaw)) { $limit = [int]([double]$limitRaw) } } catch { $limit = $null }
+  try { if (-not [string]::IsNullOrWhiteSpace($remRaw)) { $remaining = [int]([double]$remRaw) } } catch { $remaining = $null }
+
+  try {
+    if (-not [string]::IsNullOrWhiteSpace($resetRaw)) {
+      $resetNum = [double]$resetRaw
+      $now = [DateTimeOffset]::UtcNow
+      if ($resetNum -gt 1000000000000) {
+        $resetUtc = [DateTimeOffset]::FromUnixTimeMilliseconds([int64][Math]::Floor($resetNum)).UtcDateTime
+      } elseif ($resetNum -gt 1000000000) {
+        $resetUtc = [DateTimeOffset]::FromUnixTimeSeconds([int64][Math]::Floor($resetNum)).UtcDateTime
+      } else {
+        $resetUtc = $now.AddSeconds([Math]::Max(0, $resetNum)).UtcDateTime
+      }
+    }
+  } catch {
+    $resetUtc = $null
+  }
+
+  [pscustomobject]@{
+    Limit     = $limit
+    Remaining = $remaining
+    ResetUtc  = $resetUtc
+    CapturedAtUtc = [DateTime]::UtcNow
+  }
+}
+
+function Invoke-GcRateLimitPreemptiveThrottle {
+  [CmdletBinding()]
+  param(
+    [Parameter()] $Snapshot,
+    [Parameter()] [ValidateRange(0,5000)] [int] $MinRemaining = 2,
+    [Parameter()] [ValidateRange(0,600000)] [int] $ResetBufferMs = 250,
+    [Parameter()] [ValidateRange(0,600000)] [int] $MaxSleepMs = 60000
+  )
+
+  if ($null -eq $Snapshot -or $null -eq $Snapshot.Remaining) { return }
+  if ($Snapshot.Remaining -gt $MinRemaining) { return }
+
+  $sleepMs = 500
+
+  if ($Snapshot.ResetUtc) {
+    $delta = ($Snapshot.ResetUtc - [DateTime]::UtcNow)
+    if ($delta.TotalMilliseconds -gt 0) {
+      $sleepMs = [int][Math]::Ceiling($delta.TotalMilliseconds + $ResetBufferMs)
+    }
+  }
+
+  $sleepMs = [Math]::Min([Math]::Max(0, $sleepMs), $MaxSleepMs)
+  if ($sleepMs -le 0) { return }
+
+  Write-Log -Level WARN -Message "Rate limit low; throttling" -Data @{
+    Remaining = $Snapshot.Remaining
+    Limit     = $Snapshot.Limit
+    ResetUtc  = $Snapshot.ResetUtc
+    SleepMs   = $sleepMs
+  }
+
+  Start-Sleep -Milliseconds $sleepMs
+}
+
+function ConvertFrom-GcJson {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)] [string] $Json
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Json)) { return $null }
+
+  $cmd = Get-Command ConvertFrom-Json -ErrorAction Stop
+  if ($cmd.Parameters.ContainsKey('Depth')) {
+    return ($Json | ConvertFrom-Json -Depth 20)
+  }
+
+  return ($Json | ConvertFrom-Json)
+}
 
 function Invoke-GcApi {
   [CmdletBinding()]
@@ -160,7 +308,10 @@ function Invoke-GcApi {
     [Parameter(Mandatory)] [string] $PathAndQuery,
     [Parameter()] $Body,
     [Parameter()] [ValidateRange(0,50)] [int] $MaxRetries = 5,
-    [Parameter()] [ValidateRange(0,60000)] [int] $InitialBackoffMs = 500
+    [Parameter()] [ValidateRange(0,60000)] [int] $InitialBackoffMs = 500,
+    [Parameter()] [ValidateRange(0,5000)] [int] $ThrottleMinRemaining = 2,
+    [Parameter()] [ValidateRange(0,600000)] [int] $ThrottleResetBufferMs = 250,
+    [Parameter()] [ValidateRange(0,600000)] [int] $ThrottleMaxSleepMs = 60000
   )
 
   # Genesys Cloud requires TLS 1.2+; ensure TLS 1.2 is enabled for Windows PowerShell 5.1.
@@ -195,20 +346,33 @@ function Invoke-GcApi {
   do {
     $attempt++
     try {
-      $irmSplat = @{
+      $iwrSplat = @{
         Method      = $Method
         Uri         = $uri
         Headers     = $headers
         ErrorAction = 'Stop'
+        UseBasicParsing = $true
       }
 
       if ($null -ne $Body) {
         $headers['Content-Type'] = 'application/json'
-        $irmSplat['Body'] = ($Body | ConvertTo-Json -Depth 20)
+        $iwrSplat['ContentType'] = 'application/json'
+        $iwrSplat['Body'] = ($Body | ConvertTo-Json -Depth 20)
       }
 
       Write-Log -Level DEBUG -Message "API $Method $PathAndQuery (attempt $attempt)" -Data $null
-      return Invoke-RestMethod @irmSplat
+
+      $resp = Invoke-WebRequest @iwrSplat
+      if ($resp -and $resp.Headers) {
+        $snapshot = Get-GcRateLimitSnapshot -Headers $resp.Headers
+        if ($snapshot) {
+          $script:GcApiStats.RateLimit = $snapshot
+          Invoke-GcRateLimitPreemptiveThrottle -Snapshot $snapshot -MinRemaining $ThrottleMinRemaining -ResetBufferMs $ThrottleResetBufferMs -MaxSleepMs $ThrottleMaxSleepMs
+        }
+      }
+
+      if ($null -eq $resp -or [string]::IsNullOrWhiteSpace([string]$resp.Content)) { return $null }
+      return (ConvertFrom-GcJson -Json $resp.Content)
     }
     catch {
       $ex = $_.Exception
@@ -222,6 +386,10 @@ function Invoke-GcApi {
         if ($ex.Response -and $ex.Response.StatusCode) { $statusCode = [int]$ex.Response.StatusCode }
         if ($ex.Response -and $ex.Response.Headers -and $ex.Response.Headers['Retry-After']) {
           $retryAfterSec = [int]$ex.Response.Headers['Retry-After']
+        }
+        if ($ex.Response -and $ex.Response.Headers) {
+          $snapshot = Get-GcRateLimitSnapshot -Headers $ex.Response.Headers
+          if ($snapshot) { $script:GcApiStats.RateLimit = $snapshot }
         }
       } catch { $null = $_ }
 
@@ -981,7 +1149,7 @@ function Export-ReportCsv {
 #endregion Exports
 
 Export-ModuleMember -Function @(
-  'Set-GcLogPath','Write-Log','Get-GcApiStats',
+  'New-GcExtensionAuditLogPath','Set-GcLogPath','Write-Log','Get-GcApiStats',
   'Invoke-GcApi',
   'Get-GcUsersAll','Get-GcExtensionsAll','Get-GcExtensionsByNumbers',
   'New-GcExtensionAuditContext',
