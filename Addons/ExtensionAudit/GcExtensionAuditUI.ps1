@@ -7,8 +7,15 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
 $script:UiBusyCount = 0
-$script:Context = $null
+$script:ContextSummary = $null
 $script:DryRunReport = $null
+$script:RuntimeRunspace = $null
+$script:RuntimeInitialized = $false
+
+$script:LogTailTimer = $null
+$script:LogTailPath = $null
+$script:LogTailPosition = 0L
+$script:LogTailMaxChars = 200000
 
 $modulePath = Join-Path $PSScriptRoot 'GcExtensionAudit.psm1'
 Import-Module $modulePath -Force
@@ -84,9 +91,116 @@ function Format-ObjectAsText {
 
 function Ensure-FolderStructure {
   $outFolder = Join-Path $PSScriptRoot 'out'
-  $logsFolder = Join-Path $PSScriptRoot 'logs'
   if (-not (Test-Path -LiteralPath $outFolder)) { New-Item -ItemType Directory -Path $outFolder -Force | Out-Null }
-  if (-not (Test-Path -LiteralPath $logsFolder)) { New-Item -ItemType Directory -Path $logsFolder -Force | Out-Null }
+
+  $logDir = Split-Path -Parent $script:LogPathForTasks
+  if (-not [string]::IsNullOrWhiteSpace($logDir) -and -not (Test-Path -LiteralPath $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+  }
+}
+
+function Initialize-RuntimeSession {
+  if ($script:RuntimeInitialized -and $script:RuntimeRunspace) { return }
+
+  $runspace = [runspacefactory]::CreateRunspace()
+  $runspace.ApartmentState = 'MTA'
+  $runspace.ThreadOptions = 'ReuseThread'
+  $runspace.Open()
+
+  $ps = [powershell]::Create()
+  $ps.Runspace = $runspace
+
+  try {
+    [void]$ps.AddScript({
+      param([string]$ModulePath, [string]$LogPath)
+      Import-Module $ModulePath -Force
+      Set-GcLogPath -Path $LogPath -Append
+      $global:GcExtensionAuditContext = $null
+    }).AddArgument($script:ModulePathForTasks).AddArgument($script:LogPathForTasks)
+
+    $null = $ps.Invoke()
+    if ($ps.HadErrors) { throw 'Runtime session initialization failed.' }
+
+    $script:RuntimeRunspace = $runspace
+    $script:RuntimeInitialized = $true
+  } catch {
+    try { $ps.Dispose() } catch { $null = $_ }
+    try { $runspace.Close() } catch { $null = $_ }
+    try { $runspace.Dispose() } catch { $null = $_ }
+    $script:RuntimeRunspace = $null
+    $script:RuntimeInitialized = $false
+    throw
+  } finally {
+    try { $ps.Dispose() } catch { $null = $_ }
+  }
+}
+
+function Stop-LogTail {
+  if ($script:LogTailTimer) {
+    try { $script:LogTailTimer.Stop() } catch { $null = $_ }
+    $script:LogTailTimer = $null
+  }
+}
+
+function Update-LogTail {
+  if (-not $script:TxtLogLive) { return }
+  $path = $script:LogTailPath
+  if ([string]::IsNullOrWhiteSpace($path)) { return }
+  if (-not (Test-Path -LiteralPath $path)) { return }
+
+  $text = $null
+
+  try {
+    $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+      if ($script:LogTailPosition -gt $fs.Length) { $script:LogTailPosition = 0L }
+      $null = $fs.Seek($script:LogTailPosition, [System.IO.SeekOrigin]::Begin)
+
+      $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8, $true)
+      try {
+        $text = $sr.ReadToEnd()
+        $script:LogTailPosition = $fs.Position
+      } finally {
+        try { $sr.Dispose() } catch { $null = $_ }
+      }
+    } finally {
+      try { $fs.Dispose() } catch { $null = $_ }
+    }
+  } catch {
+    return
+  }
+
+  if ([string]::IsNullOrEmpty($text)) { return }
+
+  $script:TxtLogLive.AppendText($text)
+
+  if ($script:TxtLogLive.Text.Length -gt $script:LogTailMaxChars) {
+    $script:TxtLogLive.Text = $script:TxtLogLive.Text.Substring($script:TxtLogLive.Text.Length - $script:LogTailMaxChars)
+  }
+
+  if ($script:ChkLogAutoScroll -and $script:ChkLogAutoScroll.IsChecked) {
+    $script:TxtLogLive.ScrollToEnd()
+  }
+}
+
+function Start-LogTail {
+  param([Parameter(Mandatory)][string]$Path)
+
+  Stop-LogTail
+  $script:LogTailPath = $Path
+  $script:LogTailPosition = 0L
+
+  try {
+    if (Test-Path -LiteralPath $Path) {
+      $len = (Get-Item -LiteralPath $Path).Length
+      $script:LogTailPosition = [int64][Math]::Max(0, $len - 20000)
+    }
+  } catch { $null = $_ }
+
+  $script:LogTailTimer = New-Object System.Windows.Threading.DispatcherTimer
+  $script:LogTailTimer.Interval = [TimeSpan]::FromMilliseconds(350)
+  $script:LogTailTimer.Add_Tick({ Update-LogTail })
+  $script:LogTailTimer.Start()
 }
 
 function Update-BusyState {
@@ -107,9 +221,12 @@ function Update-BusyState {
     $script:BtnDupUsers, $script:BtnDupUsersExport,
     $script:BtnDupExts, $script:BtnDupExtsExport,
     $script:BtnRunPatch,
-    $script:BtnOpenLog, $script:BtnOpenOut
+    $script:BtnOpenLog, $script:BtnOpenOut,
+    $script:BtnClearLogView
   )
-  foreach ($b in $buttons) { $b.IsEnabled = -not $IsBusy }
+  foreach ($b in $buttons) {
+    if ($b) { $b.IsEnabled = -not $IsBusy }
+  }
 }
 
 function Start-UiTask {
@@ -125,28 +242,27 @@ function Start-UiTask {
   $script:UiBusyCount++
   Update-BusyState -Status $Name -IsBusy:$true
 
-  $runspace = [runspacefactory]::CreateRunspace()
-  $runspace.ApartmentState = 'MTA'
-  $runspace.ThreadOptions = 'ReuseThread'
-  $runspace.Open()
+  try {
+    Initialize-RuntimeSession
+  } catch {
+    $script:UiBusyCount--
+    Update-BusyState -Status 'Ready' -IsBusy:($script:UiBusyCount -gt 0)
+    & $OnError $_
+    return
+  }
 
   $ps = [powershell]::Create()
-  $ps.Runspace = $runspace
+  $ps.Runspace = $script:RuntimeRunspace
 
   $runner = {
     param(
-      [string] $ModulePath,
-      [string] $LogPath,
       [scriptblock] $Task,
       [object[]] $Arguments
     )
-
-    Import-Module $ModulePath -Force
-    Set-GcLogPath -Path $LogPath -Append
     & $Task @Arguments
   }
 
-  [void]$ps.AddScript($runner).AddArgument($script:ModulePathForTasks).AddArgument($script:LogPathForTasks).AddArgument($Task).AddArgument($Arguments)
+  [void]$ps.AddScript($runner).AddArgument($Task).AddArgument($Arguments)
   $handle = $ps.BeginInvoke()
 
   $timer = New-Object System.Windows.Threading.DispatcherTimer
@@ -162,7 +278,6 @@ function Start-UiTask {
       & $OnError $_
     } finally {
       try { $ps.Dispose() } catch { $null = $_ }
-      try { $runspace.Close() } catch { $null = $_ }
       $script:UiBusyCount--
       Update-BusyState -Status 'Ready' -IsBusy:($script:UiBusyCount -gt 0)
     }
@@ -171,7 +286,7 @@ function Start-UiTask {
 }
 
 function Ensure-Context {
-  if (-not $script:Context) { throw 'Context not built. Click "Build Context" first.' }
+  if (-not $script:ContextSummary) { throw 'Context not built. Click "Build Context" first.' }
 }
 
 function Get-TokenFromUi {
@@ -185,13 +300,13 @@ function Get-TokenFromUi {
 }
 
 function Refresh-ContextSummary {
-  if (-not $script:Context) {
+  if (-not $script:ContextSummary) {
     $script:TxtContext.Text = "No context loaded. Log: $script:LogPathForTasks"
     return
   }
 
-  $ctx = $script:Context
-  $script:TxtContext.Text = "Context ready. Users=$(@($ctx.Users).Count); UsersWithProfileExt=$(@($ctx.UsersWithProfileExtension).Count); DistinctProfileExt=$(@($ctx.ProfileExtensionNumbers).Count); ExtensionsLoaded=$(@($ctx.Extensions).Count); ExtensionMode=$($ctx.ExtensionMode); Log=$script:LogPathForTasks"
+  $s = $script:ContextSummary
+  $script:TxtContext.Text = "Context ready. Users=$($s.UsersTotal); UsersWithProfileExt=$($s.UsersWithProfileExtension); DistinctProfileExt=$($s.DistinctProfileExtensions); ExtensionsLoaded=$($s.ExtensionsLoaded); ExtensionMode=$($s.ExtensionMode); Log=$script:LogPathForTasks"
 }
 
 Ensure-FolderStructure
@@ -238,6 +353,10 @@ $script:BtnDupExtsExport = Get-Control -Root $window -Name 'BtnDupExtsExport'
 $script:TxtDupExtsSummary = Get-Control -Root $window -Name 'TxtDupExtsSummary'
 $script:GridDupExts = Get-Control -Root $window -Name 'GridDupExts'
 
+$script:BtnClearLogView = Get-Control -Root $window -Name 'BtnClearLogView'
+$script:ChkLogAutoScroll = Get-Control -Root $window -Name 'ChkLogAutoScroll'
+$script:TxtLogLive = Get-Control -Root $window -Name 'TxtLogLive'
+
 $script:ChkWhatIf = Get-Control -Root $window -Name 'ChkWhatIf'
 $script:TxtSleepMs = Get-Control -Root $window -Name 'TxtSleepMs'
 $script:TxtMaxUpdates = Get-Control -Root $window -Name 'TxtMaxUpdates'
@@ -251,12 +370,17 @@ $script:GridPatchFailed = Get-Control -Root $window -Name 'GridPatchFailed'
 $script:TxtApiBaseUri.Text = $defaultApiBaseUri
 $script:TxtLogPath.Text = $logPath
 Refresh-ContextSummary
+Start-LogTail -Path $script:LogPathForTasks
+
+$script:BtnClearLogView.Add_Click({
+  $script:TxtLogLive.Text = ''
+})
 
 $script:BtnOpenLog.Add_Click({
   try {
     Ensure-FolderStructure
     if (Test-Path -LiteralPath $script:LogPathForTasks) { Start-Process -FilePath $script:LogPathForTasks }
-    else { Start-Process -FilePath (Join-Path $PSScriptRoot 'logs') }
+    else { Start-Process -FilePath (Split-Path -Parent $script:LogPathForTasks) }
   } catch { Show-ErrorDialog -Title 'Open Log' -Message $_.Exception.Message }
 })
 
@@ -266,8 +390,18 @@ $script:BtnOpenOut.Add_Click({
 })
 
 $script:BtnClear.Add_Click({
-  $script:Context = $null
+  $script:ContextSummary = $null
   $script:DryRunReport = $null
+
+  try {
+    if ($script:RuntimeInitialized -and $script:RuntimeRunspace) {
+      $ps = [powershell]::Create()
+      $ps.Runspace = $script:RuntimeRunspace
+      [void]$ps.AddScript({ $global:GcExtensionAuditContext = $null })
+      $null = $ps.Invoke()
+      $ps.Dispose()
+    }
+  } catch { $null = $_ }
 
   $script:GridDryRun.ItemsSource = $null
   $script:TxtDryRunSummary.Text = ''
@@ -296,11 +430,26 @@ $script:BtnBuildContext.Add_Click({
 
     Start-UiTask `
       -Name 'Building context (fetching users + extensions)' `
-      -Task { param($ApiBaseUri, $Token, $IncludeInactive) New-GcExtensionAuditContext -ApiBaseUri $ApiBaseUri -AccessToken $Token -IncludeInactive:$IncludeInactive } `
+      -Task {
+        param($ApiBaseUri, $Token, $IncludeInactive)
+
+        $global:GcExtensionAuditContext = New-GcExtensionAuditContext -ApiBaseUri $ApiBaseUri -AccessToken $Token -IncludeInactive:$IncludeInactive
+
+        [pscustomobject]@{
+          BuiltAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+          ApiBaseUri = [string]$ApiBaseUri
+          IncludeInactive = [bool]$IncludeInactive
+          UsersTotal = @($global:GcExtensionAuditContext.Users).Count
+          UsersWithProfileExtension = @($global:GcExtensionAuditContext.UsersWithProfileExtension).Count
+          DistinctProfileExtensions = @($global:GcExtensionAuditContext.ProfileExtensionNumbers).Count
+          ExtensionsLoaded = @($global:GcExtensionAuditContext.Extensions).Count
+          ExtensionMode = [string]$global:GcExtensionAuditContext.ExtensionMode
+        }
+      } `
       -Arguments @($apiBaseUri, $token, $includeInactive) `
       -OnSuccess {
         param($out)
-        $script:Context = $out | Select-Object -Last 1
+        $script:ContextSummary = $out | Select-Object -Last 1
         Refresh-ContextSummary
         Show-InfoDialog -Title 'Context Ready' -Message 'Context has been built successfully.'
       } `
@@ -315,8 +464,11 @@ $script:BtnDryRun.Add_Click({
     Ensure-Context
     Start-UiTask `
       -Name 'Generating dry run report' `
-      -Task { param($ctx) New-ExtensionDryRunReport -Context $ctx } `
-      -Arguments @($script:Context) `
+      -Task {
+        if (-not $global:GcExtensionAuditContext) { throw 'Context not built. Click "Build Context" first.' }
+        New-ExtensionDryRunReport -Context $global:GcExtensionAuditContext
+      } `
+      -Arguments @() `
       -OnSuccess {
         param($out)
         $rep = $out | Select-Object -Last 1
@@ -353,8 +505,11 @@ $script:BtnMissing.Add_Click({
     Ensure-Context
     Start-UiTask `
       -Name 'Computing missing assignments' `
-      -Task { param($ctx) Find-MissingExtensionAssignments -Context $ctx } `
-      -Arguments @($script:Context) `
+      -Task {
+        if (-not $global:GcExtensionAuditContext) { throw 'Context not built. Click "Build Context" first.' }
+        Find-MissingExtensionAssignments -Context $global:GcExtensionAuditContext
+      } `
+      -Arguments @() `
       -OnSuccess {
         param($out)
         $rows = @($out)
@@ -384,8 +539,11 @@ $script:BtnDiscrepancies.Add_Click({
     Ensure-Context
     Start-UiTask `
       -Name 'Computing discrepancies' `
-      -Task { param($ctx) Find-ExtensionDiscrepancies -Context $ctx } `
-      -Arguments @($script:Context) `
+      -Task {
+        if (-not $global:GcExtensionAuditContext) { throw 'Context not built. Click "Build Context" first.' }
+        Find-ExtensionDiscrepancies -Context $global:GcExtensionAuditContext
+      } `
+      -Arguments @() `
       -OnSuccess {
         param($out)
         $rows = @($out)
@@ -415,8 +573,11 @@ $script:BtnDupUsers.Add_Click({
     Ensure-Context
     Start-UiTask `
       -Name 'Computing user duplicates' `
-      -Task { param($ctx) Find-DuplicateUserExtensionAssignments -Context $ctx } `
-      -Arguments @($script:Context) `
+      -Task {
+        if (-not $global:GcExtensionAuditContext) { throw 'Context not built. Click "Build Context" first.' }
+        Find-DuplicateUserExtensionAssignments -Context $global:GcExtensionAuditContext
+      } `
+      -Arguments @() `
       -OnSuccess {
         param($out)
         $rows = @($out)
@@ -446,8 +607,11 @@ $script:BtnDupExts.Add_Click({
     Ensure-Context
     Start-UiTask `
       -Name 'Computing extension duplicates' `
-      -Task { param($ctx) Find-DuplicateExtensionRecords -Context $ctx } `
-      -Arguments @($script:Context) `
+      -Task {
+        if (-not $global:GcExtensionAuditContext) { throw 'Context not built. Click "Build Context" first.' }
+        Find-DuplicateExtensionRecords -Context $global:GcExtensionAuditContext
+      } `
+      -Arguments @() `
       -OnSuccess {
         param($out)
         $rows = @($out)
@@ -496,8 +660,12 @@ $script:BtnRunPatch.Add_Click({
 
     Start-UiTask `
       -Name (if ($whatIf) { 'Running patch (WhatIf)' } else { 'Running patch (REAL)' }) `
-      -Task { param($ctx, $sleepMs, $maxUpdates, $whatIf) Patch-MissingExtensionAssignments -Context $ctx -SleepMsBetween $sleepMs -MaxUpdates $maxUpdates -WhatIf:$whatIf } `
-      -Arguments @($script:Context, $sleepMs, $maxUpdates, $whatIf) `
+      -Task {
+        param($sleepMs, $maxUpdates, $whatIf)
+        if (-not $global:GcExtensionAuditContext) { throw 'Context not built. Click "Build Context" first.' }
+        Patch-MissingExtensionAssignments -Context $global:GcExtensionAuditContext -SleepMsBetween $sleepMs -MaxUpdates $maxUpdates -WhatIf:$whatIf
+      } `
+      -Arguments @($sleepMs, $maxUpdates, $whatIf) `
       -OnSuccess {
         param($out)
         $result = $out | Select-Object -Last 1
@@ -529,6 +697,13 @@ $script:BtnRunPatch.Add_Click({
 
 $window.Add_Closed({
   try { Write-Log -Level INFO -Message 'Extension audit UI closed' -Data @{ LogPath = $script:LogPathForTasks } } catch { $null = $_ }
+  try { Stop-LogTail } catch { $null = $_ }
+  try {
+    if ($script:RuntimeRunspace) {
+      $script:RuntimeRunspace.Close()
+      $script:RuntimeRunspace.Dispose()
+    }
+  } catch { $null = $_ }
 })
 
 [void]$window.ShowDialog()

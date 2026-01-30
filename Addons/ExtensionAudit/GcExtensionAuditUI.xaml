@@ -203,6 +203,32 @@
           </Grid>
         </TabItem>
 
+        <TabItem Header="Log">
+          <Grid Margin="8">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Orientation="Horizontal">
+              <Button x:Name="BtnClearLogView" Padding="12,6" MinWidth="120" Content="Clear View"/>
+              <CheckBox x:Name="ChkLogAutoScroll" Margin="12,0,0,0" VerticalAlignment="Center" Content="Auto-scroll" IsChecked="True"/>
+            </StackPanel>
+
+            <TextBox
+              x:Name="TxtLogLive"
+              Grid.Row="1"
+              Margin="0,10,0,0"
+              FontFamily="Consolas"
+              FontSize="12"
+              IsReadOnly="True"
+              TextWrapping="NoWrap"
+              VerticalScrollBarVisibility="Auto"
+              HorizontalScrollBarVisibility="Auto"
+              AcceptsReturn="True"/>
+          </Grid>
+        </TabItem>
+
         <TabItem Header="Patch Missing">
           <Grid Margin="8">
             <Grid.RowDefinitions>
@@ -273,4 +299,3 @@
     </StatusBar>
   </Grid>
 </Window>
-

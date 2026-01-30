@@ -587,7 +587,7 @@ function New-GcExtensionAuditContext {
     [Parameter(Mandatory)] [string] $ApiBaseUri,
     [Parameter(Mandatory)] [string] $AccessToken,
     [Parameter()] [switch] $IncludeInactive,
-    [Parameter()] [int] $UsersPageSize = 200,
+    [Parameter()] [int] $UsersPageSize = 500,
     [Parameter()] [int] $ExtensionsPageSize = 100,
     [Parameter()] [int] $MaxFullExtensionPages = 25
   )
