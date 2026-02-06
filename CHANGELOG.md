@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI/CD workflow for automated testing and linting
 - Enhanced .gitignore for comprehensive file exclusion
 - docs/Archive/ folder for historical implementation documentation
+- .env.example template for OAuth configuration guidance
 
 ### Changed
 - Reorganized documentation for better new user experience
@@ -23,12 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restructured README.md documentation section by audience (Essential, Developers, Operations)
 - Improved QUICKREF.md quick links section
 
+### Fixed
+- Updated OAuth redirect URI port from 8080 to 8085 across all documentation
+- Corrected app filename references (GenesysCloudTool_UX_Prototype_v2_1.ps1 → GenesysCloudTool_UX_Prototype.ps1)
+- Fixed inconsistent OAuth scopes in documentation
+
 ### Documentation
 - Improved README.md with business value metrics
 - Added cross-references between documentation files
 - Enhanced onboarding documentation for new developers
 - Archived 22 historical implementation summaries and completed roadmaps
 - Created Archive/README.md explaining archived content and retention policy
+- Added .env.example with comprehensive OAuth setup instructions
 
 ## [0.6.0] - 2026-01-13
 
