@@ -81,7 +81,7 @@ Allow outbound HTTPS (443) to:
 1. Admin access to create OAuth clients
 2. Organization-level OAuth client (recommended) or user-level
 3. Grant type: Authorization Code with PKCE
-4. Redirect URI: `http://localhost:8080/oauth/callback`
+4. Redirect URI: `http://localhost:8085/oauth/callback`
 
 **Required Permissions** (minimum):
 - `authorization:readonly`
@@ -173,7 +173,7 @@ See [CONFIGURATION.md](docs/CONFIGURATION.md) for detailed OAuth setup.
    ```
    Name: AGenesysToolKit Production
    Grant Type: Authorization Code with PKCE
-   Redirect URI: http://localhost:8080/oauth/callback
+   Redirect URI: http://localhost:8085/oauth/callback
    Token Duration: 43200 seconds (12 hours)
    ```
 
@@ -207,14 +207,14 @@ cd AGenesysToolKit
 
 **Option A: Embedded Configuration** (for packaged deployment)
 
-Edit `App/GenesysCloudTool_UX_Prototype_v2_1.ps1`:
+Edit `App/GenesysCloudTool_UX_Prototype.ps1`:
 
 ```powershell
 # Find the Set-GcAuthConfig section
 Set-GcAuthConfig `
   -ClientId 'your-production-client-id' `
   -Region 'mypurecloud.com' `
-  -RedirectUri 'http://localhost:8080/oauth/callback'
+  -RedirectUri 'http://localhost:8085/oauth/callback'
 ```
 
 **Option B: External Configuration** (for flexible deployment)
@@ -226,7 +226,7 @@ Create `config/production.json`:
   "oauth": {
     "clientId": "your-production-client-id",
     "region": "mypurecloud.com",
-    "redirectUri": "http://localhost:8080/oauth/callback"
+    "redirectUri": "http://localhost:8085/oauth/callback"
   },
   "application": {
     "logLevel": "Information",
@@ -292,7 +292,7 @@ if ($psVersion.Major -lt 5 -or ($psVersion.Major -eq 5 -and $psVersion.Minor -lt
 }
 
 # Launch application
-$appPath = Join-Path $PSScriptRoot "App\GenesysCloudTool_UX_Prototype_v2_1.ps1"
+$appPath = Join-Path $PSScriptRoot "App\GenesysCloudTool_UX_Prototype.ps1"
 
 if (-not (Test-Path $appPath)) {
     Write-Error "Application not found at: $appPath"
@@ -498,7 +498,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
 **Enable Verbose Logging**:
 ```powershell
 $VerbosePreference = 'Continue'
-./App/GenesysCloudTool_UX_Prototype_v2_1.ps1
+./App/GenesysCloudTool_UX_Prototype.ps1
 ```
 
 **Check Job Logs**:
