@@ -66,10 +66,10 @@ Set-GcAuthConfig -ClientId $config.ClientId
 1. **Create OAuth client in Genesys Cloud Admin**
    - Use Authorization Code Grant with PKCE
    - Set minimal required scopes
-   - Configure redirect URI: `http://localhost:8080/oauth/callback`
+   - Configure redirect URI: `http://localhost:8085/callback`
 
 2. **Store Client ID securely**
-   - Edit `App/GenesysCloudTool_UX_Prototype_v2_1.ps1`
+   - Edit `App/GenesysCloudTool_UX_Prototype.ps1`
    - Update `Set-GcAuthConfig` section
    - Do NOT commit if Client ID is sensitive
 
@@ -346,7 +346,7 @@ Before submitting code:
 
 ### 2. Localhost OAuth Callback
 
-**Risk**: Callback server binds to localhost:8080
+**Risk**: Callback server binds to localhost:8085
 
 **Mitigation**:
 - Only binds to localhost (not 0.0.0.0)

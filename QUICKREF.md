@@ -28,13 +28,13 @@ cd AGenesysToolKit
 
 ```powershell
 # Edit main application file
-notepad App/GenesysCloudTool_UX_Prototype_v2_1.ps1
+notepad App/GenesysCloudTool_UX_Prototype.ps1
 
 # Find and update this section:
 Set-GcAuthConfig `
   -ClientId 'YOUR-CLIENT-ID-HERE' `
-  -Region 'mypurecloud.com' `
-  -RedirectUri 'http://localhost:8080/oauth/callback'
+  -Region 'usw2.pure.cloud' `
+  -RedirectUri 'http://localhost:8085/callback'
 ```
 
 **Need an OAuth client?** See [CONFIGURATION.md](docs/CONFIGURATION.md)
@@ -43,7 +43,7 @@ Set-GcAuthConfig `
 
 ```powershell
 # Launch application
-./App/GenesysCloudTool_UX_Prototype_v2_1.ps1
+./App/GenesysCloudTool_UX_Prototype.ps1
 
 # In UI:
 # 1. Click "Login..." button
