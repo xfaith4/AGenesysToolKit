@@ -81,7 +81,7 @@ Allow outbound HTTPS (443) to:
 1. Admin access to create OAuth clients
 2. Organization-level OAuth client (recommended) or user-level
 3. Grant type: Authorization Code with PKCE
-4. Redirect URI: `http://localhost:8085/oauth/callback`
+4. Redirect URI: `http://localhost:8085/callback`
 
 **Required Permissions** (minimum):
 - `authorization:readonly`
@@ -173,7 +173,7 @@ See [CONFIGURATION.md](docs/CONFIGURATION.md) for detailed OAuth setup.
    ```
    Name: AGenesysToolKit Production
    Grant Type: Authorization Code with PKCE
-   Redirect URI: http://localhost:8085/oauth/callback
+   Redirect URI: http://localhost:8085/callback
    Token Duration: 43200 seconds (12 hours)
    ```
 
@@ -214,7 +214,7 @@ Edit `App/GenesysCloudTool_UX_Prototype.ps1`:
 Set-GcAuthConfig `
   -ClientId 'your-production-client-id' `
   -Region 'mypurecloud.com' `
-  -RedirectUri 'http://localhost:8085/oauth/callback'
+  -RedirectUri 'http://localhost:8085/callback'
 ```
 
 **Option B: External Configuration** (for flexible deployment)
@@ -226,7 +226,7 @@ Create `config/production.json`:
   "oauth": {
     "clientId": "your-production-client-id",
     "region": "mypurecloud.com",
-    "redirectUri": "http://localhost:8085/oauth/callback"
+    "redirectUri": "http://localhost:8085/callback"
   },
   "application": {
     "logLevel": "Information",

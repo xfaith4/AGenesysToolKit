@@ -46,8 +46,8 @@ All baseline tests **PASSING**:
 
 **Location**: `/.env.example`
 
-#### 2. Documentation Port Inconsistencies
-**Issue**: Multiple docs referenced wrong OAuth redirect port (8080 vs 8085)  
+#### 2. Documentation Port and Path Inconsistencies
+**Issue**: Multiple docs referenced wrong OAuth redirect port (8080 vs 8085) and wrong path (/oauth/callback vs /callback)  
 **Impact**: Users would configure OAuth client incorrectly, causing auth failures  
 **Files Fixed**:
 - `README.md` - Updated redirect URI and scopes
@@ -58,7 +58,8 @@ All baseline tests **PASSING**:
 
 **Correct Values**:
 - ✅ Port: `8085`
-- ✅ URI: `http://localhost:8085/callback`
+- ✅ Path: `/callback`
+- ✅ Full URI: `http://localhost:8085/callback`
 - ✅ App: `GenesysCloudTool_UX_Prototype.ps1`
 
 #### 3. Outdated Application Filename References
@@ -74,6 +75,13 @@ All baseline tests **PASSING**:
 - `users`
 
 ### What Was NOT Changed (Intentional)
+
+#### Region Variation (usw2.pure.cloud vs mypurecloud.com)
+- **Code default**: `usw2.pure.cloud` (US West 2)
+- **DEPLOYMENT.md example**: `mypurecloud.com` (generic template)
+- **Status**: Both are valid Genesys Cloud regions
+- **Decision**: No change needed - DEPLOYMENT.md uses generic example for templates, code uses specific default
+- **Reason**: Templates should be region-agnostic, code defaults to most common region
 
 #### License Badge (TBD)
 - **Status**: `[![License](https://img.shields.io/badge/license-TBD-lightgrey.svg)](LICENSE)`
