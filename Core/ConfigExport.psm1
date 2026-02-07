@@ -1,6 +1,8 @@
 # ConfigExport.psm1
 # Core module for exporting Genesys Cloud configuration to JSON/YAML
 
+Set-StrictMode -Version Latest
+
 function Export-GcFlowsConfig {
   <#
   .SYNOPSIS
