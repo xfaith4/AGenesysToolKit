@@ -1,6 +1,8 @@
 # Dependencies.psm1
 # Core module for dependency analysis and impact mapping
 
+Set-StrictMode -Version Latest
+
 function Search-GcFlowReferences {
   <#
   .SYNOPSIS

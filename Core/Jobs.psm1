@@ -2,6 +2,8 @@
 
 # Requires: Invoke-GcRequest + Invoke-GcPagedRequest from Core/GenesysClient.psm1
 
+Set-StrictMode -Version Latest
+
 function Wait-GcAsyncJob {
   [CmdletBinding()]
   param(

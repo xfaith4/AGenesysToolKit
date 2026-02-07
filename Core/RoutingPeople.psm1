@@ -1,6 +1,8 @@
 # RoutingPeople.psm1
 # Core module for Routing & People operations (Queues, Skills, Users & Presence)
 
+Set-StrictMode -Version Latest
+
 function Get-GcQueues {
   <#
   .SYNOPSIS
