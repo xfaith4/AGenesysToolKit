@@ -617,6 +617,12 @@ function Invoke-GcSampleRequest {
       }
     }
 
+    '^GET /api/v2/flows/(?<flowId>[^/]+)$' {
+      $f = @($dataset.flows | Where-Object { $_.id -eq $matches.flowId } | Select-Object -First 1)
+      if (-not $f -or $f.Count -eq 0) { return [pscustomobject]@{ id = $matches.flowId; name = 'Unknown Flow (Offline)' } }
+      return $f[0]
+    }
+
     '^GET /api/v2/flows/(?<flowId>[^/]+)/latestconfiguration$' {
       return [pscustomobject]@{
         id = $matches.flowId

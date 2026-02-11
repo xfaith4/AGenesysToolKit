@@ -1039,6 +1039,55 @@ function Refresh-PrimaryActionButtons {
   }
 }
 
+function Apply-DisabledReasonsToView {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$false)] $Root
+  )
+
+  if ($null -eq $Root) { return }
+
+  $defaultReason = if (Test-AuthReady) {
+    'This option is unavailable until required data is loaded or prerequisites are complete for this module.'
+  } else {
+    Get-AuthUnavailableReason
+  }
+
+  $queue = [System.Collections.Queue]::new()
+  $queue.Enqueue($Root)
+
+  while ($queue.Count -gt 0) {
+    $node = $queue.Dequeue()
+    if ($null -eq $node) { continue }
+
+    try {
+      if ($node -is [System.Windows.Controls.Primitives.ButtonBase]) {
+        $enabled = $true
+        try { $enabled = [bool]$node.IsEnabled } catch { $enabled = $true }
+        if (-not $enabled) {
+          $hasTooltip = $false
+          try {
+            $tipText = if ($null -ne $node.ToolTip) { [string]$node.ToolTip } else { '' }
+            $hasTooltip = -not [string]::IsNullOrWhiteSpace($tipText)
+          } catch { $hasTooltip = $false }
+
+          if (-not $hasTooltip) {
+            Set-ControlEnabled -Control $node -Enabled $false -DisabledReason $defaultReason
+          }
+        }
+      }
+    } catch { }
+
+    try {
+      $childCount = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($node)
+      for ($i = 0; $i -lt $childCount; $i++) {
+        $child = [System.Windows.Media.VisualTreeHelper]::GetChild($node, $i)
+        if ($null -ne $child) { $queue.Enqueue($child) }
+      }
+    } catch { }
+  }
+}
+
 ### END: AUTH_READY_BUTTON_ENABLE_HELPERS
 
 function Add-ClickSafe {
@@ -10372,6 +10421,7 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     }
   }
 
+  try { Apply-DisabledReasonsToView -Root $MainHost.Content } catch { }
   Set-Status "Workspace: $workspace  |  Module: $module"
 }
 

@@ -3,6 +3,23 @@
 
 Set-StrictMode -Version Latest
 
+function Get-GcConfigProperty {
+  param(
+    [Parameter(Mandatory=$false)][object]$Object,
+    [Parameter(Mandatory)][string]$Name,
+    [Parameter(Mandatory=$false)]$DefaultValue = $null
+  )
+
+  if ($null -eq $Object) { return $DefaultValue }
+  try {
+    $prop = $Object.PSObject.Properties[$Name]
+    if ($null -eq $prop) { return $DefaultValue }
+    return $prop.Value
+  } catch {
+    return $DefaultValue
+  }
+}
+
 function Export-GcFlowsConfig {
   <#
   .SYNOPSIS
@@ -47,15 +64,20 @@ function Export-GcFlowsConfig {
 
     # Export each flow
     $manifest = @()
-    foreach ($flow in $flows) {
-      $filename = "flow_$($flow.id).json"
+    foreach ($flow in @($flows)) {
+      $flowId = [string](Get-GcConfigProperty -Object $flow -Name 'id' -DefaultValue '')
+      if ([string]::IsNullOrWhiteSpace($flowId)) { $flowId = [guid]::NewGuid().ToString('N') }
+      $flowName = [string](Get-GcConfigProperty -Object $flow -Name 'name' -DefaultValue 'Unknown Flow')
+      $flowType = [string](Get-GcConfigProperty -Object $flow -Name 'type' -DefaultValue 'Unknown')
+
+      $filename = "flow_$flowId.json"
       $filepath = Join-Path -Path $flowsDir -ChildPath $filename
       $flow | ConvertTo-Json -Depth 20 | Set-Content -Path $filepath -Encoding UTF8
       
       $manifest += @{
-        id = $flow.id
-        name = $flow.name
-        type = $flow.type
+        id = $flowId
+        name = $flowName
+        type = $flowType
         filename = $filename
       }
     }
@@ -66,7 +88,7 @@ function Export-GcFlowsConfig {
 
     return @{
       Type = 'Flows'
-      Count = $flows.Count
+      Count = @($flows).Count
       Directory = $flowsDir
       Manifest = $manifestPath
     }
@@ -108,14 +130,18 @@ function Export-GcQueuesConfig {
 
     # Export each queue
     $manifest = @()
-    foreach ($queue in $queues) {
-      $filename = "queue_$($queue.id).json"
+    foreach ($queue in @($queues)) {
+      $queueId = [string](Get-GcConfigProperty -Object $queue -Name 'id' -DefaultValue '')
+      if ([string]::IsNullOrWhiteSpace($queueId)) { $queueId = [guid]::NewGuid().ToString('N') }
+      $queueName = [string](Get-GcConfigProperty -Object $queue -Name 'name' -DefaultValue 'Unknown Queue')
+
+      $filename = "queue_$queueId.json"
       $filepath = Join-Path -Path $queuesDir -ChildPath $filename
       $queue | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
       
       $manifest += @{
-        id = $queue.id
-        name = $queue.name
+        id = $queueId
+        name = $queueName
         filename = $filename
       }
     }
@@ -126,7 +152,7 @@ function Export-GcQueuesConfig {
 
     return @{
       Type = 'Queues'
-      Count = $queues.Count
+      Count = @($queues).Count
       Directory = $queuesDir
       Manifest = $manifestPath
     }
@@ -168,14 +194,18 @@ function Export-GcSkillsConfig {
 
     # Export each skill
     $manifest = @()
-    foreach ($skill in $skills) {
-      $filename = "skill_$($skill.id).json"
+    foreach ($skill in @($skills)) {
+      $skillId = [string](Get-GcConfigProperty -Object $skill -Name 'id' -DefaultValue '')
+      if ([string]::IsNullOrWhiteSpace($skillId)) { $skillId = [guid]::NewGuid().ToString('N') }
+      $skillName = [string](Get-GcConfigProperty -Object $skill -Name 'name' -DefaultValue 'Unknown Skill')
+
+      $filename = "skill_$skillId.json"
       $filepath = Join-Path -Path $skillsDir -ChildPath $filename
       $skill | ConvertTo-Json -Depth 10 | Set-Content -Path $filepath -Encoding UTF8
       
       $manifest += @{
-        id = $skill.id
-        name = $skill.name
+        id = $skillId
+        name = $skillName
         filename = $filename
       }
     }
@@ -186,7 +216,7 @@ function Export-GcSkillsConfig {
 
     return @{
       Type = 'Skills'
-      Count = $skills.Count
+      Count = @($skills).Count
       Directory = $skillsDir
       Manifest = $manifestPath
     }
@@ -228,15 +258,20 @@ function Export-GcDataActionsConfig {
 
     # Export each action
     $manifest = @()
-    foreach ($action in $actions) {
-      $filename = "action_$($action.id).json"
+    foreach ($action in @($actions)) {
+      $actionId = [string](Get-GcConfigProperty -Object $action -Name 'id' -DefaultValue '')
+      if ([string]::IsNullOrWhiteSpace($actionId)) { $actionId = [guid]::NewGuid().ToString('N') }
+      $actionName = [string](Get-GcConfigProperty -Object $action -Name 'name' -DefaultValue 'Unknown Action')
+      $actionCategory = [string](Get-GcConfigProperty -Object $action -Name 'category' -DefaultValue '')
+
+      $filename = "action_$actionId.json"
       $filepath = Join-Path -Path $actionsDir -ChildPath $filename
       $action | ConvertTo-Json -Depth 20 | Set-Content -Path $filepath -Encoding UTF8
       
       $manifest += @{
-        id = $action.id
-        name = $action.name
-        category = $action.category
+        id = $actionId
+        name = $actionName
+        category = $actionCategory
         filename = $filename
       }
     }
@@ -247,7 +282,7 @@ function Export-GcDataActionsConfig {
 
     return @{
       Type = 'DataActions'
-      Count = $actions.Count
+      Count = @($actions).Count
       Directory = $actionsDir
       Manifest = $manifestPath
     }
