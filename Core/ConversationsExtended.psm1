@@ -1,6 +1,8 @@
 # ConversationsExtended.psm1
 # Extended module for Conversations operations (lookup, media, analytics jobs, etc.)
 
+Set-StrictMode -Version Latest
+
 function Search-GcConversations {
   <#
   .SYNOPSIS

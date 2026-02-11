@@ -54,8 +54,8 @@ cd AGenesysToolKit
    - Navigate to Admin → Integrations → OAuth
    - Click "Add Client"
    - Grant Type: **Code Authorization** (with PKCE)
-   - Redirect URI: `http://localhost:8080/oauth/callback`
-   - Required scopes: `conversations`, `analytics`, `users`, `routing`
+   - Redirect URI: `http://localhost:8085/callback`
+   - Required scopes: `conversations`, `analytics`, `notifications`, `users`
 
 2. **Update the application**:
    - Edit `App/GenesysCloudTool_UX_Prototype.ps1`

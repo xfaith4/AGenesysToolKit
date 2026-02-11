@@ -1,6 +1,8 @@
 # Analytics.psm1
 # Core module for analytics aggregates and abandonment metrics
 
+Set-StrictMode -Version Latest
+
 function Get-GcAbandonmentMetrics {
   <#
   .SYNOPSIS

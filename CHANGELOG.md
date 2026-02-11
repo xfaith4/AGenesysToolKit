@@ -16,12 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI/CD workflow for automated testing and linting
 - Enhanced .gitignore for comprehensive file exclusion
 - docs/Archive/ folder for historical implementation documentation
+- .env.example template for OAuth configuration guidance
+- **AUDIT_REPORT.md** - Comprehensive code audit documentation (2026-02-07)
+- **Set-StrictMode** to 6 additional modules (Analytics, ConfigExport, ConversationsExtended, Dependencies, Jobs, RoutingPeople)
 
 ### Changed
 - Reorganized documentation for better new user experience
 - Enhanced README.md with clear 4-step Quick Start process
 - Restructured README.md documentation section by audience (Essential, Developers, Operations)
 - Improved QUICKREF.md quick links section
+- **All 16 core modules now have Set-StrictMode -Version Latest enabled**
+
+### Fixed
+- Updated OAuth redirect URI port from 8080 to 8085 across all documentation
+- Corrected app filename references (GenesysCloudTool_UX_Prototype_v2_1.ps1 → GenesysCloudTool_UX_Prototype.ps1)
+- Fixed inconsistent OAuth scopes in documentation
 
 ### Documentation
 - Improved README.md with business value metrics
@@ -29,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced onboarding documentation for new developers
 - Archived 22 historical implementation summaries and completed roadmaps
 - Created Archive/README.md explaining archived content and retention policy
+- Added .env.example with comprehensive OAuth setup instructions
+- **Created comprehensive AUDIT_REPORT.md documenting code audit findings**
+
+### Security
+- **Full code audit completed** - No vulnerabilities, placeholders, or stubouts found
+- Verified OAuth PKCE implementation security
+- Confirmed no hardcoded secrets or credentials
+- Validated input sanitization and error handling
+- Enhanced error detection with StrictMode in all modules
 
 ## [0.6.0] - 2026-01-13
 
