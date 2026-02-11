@@ -1,4 +1,4 @@
-# Genesys Cloud Tool — Real Implementation v3.0
+﻿# Genesys Cloud Tool — Real Implementation v3.0
 # Money path flow: Login → Start Subscription → Stream events → Open Timeline → Export Packet
 
 param(
@@ -332,14 +332,17 @@ function script:Refresh-TemplateList {
   )
 
   $searchText = ''
-  try { $searchText = ($h.TxtTemplateSearch.Text ?? '') } catch { $searchText = '' }
+  try { $searchText = [string]$h.TxtTemplateSearch.Text } catch { $searchText = '' }
+  if ($null -eq $searchText) { $searchText = '' }
   $searchText = $searchText.ToLower()
 
   $filtered = $Templates
   if ($searchText -and $searchText -ne 'search templates...') {
     $filtered = $Templates | Where-Object {
-      (($_.Name ?? '').ToLower().Contains($searchText)) -or
-      (($_.Description ?? '').ToLower().Contains($searchText))
+      $tmplName = if ($null -ne $_.Name) { [string]$_.Name } else { '' }
+      $tmplDesc = if ($null -ne $_.Description) { [string]$_.Description } else { '' }
+      ($tmplName.ToLower().Contains($searchText)) -or
+      ($tmplDesc.ToLower().Contains($searchText))
     }
   }
 
@@ -891,21 +894,66 @@ function New-Artifact {
   }
 }
 
+$script:ControlTooltipCache = @{}
+$script:PrimaryActionHandleMaps = [System.Collections.Generic.List[hashtable]]::new()
+
 function Set-ControlEnabled {
+  [CmdletBinding()]
   param(
-    $Control,
-    [Parameter(Mandatory)][bool]$Enabled
+    [Parameter(Mandatory=$false)] $Control,
+    [Parameter(Mandatory=$true)] [bool] $Enabled,
+    [string] $DisabledReason
   )
+
   if ($null -eq $Control) { return }
+
   try {
     if ($Control -is [System.Windows.Threading.DispatcherObject] -and -not $Control.Dispatcher.CheckAccess()) {
-      $Control.Dispatcher.Invoke(([action]{ Set-ControlEnabled -Control $Control -Enabled $Enabled }))
+      $Control.Dispatcher.Invoke(([action]{ Set-ControlEnabled -Control $Control -Enabled $Enabled -DisabledReason $DisabledReason }))
       return
     }
   } catch { }
 
-  try { $Control.IsEnabled = $Enabled; return } catch { }
-  try { $Control.Enabled = $Enabled; return } catch { }
+  # WPF
+  if ($Control.PSObject.Properties.Match('IsEnabled').Count -gt 0) {
+    try { $Control.IsEnabled = $Enabled } catch { }
+  }
+
+  # WinForms
+  if ($Control.PSObject.Properties.Match('Enabled').Count -gt 0) {
+    try { $Control.Enabled = $Enabled } catch { }
+  }
+
+  # Attach clear disabled-reason tooltips so "greyed out" controls explain why.
+  if ($Control.PSObject.Properties.Match('ToolTip').Count -gt 0) {
+    $key = [string][System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($Control)
+
+    if ($Enabled) {
+      if ($script:ControlTooltipCache.ContainsKey($key)) {
+        try { $Control.ToolTip = $script:ControlTooltipCache[$key] } catch { }
+        $script:ControlTooltipCache.Remove($key) | Out-Null
+      }
+      return
+    }
+
+    if (-not $script:ControlTooltipCache.ContainsKey($key)) {
+      try { $script:ControlTooltipCache[$key] = $Control.ToolTip } catch { $script:ControlTooltipCache[$key] = $null }
+    }
+
+    $reason = $DisabledReason
+    if ([string]::IsNullOrWhiteSpace($reason)) {
+      try {
+        if ($Control.ToolTip -and -not [string]::IsNullOrWhiteSpace([string]$Control.ToolTip)) {
+          $reason = [string]$Control.ToolTip
+        }
+      } catch { }
+    }
+    if ([string]::IsNullOrWhiteSpace($reason)) {
+      $reason = 'This option is currently unavailable. Complete required prerequisites or wait for the current action to finish.'
+    }
+
+    try { $Control.ToolTip = $reason } catch { }
+  }
 }
 
 ### BEGIN: AUTH_READY_BUTTON_ENABLE_HELPERS
@@ -925,25 +973,24 @@ function Test-AuthReady {
   return (-not [string]::IsNullOrWhiteSpace($script:AppState.AccessToken))
 }
 
-function Enable-PrimaryActionButtons {
+function Get-AuthUnavailableReason {
   [CmdletBinding()]
-  param(
-    [Parameter(Mandatory=$false)]
-    [hashtable]$Handles
-  )
+  param()
 
-  if ($null -eq $Handles) { return }
+  if (Test-AuthReady) { return $null }
+  return 'Authentication required. Open Backstage > Authentication and sign in, or set/test an access token.'
+}
 
-  $canRun = Test-AuthReady
+function Get-PrimaryActionKeys {
+  [CmdletBinding()]
+  param()
 
-  # Only enable "primary actions" (Load/Search/Start/Query).
-  # Exports should typically remain disabled until data exists.
-  $primaryKeys = @(
+  return @(
     'BtnQueueLoad',
     'BtnSkillLoad',
     'BtnUserLoad',
     'BtnFlowLoad',
-    'btnConvSearch',
+    'BtnConvSearch',
     'BtnGeneratePacket',
     'BtnAbandonQuery',
     'BtnSearchReferences',
@@ -951,38 +998,48 @@ function Enable-PrimaryActionButtons {
     'BtnStart',
     'BtnRunReport'
   )
+}
 
-  foreach ($k in $primaryKeys) {
+function Enable-PrimaryActionButtons {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$false)]
+    [hashtable]$Handles,
+    [switch]$SkipRegistration
+  )
+
+  if ($null -eq $Handles) { return }
+
+  if (-not $SkipRegistration) {
+    $already = $false
+    foreach ($map in @($script:PrimaryActionHandleMaps)) {
+      if ([object]::ReferenceEquals($map, $Handles)) { $already = $true; break }
+    }
+    if (-not $already) { [void]$script:PrimaryActionHandleMaps.Add($Handles) }
+  }
+
+  $canRun = Test-AuthReady
+  $authReason = if ($canRun) { $null } else { Get-AuthUnavailableReason }
+
+  foreach ($k in (Get-PrimaryActionKeys)) {
     if ($Handles.ContainsKey($k) -and $Handles[$k]) {
-      Set-ControlEnabled -Control $Handles[$k] -Enabled $canRun
+      Set-ControlEnabled -Control $Handles[$k] -Enabled $canRun -DisabledReason $authReason
     }
   }
 }
 
-### END: AUTH_READY_BUTTON_ENABLE_HELPERS
-
-
-function Set-ControlEnabled {
+function Refresh-PrimaryActionButtons {
   [CmdletBinding()]
-  param(
-    [Parameter(Mandatory=$false)] $Control,
-    [Parameter(Mandatory=$true)] [bool] $Enabled
-  )
+  param()
 
-  if ($null -eq $Control) { return }
-
-  # WPF
-  if ($Control.PSObject.Properties.Match('IsEnabled').Count -gt 0) {
-    try { $Control.IsEnabled = $Enabled; return } catch { }
+  foreach ($handles in @($script:PrimaryActionHandleMaps)) {
+    try {
+      Enable-PrimaryActionButtons -Handles $handles -SkipRegistration
+    } catch { }
   }
-
-  # WinForms
-  if ($Control.PSObject.Properties.Match('Enabled').Count -gt 0) {
-    try { $Control.Enabled = $Enabled; return } catch { }
-  }
-
-  # Fallback: do nothing (better than crashing)
 }
+
+### END: AUTH_READY_BUTTON_ENABLE_HELPERS
 
 function Add-ClickSafe {
   [CmdletBinding()]
@@ -1409,7 +1466,14 @@ function Initialize-GcAddons {
 
   foreach ($a in @(Get-GcAddonDefinitions -AddonsRoot $addonsRoot)) {
     if (-not $script:WorkspaceModules.Contains($a.Workspace)) {
-      Write-GcTrace -Level 'ADDON' -Message ("Addon '{0}' ignored: unknown workspace '{1}'." -f ($a.Name ?? $a.Id ?? $a.Module), $a.Workspace)
+      $addonIdentity = if (-not [string]::IsNullOrWhiteSpace([string]$a.Name)) {
+        [string]$a.Name
+      } elseif (-not [string]::IsNullOrWhiteSpace([string]$a.Id)) {
+        [string]$a.Id
+      } else {
+        [string]$a.Module
+      }
+      Write-GcTrace -Level 'ADDON' -Message ("Addon '{0}' ignored: unknown workspace '{1}'." -f $addonIdentity, $a.Workspace)
       continue
     }
 
@@ -1510,10 +1574,16 @@ function Get-GcAddonView {
   [CmdletBinding()]
   param([Parameter(Mandatory)][pscustomobject]$Addon)
 
+  $addonTitle = if (-not [string]::IsNullOrWhiteSpace([string]$Addon.Name)) {
+    [string]$Addon.Name
+  } else {
+    [string]$Addon.Module
+  }
+
   try {
     Ensure-GcAddonLoaded -Addon $Addon
   } catch {
-    return New-PlaceholderView -Title ($Addon.Name ?? $Addon.Module) -Hint ("Failed to load addon: {0}" -f $_.Exception.Message)
+    return New-PlaceholderView -Title $addonTitle -Hint ("Failed to load addon: {0}" -f $_.Exception.Message)
   }
 
   if ($Addon.ViewFactory) {
@@ -1522,7 +1592,7 @@ function Get-GcAddonView {
       try {
         return & $cmd -Addon $Addon
       } catch {
-        return New-PlaceholderView -Title ($Addon.Name ?? $Addon.Module) -Hint ("Addon view factory failed: {0}" -f $_.Exception.Message)
+        return New-PlaceholderView -Title $addonTitle -Hint ("Addon view factory failed: {0}" -f $_.Exception.Message)
       }
     }
   }
@@ -1881,6 +1951,7 @@ function Set-ControlValue {
 # -----------------------------
 function Set-TopContext {
   $TxtContext.Text = "Region: $($script:AppState.Region)  |  Org: $($script:AppState.Org)  |  Auth: $($script:AppState.Auth)  |  Token: $($script:AppState.TokenStatus)"
+  try { Refresh-PrimaryActionButtons } catch { }
 }
 
 function Set-Status([string]$msg) { $TxtStatus.Text = $msg }
@@ -2705,7 +2776,9 @@ function Show-SetTokenDialog {
       # Get and clean region input
       $regionRaw = $txtRegion.Text
       $region = Normalize-GcInstanceName -RegionText $regionRaw
-      Write-GcDiag ("Manual token entry: region(raw)='{0}' region(normalized)='{1}'" -f ($regionRaw ?? ''), ($region ?? ''))
+      $regionRawForLog = if ($null -ne $regionRaw) { [string]$regionRaw } else { '' }
+      $regionForLog = if ($null -ne $region) { [string]$region } else { '' }
+      Write-GcDiag ("Manual token entry: region(raw)='{0}' region(normalized)='{1}'" -f $regionRawForLog, $regionForLog)
 
       # Get token and perform comprehensive sanitization
       $tokenRaw = $txtToken.Text
@@ -2867,7 +2940,8 @@ function Start-GcOAuthLoginUi {
   $authConfig = Get-GcAuthConfig
 
   $clientIdTrim = ''
-  try { $clientIdTrim = [string]($authConfig.ClientId ?? '') } catch { $clientIdTrim = [string]$authConfig.ClientId }
+  try { $clientIdTrim = [string]$authConfig.ClientId } catch { $clientIdTrim = [string]$authConfig.ClientId }
+  if ($null -eq $clientIdTrim) { $clientIdTrim = '' }
   $clientIdTrim = $clientIdTrim.Trim()
   $isPlaceholderClientId = (-not $clientIdTrim) -or ($clientIdTrim -in @('YOUR_CLIENT_ID_HERE','your-client-id','clientid','client-id'))
   if ($isPlaceholderClientId) {
@@ -2881,7 +2955,8 @@ function Start-GcOAuthLoginUi {
   }
 
   $redirectUriTrim = ''
-  try { $redirectUriTrim = [string]($authConfig.RedirectUri ?? '') } catch { $redirectUriTrim = [string]$authConfig.RedirectUri }
+  try { $redirectUriTrim = [string]$authConfig.RedirectUri } catch { $redirectUriTrim = [string]$authConfig.RedirectUri }
+  if ($null -eq $redirectUriTrim) { $redirectUriTrim = '' }
   $redirectUriTrim = $redirectUriTrim.Trim()
   if (-not $redirectUriTrim) {
     [System.Windows.MessageBox]::Show(
@@ -3357,11 +3432,15 @@ function Show-AuthenticationDialog {
     if ($txtTokenRegion) { $txtTokenRegion.Text = $region }
 
     if ($authConfig -and $txtOauthConfig) {
+      $cfgRegion = if ($null -ne $authConfig.Region) { [string]$authConfig.Region } else { '' }
+      $cfgClientId = if ($null -ne $authConfig.ClientId) { [string]$authConfig.ClientId } else { '' }
+      $cfgRedirectUri = if ($null -ne $authConfig.RedirectUri) { [string]$authConfig.RedirectUri } else { '' }
+      $cfgScopes = if ($null -ne $authConfig.Scopes) { @($authConfig.Scopes) } else { @() }
       $txtOauthConfig.Text = @(
-        ("Region:       {0}" -f ($authConfig.Region ?? ''))
-        ("ClientId:     {0}" -f ($authConfig.ClientId ?? ''))
-        ("RedirectUri:  {0}" -f ($authConfig.RedirectUri ?? ''))
-        ("Scopes:       {0}" -f (($authConfig.Scopes ?? @()) -join ' '))
+        ("Region:       {0}" -f $cfgRegion)
+        ("ClientId:     {0}" -f $cfgClientId)
+        ("RedirectUri:  {0}" -f $cfgRedirectUri)
+        ("Scopes:       {0}" -f ($cfgScopes -join ' '))
         ("HasSecret:    {0}" -f (-not [string]::IsNullOrWhiteSpace($authConfig.ClientSecret)))
       ) -join "`n"
     }
@@ -3513,7 +3592,9 @@ function Show-AuthenticationDialog {
 
     $btnClose.Add_Click({ $dialog.DialogResult = $true; $dialog.Close() })
 
-    & $setDialogStatus ("Current: {0} | {1}" -f ($script:AppState.Auth ?? ''), ($script:AppState.TokenStatus ?? ''))
+    $currentAuth = if ($null -ne $script:AppState.Auth) { [string]$script:AppState.Auth } else { '' }
+    $currentTokenStatus = if ($null -ne $script:AppState.TokenStatus) { [string]$script:AppState.TokenStatus } else { '' }
+    & $setDialogStatus ("Current: {0} | {1}" -f $currentAuth, $currentTokenStatus)
 
     $dialog.ShowDialog() | Out-Null
   } catch {
@@ -6593,9 +6674,15 @@ function New-MediaQualityView {
         $script:RecordingsData = $job.Result
 
         $displayData = $job.Result | ForEach-Object {
+          $convId = $null
+          try { if ($_.conversationId) { $convId = $_.conversationId } } catch { }
+          if (-not $convId) {
+            try { if ($_.conversation -and $_.conversation.id) { $convId = $_.conversation.id } } catch { }
+          }
+
           [PSCustomObject]@{
             RecordingId = if ($_.id) { $_.id } else { 'N/A' }
-            ConversationId = if ($_.conversationId) { $_.conversationId } else { 'N/A' }
+            ConversationId = if ($convId) { $convId } else { 'N/A' }
             Duration = if ($_.durationMilliseconds) { [Math]::Round($_.durationMilliseconds / 1000, 1) } else { 0 }
             Created = if ($_.dateCreated) { $_.dateCreated } else { 'N/A' }
           }
@@ -7325,7 +7412,9 @@ function New-DataActionsView {
     if (-not $script:DataActionsData -or $script:DataActionsData.Count -eq 0) { return }
 
     $searchText = ''
-    try { $searchText = ($txtSearch.Text ?? '').ToLower() } catch { $searchText = '' }
+    try { $searchText = [string]$txtSearch.Text } catch { $searchText = '' }
+    if ($null -eq $searchText) { $searchText = '' }
+    $searchText = $searchText.ToLower()
 
     $filtered = $script:DataActionsData
     if (-not [string]::IsNullOrWhiteSpace($searchText) -and $searchText -ne "search actions...") {
@@ -9371,6 +9460,50 @@ function New-ReportsExportsView {
   $currentReportBundle = $null
   $parameterControls = @{}
 
+  $setReportExportAvailability = {
+    param($bundle)
+
+    $hasHtml = [bool]($bundle -and $bundle.ReportHtmlPath -and (Test-Path $bundle.ReportHtmlPath))
+    $hasJson = [bool]($bundle -and $bundle.DataJsonPath -and (Test-Path $bundle.DataJsonPath))
+    $hasCsv = [bool]($bundle -and $bundle.DataCsvPath -and (Test-Path $bundle.DataCsvPath))
+    $hasXlsx = [bool]($bundle -and $bundle.DataXlsxPath -and (Test-Path $bundle.DataXlsxPath))
+    $hasBundleFolder = [bool]($bundle -and $bundle.BundlePath -and (Test-Path $bundle.BundlePath))
+
+    Set-ControlEnabled -Control $h.BtnOpenInBrowser -Enabled $hasHtml -DisabledReason 'Run a report first to generate an HTML preview.'
+    Set-ControlEnabled -Control $h.BtnExportHtml -Enabled $hasHtml -DisabledReason 'Run a report first to generate report HTML.'
+    Set-ControlEnabled -Control $h.BtnExportJson -Enabled $hasJson -DisabledReason 'Run a report first to generate JSON output.'
+    Set-ControlEnabled -Control $h.BtnExportCsv -Enabled $hasCsv -DisabledReason 'Run a report first to generate CSV output.'
+    Set-ControlEnabled -Control $h.BtnExportExcel -Enabled $hasXlsx -DisabledReason 'Excel output is unavailable until a report is run with ImportExcel support.'
+    Set-ControlEnabled -Control $h.BtnCopyPath -Enabled $hasBundleFolder -DisabledReason 'Run a report first to create an artifact bundle path.'
+    Set-ControlEnabled -Control $h.BtnOpenFolder -Enabled $hasBundleFolder -DisabledReason 'Run a report first to create an artifact folder.'
+  }.GetNewClosure()
+
+  $updateRunReportAvailability = {
+    param([bool]$HasTemplateSelected)
+
+    $authReady = Test-AuthReady
+    $enabled = ($authReady -and $HasTemplateSelected)
+
+    $reason = $null
+    if (-not $authReady) {
+      $reason = Get-AuthUnavailableReason
+    } elseif (-not $HasTemplateSelected) {
+      $reason = 'Select a report template to enable this action.'
+    }
+
+    Set-ControlEnabled -Control $h.BtnRunReport -Enabled $enabled -DisabledReason $reason
+
+    if ($h.BtnRunReport) {
+      if ($enabled) {
+        $h.BtnRunReport.Content = "Run Report ▶"
+      } elseif (-not $HasTemplateSelected) {
+        $h.BtnRunReport.Content = "Run Report (Select a template first)"
+      } else {
+        $h.BtnRunReport.Content = "Run Report (Authentication required)"
+      }
+    }
+  }.GetNewClosure()
+
   # Load templates
   $templates = Get-GcReportTemplates
 
@@ -9641,26 +9774,19 @@ function New-ReportsExportsView {
         # Show selection confirmation
         try { Set-Status "Template selected: $($template.Name)" } catch { }
 
-        # Enable Run Report button
-        try {
-          if ($h.BtnRunReport) {
-            $h.BtnRunReport.IsEnabled = $true
-            $h.BtnRunReport.Content = "Run Report ▶"
-          }
-        } catch { }
+        # Enable Run Report based on both template selection and auth readiness.
+        try { & $updateRunReportAvailability $true } catch { }
 
         # Build parameter panel
         & $buildParameterPanel $template
 
         # Reset current report
         $currentReportBundle = $null
+        try { & $setReportExportAvailability $null } catch { }
       } else {
         # No selection - disable Run Report button
         try {
-          if ($h.BtnRunReport) {
-            $h.BtnRunReport.IsEnabled = $false
-            $h.BtnRunReport.Content = "Run Report (Select a template first)"
-          }
+          & $updateRunReportAvailability $false
           if ($h.TxtTemplateDescription) {
             $h.TxtTemplateDescription.Background = [System.Windows.Media.Brushes]::White
           }
@@ -9689,7 +9815,7 @@ function New-ReportsExportsView {
         # Visual feedback - disable button and show progress
         $originalButtonContent = $h.BtnRunReport.Content
         try {
-          $h.BtnRunReport.IsEnabled = $false
+          Set-ControlEnabled -Control $h.BtnRunReport -Enabled $false -DisabledReason "Report is running. Wait for completion before starting another run."
           $h.BtnRunReport.Content = "⏳ Running..."
           Set-Status "Validating parameters..."
         } catch { }
@@ -9708,7 +9834,7 @@ function New-ReportsExportsView {
           )
           # Re-enable button
           try {
-            $h.BtnRunReport.IsEnabled = $true
+            & $updateRunReportAvailability $true
             $h.BtnRunReport.Content = $originalButtonContent
           } catch { }
           return
@@ -9731,8 +9857,7 @@ function New-ReportsExportsView {
 
           # Re-enable button
           try {
-            $h.BtnRunReport.IsEnabled = $true
-            $h.BtnRunReport.Content = "Run Report ▶"
+            & $updateRunReportAvailability $true
           } catch { }
 
           if ($job.Result) {
@@ -9748,7 +9873,8 @@ function New-ReportsExportsView {
               } catch { }
             }
 
-            # Enable export buttons
+            # Enable export buttons and artifact actions for generated outputs.
+            try { & $setReportExportAvailability $bundle } catch { }
 
             # Refresh artifact list
             try { & $refreshArtifactList } catch { }
@@ -9775,14 +9901,14 @@ function New-ReportsExportsView {
               [System.Windows.MessageBoxButton]::OK,
               [System.Windows.MessageBoxImage]::Error
             )
+            try { & $setReportExportAvailability $null } catch { }
           }
         }.GetNewClosure())
       } catch {
         Write-GcTrace -Level 'ERROR' -Message "BtnRunReport.Click error: $($_.Exception.Message)"
         try {
           Set-Status "✗ Error: $($_.Exception.Message)"
-          $h.BtnRunReport.IsEnabled = $true
-          $h.BtnRunReport.Content = "Run Report ▶"
+          & $updateRunReportAvailability $true
         } catch { }
 
         [System.Windows.MessageBox]::Show(
@@ -10118,6 +10244,8 @@ function New-ReportsExportsView {
   # Initialize view
   script:Refresh-TemplateList -h $h -Templates $templates
   & $refreshArtifactList
+  & $setReportExportAvailability $null
+  & $updateRunReportAvailability $false
 
   # Select first template by default
   if ($h.LstTemplates.Items.Count -gt 0) {
