@@ -23,15 +23,15 @@ PeakConcurrentExternalTrunkVoiceCalls -Interval "2026-01-25T00:00:00Z/2026-01-26
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:ApiBaseUri           = $script:ApiBaseUri           ?? 'https://api.usw2.pure.cloud'
-$script:AccessToken          = $script:AccessToken          ?? $null
-$script:ChunkSize            = $script:ChunkSize            ?? 1
-$script:ChunkUnit            = $script:ChunkUnit            ?? 'Hours'
-$script:ChunkOverlapMinutes  = $script:ChunkOverlapMinutes  ?? 120
-$script:PageSize             = $script:PageSize             ?? 100
-$script:PollIntervalSeconds  = $script:PollIntervalSeconds  ?? 2
-$script:JobTimeoutSeconds    = $script:JobTimeoutSeconds    ?? 900
-$script:AllowedEdgeIds       = $script:AllowedEdgeIds       ?? $null
+if ($null -eq $script:ApiBaseUri) { $script:ApiBaseUri = 'https://api.usw2.pure.cloud' }
+if ($null -eq $script:AccessToken) { $script:AccessToken = $null }
+if ($null -eq $script:ChunkSize) { $script:ChunkSize = 1 }
+if ($null -eq $script:ChunkUnit) { $script:ChunkUnit = 'Hours' }
+if ($null -eq $script:ChunkOverlapMinutes) { $script:ChunkOverlapMinutes = 120 }
+if ($null -eq $script:PageSize) { $script:PageSize = 100 }
+if ($null -eq $script:PollIntervalSeconds) { $script:PollIntervalSeconds = 2 }
+if ($null -eq $script:JobTimeoutSeconds) { $script:JobTimeoutSeconds = 900 }
+if ($null -eq $script:AllowedEdgeIds) { $script:AllowedEdgeIds = $null }
 
 function ConvertTo-UtcDateTime {
   param([Parameter(Mandatory)][string]$Value)

@@ -70,7 +70,7 @@ function Get-GcConversationById {
 function Get-GcRecordings {
   <#
   .SYNOPSIS
-    Retrieves recordings with optional filters.
+    Retrieves user recordings with optional filters.
   
   .PARAMETER AccessToken
     OAuth access token for authentication.
@@ -88,10 +88,24 @@ function Get-GcRecordings {
   )
 
   try {
-    $results = Invoke-GcPagedRequest -Path '/api/v2/recording/recordings' -Method GET `
+    $results = Invoke-GcPagedRequest -Path '/api/v2/userrecordings' -Method GET `
       -InstanceName $InstanceName -AccessToken $AccessToken -MaxItems $MaxItems
-    
-    return $results
+
+    # Backward-compatible shape for existing UI binding logic.
+    foreach ($recording in @($results)) {
+      if (-not $recording) { continue }
+
+      try {
+        if (-not $recording.PSObject.Properties.Match('conversationId').Count -and
+            $recording.PSObject.Properties.Match('conversation').Count -and
+            $recording.conversation -and
+            $recording.conversation.id) {
+          Add-Member -InputObject $recording -NotePropertyName 'conversationId' -NotePropertyValue $recording.conversation.id -Force
+        }
+      } catch { }
+    }
+
+    return @($results)
   } catch {
     Write-Error "Failed to retrieve recordings: $_"
     return @()
@@ -119,8 +133,8 @@ function Get-GcQualityEvaluations {
   )
 
   try {
-    $results = Invoke-GcPagedRequest -Path '/api/v2/quality/evaluations/query' -Method POST `
-      -Body @{} -InstanceName $InstanceName -AccessToken $AccessToken -MaxItems $MaxItems
+    $results = Invoke-GcPagedRequest -Path '/api/v2/quality/evaluations/query' -Method GET `
+      -InstanceName $InstanceName -AccessToken $AccessToken -MaxItems $MaxItems
     
     return $results
   } catch {
@@ -150,10 +164,32 @@ function Get-GcRecordingMedia {
   )
   
   try {
-    $result = Invoke-GcRequest -Method GET -Path "/api/v2/recording/recordings/$RecordingId/media" `
+    # Fetch user recording first (current supported API surface).
+    $userRecording = Invoke-GcRequest -Method GET -Path "/api/v2/userrecordings/$RecordingId" `
       -AccessToken $AccessToken -InstanceName $InstanceName
-    
-    return $result
+
+    if (-not $userRecording) {
+      return $null
+    }
+
+    # If conversation linkage exists, attempt richer conversation recording details.
+    $conversationId = $null
+    try {
+      if ($userRecording.conversation -and $userRecording.conversation.id) {
+        $conversationId = [string]$userRecording.conversation.id
+      }
+    } catch { }
+
+    if (-not [string]::IsNullOrWhiteSpace($conversationId)) {
+      try {
+        $recording = Invoke-GcRequest -Method GET `
+          -Path "/api/v2/conversations/$conversationId/recordings/$RecordingId" `
+          -AccessToken $AccessToken -InstanceName $InstanceName
+        if ($recording) { return $recording }
+      } catch { }
+    }
+
+    return $userRecording
   } catch {
     Write-Error "Failed to retrieve recording media: $_"
     return $null

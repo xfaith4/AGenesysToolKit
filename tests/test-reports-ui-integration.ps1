@@ -39,10 +39,10 @@ try {
   if ($templates.Count -lt 1) {
     throw "Expected at least 1 template, got $($templates.Count)"
   }
-  Write-Host "  ✓ Loaded $($templates.Count) templates" -ForegroundColor Green
+  Write-Host "  [PASS] Loaded $($templates.Count) templates" -ForegroundColor Green
   $testsPassed++
 } catch {
-  Write-Host "  ✗ FAILED: $_" -ForegroundColor Red
+  Write-Host "  [FAIL] FAILED: $_" -ForegroundColor Red
   $testsFailed++
 }
 
@@ -66,10 +66,10 @@ try {
   
   Write-Host "  Description: $($template.Description)" -ForegroundColor Gray
   Write-Host "  Parameters: $($template.Parameters.Count)" -ForegroundColor Gray
-  Write-Host "  ✓ Template selection works" -ForegroundColor Green
+  Write-Host "  [PASS] Template selection works" -ForegroundColor Green
   $testsPassed++
 } catch {
-  Write-Host "  ✗ FAILED: $_" -ForegroundColor Red
+  Write-Host "  [FAIL] FAILED: $_" -ForegroundColor Red
   $testsFailed++
 }
 
@@ -95,10 +95,10 @@ try {
     }
   }
   
-  Write-Host "  ✓ Parameters validated (found $($missingParams.Count) missing)" -ForegroundColor Green
+  Write-Host "  [PASS] Parameters validated (found $($missingParams.Count) missing)" -ForegroundColor Green
   $testsPassed++
 } catch {
-  Write-Host "  ✗ FAILED: $_" -ForegroundColor Red
+  Write-Host "  [FAIL] FAILED: $_" -ForegroundColor Red
   $testsFailed++
 }
 
@@ -125,22 +125,22 @@ try {
       $result = Invoke-GcReportTemplate -TemplateName $errorsTemplate.Name -Parameters $mockParams -ErrorAction Stop
       
       if ($result.Success -eq $false) {
-        Write-Host "  ⚠ Report returned error (expected in offline mode): $($result.Error)" -ForegroundColor Yellow
+        Write-Host "  [WARN] Report returned error (expected in offline mode): $($result.Error)" -ForegroundColor Yellow
       } else {
-        Write-Host "  ✓ Report executed successfully" -ForegroundColor Green
+        Write-Host "  [PASS] Report executed successfully" -ForegroundColor Green
       }
       $testsPassed++
     } catch {
-      Write-Host "  ⚠ Exception (may be expected in offline mode): $_" -ForegroundColor Yellow
+      Write-Host "  [WARN] Exception (may be expected in offline mode): $_" -ForegroundColor Yellow
       # Still count as passed since it's expected in offline mode
       $testsPassed++
     }
   } else {
-    Write-Host "  ⚠ Could not find Errors & Failures Snapshot template, skipping" -ForegroundColor Yellow
+    Write-Host "  [WARN] Could not find Errors & Failures Snapshot template, skipping" -ForegroundColor Yellow
     $testsPassed++
   }
 } catch {
-  Write-Host "  ✗ FAILED: $_" -ForegroundColor Red
+  Write-Host "  [FAIL] FAILED: $_" -ForegroundColor Red
   $testsFailed++
 }
 
@@ -171,10 +171,10 @@ try {
   }
   
   Write-Host "  Log path: $logPath" -ForegroundColor Gray
-  Write-Host "  ✓ Diagnostics module works" -ForegroundColor Green
+  Write-Host "  [PASS] Diagnostics module works" -ForegroundColor Green
   $testsPassed++
 } catch {
-  Write-Host "  ✗ FAILED: $_" -ForegroundColor Red
+  Write-Host "  [FAIL] FAILED: $_" -ForegroundColor Red
   $testsFailed++
 }
 
@@ -190,7 +190,7 @@ try {
   $result = Test-GcConnection -Region 'usw2.pure.cloud' -AccessToken 'invalid-token-for-testing'
   
   if ($result.Success) {
-    Write-Host "  ⚠ Unexpected: Connection succeeded with invalid token" -ForegroundColor Yellow
+    Write-Host "  [WARN] Unexpected: Connection succeeded with invalid token" -ForegroundColor Yellow
   } else {
     Write-Host "  Expected failure with invalid token" -ForegroundColor Gray
     Write-Host "  Error: $($result.Error)" -ForegroundColor Gray
@@ -200,10 +200,10 @@ try {
     throw "Test-GcConnection did not return Tests hashtable"
   }
   
-  Write-Host "  ✓ Test-GcConnection function works" -ForegroundColor Green
+  Write-Host "  [PASS] Test-GcConnection function works" -ForegroundColor Green
   $testsPassed++
 } catch {
-  Write-Host "  ✗ FAILED: $_" -ForegroundColor Red
+  Write-Host "  [FAIL] FAILED: $_" -ForegroundColor Red
   $testsFailed++
 }
 
@@ -218,9 +218,10 @@ Write-Host "Tests Failed: $testsFailed" -ForegroundColor $(if ($testsFailed -gt 
 Write-Host ""
 
 if ($testsFailed -gt 0) {
-  Write-Host "✗ Integration test FAILED" -ForegroundColor Red
+  Write-Host "[FAIL] Integration test FAILED" -ForegroundColor Red
   exit 1
 } else {
-  Write-Host "✓ Integration test PASSED" -ForegroundColor Green
+  Write-Host "[PASS] Integration test PASSED" -ForegroundColor Green
   exit 0
 }
+

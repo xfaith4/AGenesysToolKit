@@ -207,12 +207,13 @@ Write-Host ""
 
 if ($testsFailed -gt 0) {
   Write-Host "========================================" -ForegroundColor Red
-  Write-Host "    ✗ VALIDATION FAILED" -ForegroundColor Red
+  Write-Host "    [FAIL] VALIDATION FAILED" -ForegroundColor Red
   Write-Host "========================================" -ForegroundColor Red
   exit 1
 } else {
   Write-Host "========================================" -ForegroundColor Green
-  Write-Host "    ✓ ALL TESTS PASSED" -ForegroundColor Green
+  Write-Host "    [PASS] ALL TESTS PASSED" -ForegroundColor Green
   Write-Host "========================================" -ForegroundColor Green
   exit 0
 }
+

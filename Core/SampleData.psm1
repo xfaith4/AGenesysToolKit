@@ -709,6 +709,67 @@ function Invoke-GcSampleRequest {
       }
     }
 
+    '^GET /api/v2/userrecordings$' {
+      $entities = foreach ($rec in @($dataset.recordings)) {
+        $durationMs = 0
+        try {
+          if ($rec.startTime -and $rec.endTime) {
+            $durationMs = [int](([datetime]$rec.endTime - [datetime]$rec.startTime).TotalMilliseconds)
+          }
+        } catch { }
+
+        [pscustomobject]@{
+          id                   = $rec.id
+          name                 = "Recording $($rec.id)"
+          conversationId       = $rec.conversationId
+          conversation         = [pscustomobject]@{ id = $rec.conversationId }
+          dateCreated          = if ($rec.startTime) { $rec.startTime } else { (Get-Date).ToString('o') }
+          durationMilliseconds = $durationMs
+        }
+      }
+
+      return [pscustomobject]@{
+        entities   = @($entities)
+        pageNumber = 1
+        pageCount  = 1
+      }
+    }
+
+    '^GET /api/v2/userrecordings/(?<recId>[^/]+)$' {
+      $rec = @($dataset.recordings | Where-Object { $_.id -eq $matches.recId } | Select-Object -First 1)
+      if (-not $rec -or $rec.Count -eq 0) {
+        throw "Recording not found: $($matches.recId)"
+      }
+      $r = $rec[0]
+
+      $durationMs = 0
+      try {
+        if ($r.startTime -and $r.endTime) {
+          $durationMs = [int](([datetime]$r.endTime - [datetime]$r.startTime).TotalMilliseconds)
+        }
+      } catch { }
+
+      return [pscustomobject]@{
+        id                   = $r.id
+        name                 = "Recording $($r.id)"
+        conversationId       = $r.conversationId
+        conversation         = [pscustomobject]@{ id = $r.conversationId }
+        dateCreated          = if ($r.startTime) { $r.startTime } else { (Get-Date).ToString('o') }
+        durationMilliseconds = $durationMs
+      }
+    }
+
+    '^GET /api/v2/conversations/(?<conversationId>[^/]+)/recordings/(?<recId>[^/]+)$' {
+      return [pscustomobject]@{
+        id             = $matches.recId
+        conversationId = $matches.conversationId
+        mediaUris      = [pscustomobject]@{
+          HTTPGET = ("https://offline.local/recordings/{0}.mp3" -f $matches.recId)
+        }
+      }
+    }
+
+    # Legacy recording routes retained for compatibility with older code paths.
     '^GET /api/v2/recording/recordings$' {
       return [pscustomobject]@{
         entities = @($dataset.recordings)
@@ -724,6 +785,15 @@ function Invoke-GcSampleRequest {
       }
     }
 
+    '^GET /api/v2/quality/evaluations/query$' {
+      return [pscustomobject]@{
+        entities = @($dataset.qualityEvaluations)
+        pageNumber = 1
+        pageCount = 1
+      }
+    }
+
+    # Legacy method retained for compatibility with older code paths.
     '^POST /api/v2/quality/evaluations/query$' {
       return [pscustomobject]@{
         entities = @($dataset.qualityEvaluations)

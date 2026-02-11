@@ -218,20 +218,21 @@ Write-Host ""
 
 if ($failedTests -eq 0) {
     Write-Host "================================" -ForegroundColor Green
-    Write-Host "    ✓ ALL TESTS PASSED" -ForegroundColor Green
+    Write-Host "    [PASS] ALL TESTS PASSED" -ForegroundColor Green
     Write-Host "================================" -ForegroundColor Green
     Write-Host ""
     Write-Host "The manual token entry feature is working correctly:" -ForegroundColor Green
-    Write-Host "  • Token sanitization handles line breaks (LF and CRLF)" -ForegroundColor White
-    Write-Host "  • Bearer prefix is automatically removed" -ForegroundColor White
-    Write-Host "  • Leading/trailing spaces are trimmed" -ForegroundColor White
-    Write-Host "  • Combined formatting issues are handled" -ForegroundColor White
-    Write-Host "  • Region validation works correctly" -ForegroundColor White
+    Write-Host "  - Token sanitization handles line breaks (LF and CRLF)" -ForegroundColor White
+    Write-Host "  - Bearer prefix is automatically removed" -ForegroundColor White
+    Write-Host "  - Leading/trailing spaces are trimmed" -ForegroundColor White
+    Write-Host "  - Combined formatting issues are handled" -ForegroundColor White
+    Write-Host "  - Region validation works correctly" -ForegroundColor White
     Write-Host ""
     exit 0
 } else {
     Write-Host "================================" -ForegroundColor Red
-    Write-Host "    ✗ TESTS FAILED" -ForegroundColor Red
+    Write-Host "    [FAIL] TESTS FAILED" -ForegroundColor Red
     Write-Host "================================" -ForegroundColor Red
     exit 1
 }
+

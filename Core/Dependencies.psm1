@@ -115,7 +115,7 @@ function Get-GcObjectById {
     $path = switch ($ObjectType.ToLower()) {
       'queue' { "/api/v2/routing/queues/$ObjectId" }
       'dataaction' { "/api/v2/integrations/actions/$ObjectId" }
-      'schedule' { "/api/v2/routing/schedules/$ObjectId" }
+      'schedule' { "/api/v2/architect/schedules/$ObjectId" }
       'skill' { "/api/v2/routing/skills/$ObjectId" }
       default { $null }
     }

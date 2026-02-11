@@ -597,10 +597,8 @@ function Update-GcArtifactIndex {
   $index = @()
   if (Test-Path $IndexPath) {
     try {
-      $indexContent = Get-Content -Path $IndexPath -Raw -Encoding UTF8
-      if ($indexContent) {
-        $index = @($indexContent | ConvertFrom-Json)
-      }
+      # Reuse canonical reader so we always normalize to an array shape.
+      $index = @(Get-GcArtifactIndex -IndexPath $IndexPath)
     } catch {
       Write-Warning "Failed to read existing index, creating new one: $_"
     }
@@ -611,7 +609,9 @@ function Update-GcArtifactIndex {
   
   # Write updated index
   try {
-    $index | ConvertTo-Json -Depth 10 | Set-Content -Path $IndexPath -Encoding UTF8
+    # Use -InputObject so single-entry arrays are written as JSON arrays, not scalars.
+    $json = ConvertTo-Json -InputObject @($index) -Depth 10
+    Set-Content -Path $IndexPath -Value $json -Encoding UTF8
   } catch {
     throw "Failed to update artifact index: $_"
   }
@@ -652,10 +652,33 @@ function Get-GcArtifactIndex {
   
   try {
     $indexContent = Get-Content -Path $IndexPath -Raw -Encoding UTF8
-    if ($indexContent) {
-      return @($indexContent | ConvertFrom-Json)
-    } else {
-      return @()
+    if ([string]::IsNullOrWhiteSpace($indexContent)) { return @() }
+
+    try {
+      $parsed = $indexContent | ConvertFrom-Json -ErrorAction Stop
+      if ($parsed -is [System.Array]) {
+        return ,@($parsed)
+      }
+      return ,@($parsed)
+    } catch {
+      # Backward/repair path: handle legacy files that may contain one JSON object per line.
+      $legacyItems = @()
+      $lines = $indexContent -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+      $legacyParseFailed = $false
+      foreach ($line in $lines) {
+        try {
+          $legacyItems += @($line | ConvertFrom-Json -ErrorAction Stop)
+        } catch {
+          $legacyParseFailed = $true
+          break
+        }
+      }
+
+      if (-not $legacyParseFailed -and $legacyItems.Count -gt 0) {
+        return ,@($legacyItems)
+      }
+
+      throw
     }
   } catch {
     Write-Warning "Failed to read artifact index: $_"

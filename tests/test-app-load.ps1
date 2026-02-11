@@ -16,96 +16,60 @@ Write-Host "Testing: $appFile" -ForegroundColor Gray
 Write-Host ""
 
 try {
-  # Create a test script that loads the app in a safe way
-  $testScript = @"
-`$ErrorActionPreference = 'Stop'
+  if (-not (Test-Path -Path $appFile)) {
+    throw "App file not found: $appFile"
+  }
 
-# Mock WPF types for testing (since we're not in Windows)
-if (-not ('System.Windows.Window' -as [Type])) {
-  Add-Type -TypeDefinition @'
-  namespace System.Windows {
-    public class Window {}
-    public class MessageBoxButton {}
-    public class MessageBoxImage {}
-    public class MessageBoxResult {}
-    public class MessageBox {
-      public static MessageBoxResult Show(string message, string title, MessageBoxButton buttons, MessageBoxImage icon) {
-        return new MessageBoxResult();
-      }
+  $content = Get-Content -Path $appFile -Raw -ErrorAction Stop
+
+  $requiredFunctions = @(
+    'Show-TimelineWindow',
+    'New-PlaceholderView',
+    'New-ConversationTimelineView',
+    'New-SubscriptionsView',
+    'Start-AppJob',
+    'Format-EventSummary'
+  )
+
+  $missingFunctions = @()
+  foreach ($func in $requiredFunctions) {
+    $pattern = 'function\s+' + [regex]::Escape($func) + '\b'
+    if ($content -notmatch $pattern) {
+      $missingFunctions += $func
     }
   }
-  namespace System.Windows.Controls {
-    public class ListBoxItem {}
+
+  if ($missingFunctions.Count -gt 0) {
+    throw ("Missing functions: {0}" -f ($missingFunctions -join ', '))
   }
-  namespace System.Windows.Threading {
-    public class DispatcherTimer {}
+
+  Write-Host "  [PASS] All required functions found" -ForegroundColor Green
+
+  # Validate parser-level syntax
+  $tokens = $null
+  $errors = $null
+  [void][System.Management.Automation.Language.Parser]::ParseFile($appFile, [ref]$tokens, [ref]$errors)
+  if ($errors -and $errors.Count -gt 0) {
+    $errorSummary = ($errors | ForEach-Object {
+      "L{0}: {1}" -f $_.Extent.StartLineNumber, $_.Message
+    }) -join '; '
+    throw ("Syntax errors detected: {0}" -f $errorSummary)
   }
-'@
-}
 
-# Source the app file (but don't execute UI parts)
-# We'll just validate it parses and defines functions
-`$content = Get-Content -Path '$appFile' -Raw
+  Write-Host "  [PASS] No syntax errors detected" -ForegroundColor Green
 
-# Check if key functions are defined in the content
-`$requiredFunctions = @(
-  'Show-TimelineWindow',
-  'New-PlaceholderView',
-  'New-ConversationTimelineView',
-  'New-SubscriptionsView',
-  'Start-AppJob',
-  'Format-EventSummary'
-)
+  Write-Host "========================================" -ForegroundColor Green
+  Write-Host "    [PASS] APP LOAD VALIDATION PASS" -ForegroundColor Green
+  Write-Host "========================================" -ForegroundColor Green
+  exit 0
 
-`$missingFunctions = @()
-foreach (`$func in `$requiredFunctions) {
-  if (`$content -notmatch "function `$func") {
-    `$missingFunctions += `$func
-  }
-}
-
-if (`$missingFunctions.Count -gt 0) {
-  Write-Error "Missing functions: `$(`$missingFunctions -join ', ')"
-  exit 1
-}
-
-Write-Host '✓ All required functions found' -ForegroundColor Green
-Write-Host ''
-
-# Check for syntax errors by parsing
-try {
-  `$null = [System.Management.Automation.PSParser]::Tokenize(`$content, [ref]`$null)
-  Write-Host '✓ No syntax errors detected' -ForegroundColor Green
-} catch {
-  Write-Error "Syntax error: `$_"
-  exit 1
-}
-
-exit 0
-"@
-
-  # Execute test script
-  $result = pwsh -NoProfile -Command $testScript
-  
-  if ($LASTEXITCODE -eq 0) {
-    Write-Host "========================================" -ForegroundColor Green
-    Write-Host "    ✓ APP LOAD VALIDATION PASS" -ForegroundColor Green
-    Write-Host "========================================" -ForegroundColor Green
-    exit 0
-  } else {
-    Write-Host "Output: $result" -ForegroundColor Yellow
-    Write-Host "========================================" -ForegroundColor Red
-    Write-Host "    ✗ APP LOAD VALIDATION FAIL" -ForegroundColor Red
-    Write-Host "========================================" -ForegroundColor Red
-    exit 1
-  }
-  
 } catch {
   Write-Host "Error: $_" -ForegroundColor Red
   Write-Host "========================================" -ForegroundColor Red
-  Write-Host "    ✗ APP LOAD VALIDATION FAIL" -ForegroundColor Red
+  Write-Host "    [FAIL] APP LOAD VALIDATION FAIL" -ForegroundColor Red
   Write-Host "========================================" -ForegroundColor Red
   exit 1
 }
 
 ### END: tests/test-app-load.ps1
+

@@ -269,5 +269,6 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "All tests passed!" -ForegroundColor Green
 Write-Host ""
 Write-Host "================================" -ForegroundColor Green
-Write-Host "    ✓ ARTIFACT GENERATOR PASS" -ForegroundColor Green
+Write-Host "    [PASS] ARTIFACT GENERATOR PASS" -ForegroundColor Green
 Write-Host "================================" -ForegroundColor Green
+

@@ -89,13 +89,14 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Test Summary" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "✓ Script syntax is valid" -ForegroundColor Green
-Write-Host "✓ XAML helper functions are present" -ForegroundColor Green
-Write-Host "✓ Ready for execution" -ForegroundColor Green
+Write-Host "[PASS] Script syntax is valid" -ForegroundColor Green
+Write-Host "[PASS] XAML helper functions are present" -ForegroundColor Green
+Write-Host "[PASS] Ready for execution" -ForegroundColor Green
 Write-Host ""
 Write-Host "================================" -ForegroundColor Green
-Write-Host "    ✓ ALL TESTS PASS" -ForegroundColor Green
+Write-Host "    [PASS] ALL TESTS PASS" -ForegroundColor Green
 Write-Host "================================" -ForegroundColor Green
 Write-Host ""
 
 exit 0
+

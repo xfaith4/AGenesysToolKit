@@ -151,16 +151,17 @@ Write-Host ""
 
 if ($testsFailed -eq 0) {
     Write-Host "================================" -ForegroundColor Green
-    Write-Host "    ✓ ALL TESTS PASS" -ForegroundColor Green
+    Write-Host "    [PASS] ALL TESTS PASS" -ForegroundColor Green
     Write-Host "================================" -ForegroundColor Green
     Write-Host ""
     exit 0
 } else {
     Write-Host "================================" -ForegroundColor Red
-    Write-Host "    ✗ TESTS FAILED" -ForegroundColor Red
+    Write-Host "    [FAIL] TESTS FAILED" -ForegroundColor Red
     Write-Host "================================" -ForegroundColor Red
     Write-Host ""
     exit 1
 }
 
 ### END: tests/test-xaml-helpers.ps1
+

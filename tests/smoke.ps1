@@ -201,16 +201,17 @@ Write-Host ""
 
 if ($testsFailed -eq 0) {
     Write-Host "================================" -ForegroundColor Green
-    Write-Host "    ✓ SMOKE PASS" -ForegroundColor Green
+    Write-Host "    [PASS] SMOKE PASS" -ForegroundColor Green
     Write-Host "================================" -ForegroundColor Green
     Write-Host ""
     exit 0
 } else {
     Write-Host "================================" -ForegroundColor Red
-    Write-Host "    ✗ SMOKE FAIL" -ForegroundColor Red
+    Write-Host "    [FAIL] SMOKE FAIL" -ForegroundColor Red
     Write-Host "================================" -ForegroundColor Red
     Write-Host ""
     exit 1
 }
 
 ### END: tests/smoke.ps1
+

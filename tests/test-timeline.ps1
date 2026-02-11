@@ -214,14 +214,15 @@ Write-Host ""
 
 if ($testsFailed -eq 0) {
   Write-Host "================================" -ForegroundColor Green
-  Write-Host "    ✓ TIMELINE TEST PASS" -ForegroundColor Green
+  Write-Host "    [PASS] TIMELINE TEST PASS" -ForegroundColor Green
   Write-Host "================================" -ForegroundColor Green
   exit 0
 } else {
   Write-Host "================================" -ForegroundColor Red
-  Write-Host "    ✗ TIMELINE TEST FAIL" -ForegroundColor Red
+  Write-Host "    [FAIL] TIMELINE TEST FAIL" -ForegroundColor Red
   Write-Host "================================" -ForegroundColor Red
   exit 1
 }
 
 ### END: tests/test-timeline.ps1
+

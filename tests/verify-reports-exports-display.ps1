@@ -33,9 +33,9 @@ try {
   
   if ($hasItemsSourceNull -and $hasItemsClear -and $hasItemsAdd) {
     Write-Host "  [PASS] Fix implementation verified:" -ForegroundColor Green
-    Write-Host "    ✓ ItemsSource is set to null" -ForegroundColor Green
-    Write-Host "    ✓ Items collection is cleared" -ForegroundColor Green
-    Write-Host "    ✓ Items are added individually" -ForegroundColor Green
+    Write-Host "    [PASS] ItemsSource is set to null" -ForegroundColor Green
+    Write-Host "    [PASS] Items collection is cleared" -ForegroundColor Green
+    Write-Host "    [PASS] Items are added individually" -ForegroundColor Green
     $testsPassed++
   } else {
     Write-Host "  [FAIL] Fix pattern not found:" -ForegroundColor Red
@@ -56,25 +56,18 @@ try {
   $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
   $content = Get-Content -Path $appFile -Raw
   
-  # Look for the old pattern: direct assignment to ItemsSource in Refresh-ArtifactList
-  # Use a more flexible pattern that handles various brace styles
-  $refreshArtifactListMatch = [regex]::Match($content, 'function\s+Refresh-ArtifactList\s*\{([\s\S]*?)\n\s*\}\s*(?:\n|$)', [System.Text.RegularExpressions.RegexOptions]::Multiline)
-  
-  if ($refreshArtifactListMatch.Success) {
-    $functionBody = $refreshArtifactListMatch.Groups[1].Value
-    
-    # Check if the old buggy pattern exists (direct ItemsSource = $displayItems assignment)
-    $hasBuggyPattern = $functionBody -match '\$h\.LstArtifacts\.ItemsSource\s*=\s*\$displayItems'
-    
-    if (-not $hasBuggyPattern) {
-      Write-Host "  [PASS] Old buggy pattern not found in Refresh-ArtifactList" -ForegroundColor Green
-      $testsPassed++
-    } else {
-      Write-Host "  [FAIL] Old buggy pattern still present!" -ForegroundColor Red
-      $testsFailed++
-    }
+  # Current implementation uses a scriptblock variable ($refreshArtifactList), not a named function.
+  # We verify the old buggy assignment is absent across the view implementation.
+  $hasRefreshHandler = ($content -match '\$refreshArtifactList\s*=\s*\{') -or ($content -match 'function\s+Refresh-ArtifactList\s*\{')
+  $hasBuggyPattern = $content -match '\$h\.LstArtifacts\.ItemsSource\s*=\s*\$displayItems'
+
+  if ($hasRefreshHandler -and (-not $hasBuggyPattern)) {
+    Write-Host "  [PASS] Old buggy pattern removed from refresh handler" -ForegroundColor Green
+    $testsPassed++
   } else {
-    Write-Host "  [FAIL] Could not parse Refresh-ArtifactList function - function may not exist" -ForegroundColor Red
+    Write-Host "  [FAIL] Refresh handler validation failed:" -ForegroundColor Red
+    Write-Host "    Refresh handler found: $hasRefreshHandler" -ForegroundColor Red
+    Write-Host "    Buggy ItemsSource assignment found: $hasBuggyPattern" -ForegroundColor Red
     $testsFailed++
   }
 } catch {
@@ -96,9 +89,9 @@ try {
   
   if ($hasItemTemplate -and $hasDisplayNameBinding -and $hasDisplayTimeBinding) {
     Write-Host "  [PASS] XAML DataTemplate configuration verified:" -ForegroundColor Green
-    Write-Host "    ✓ ItemTemplate defined" -ForegroundColor Green
-    Write-Host "    ✓ DisplayName binding present" -ForegroundColor Green
-    Write-Host "    ✓ DisplayTime binding present" -ForegroundColor Green
+    Write-Host "    [PASS] ItemTemplate defined" -ForegroundColor Green
+    Write-Host "    [PASS] DisplayName binding present" -ForegroundColor Green
+    Write-Host "    [PASS] DisplayTime binding present" -ForegroundColor Green
     $testsPassed++
   } else {
     Write-Host "  [FAIL] XAML configuration incomplete:" -ForegroundColor Red
@@ -127,9 +120,9 @@ try {
   
   if ($reportBuilder -and $exportHistory -and $quickExports) {
     Write-Host "  [PASS] All three modules route correctly:" -ForegroundColor Green
-    Write-Host "    ✓ Report Builder → New-ReportsExportsView" -ForegroundColor Green
-    Write-Host "    ✓ Export History → New-ReportsExportsView" -ForegroundColor Green
-    Write-Host "    ✓ Quick Exports → New-ReportsExportsView" -ForegroundColor Green
+    Write-Host "    [PASS] Report Builder -> New-ReportsExportsView" -ForegroundColor Green
+    Write-Host "    [PASS] Export History -> New-ReportsExportsView" -ForegroundColor Green
+    Write-Host "    [PASS] Quick Exports -> New-ReportsExportsView" -ForegroundColor Green
     $testsPassed++
   } else {
     Write-Host "  [FAIL] Module routing incomplete:" -ForegroundColor Red
@@ -178,12 +171,13 @@ Write-Host ""
 
 if ($testsFailed -gt 0) {
   Write-Host "========================================" -ForegroundColor Red
-  Write-Host "    ✗ VERIFICATION FAILED" -ForegroundColor Red
+  Write-Host "    [FAIL] VERIFICATION FAILED" -ForegroundColor Red
   Write-Host "========================================" -ForegroundColor Red
   exit 1
 } else {
   Write-Host "========================================" -ForegroundColor Green
-  Write-Host "    ✓ ALL VERIFICATIONS PASSED" -ForegroundColor Green
+  Write-Host "    [PASS] ALL VERIFICATIONS PASSED" -ForegroundColor Green
   Write-Host "========================================" -ForegroundColor Green
   exit 0
 }
+

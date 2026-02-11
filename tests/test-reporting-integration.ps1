@@ -124,7 +124,7 @@ try {
   
   Write-Host "  Artifacts created:"
   foreach ($key in $artifactsExist.Keys) {
-    $icon = if ($artifactsExist[$key]) { '✓' } else { '✗' }
+    $icon = if ($artifactsExist[$key]) { '[PASS]' } else { '[FAIL]' }
     Write-Host "    $icon $key"
   }
   
@@ -210,3 +210,4 @@ if ($testsFailed -gt 0) {
 }
 
 exit 0
+
