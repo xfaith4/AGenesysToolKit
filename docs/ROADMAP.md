@@ -30,9 +30,11 @@ This roadmap outlines the phased development of the AGenesysToolKit, aligned wit
 
 ---
 
-## Phase 1: Core HTTP & Pagination Primitives
+## Phase 1: Core HTTP & Pagination Primitives ✅
 
 **Goal**: Fully implement the two foundational HTTP functions with production-grade reliability.
+
+**Status**: Complete - Delivered in v0.2.0
 
 **Deliverables**:
 
@@ -65,20 +67,20 @@ This roadmap outlines the phased development of the AGenesysToolKit, aligned wit
 - Error scenario tests (network failures, rate limits, malformed responses)
 - Performance benchmarks (large datasets, many pages)
 
-**Acceptance Criteria**:
-- `Invoke-GcRequest` handles all error cases gracefully with retries
-- `Invoke-GcPagedRequest` retrieves complete datasets by default
-- All pagination patterns supported and tested
-- Rate limiting is automatic and transparent
-- Verbose logging provides clear insight into request/response flow
-
-**Duration**: 2-3 weeks
+**Acceptance Criteria** (All Met):
+- ✅ `Invoke-GcRequest` handles all error cases gracefully with retries
+- ✅ `Invoke-GcPagedRequest` retrieves complete datasets by default
+- ✅ All pagination patterns supported and tested
+- ✅ Rate limiting is automatic and transparent
+- ✅ Verbose logging provides clear insight into request/response flow
 
 ---
 
-## Phase 2: Core Jobs & Analytics Endpoints
+## Phase 2: Core Jobs & Analytics Endpoints ✅
 
 **Goal**: Implement the Job pattern for long-running operations, starting with analytics endpoints.
+
+**Status**: Complete - Delivered in v0.3.0
 
 **Deliverables**:
 
@@ -116,20 +118,20 @@ This roadmap outlines the phased development of the AGenesysToolKit, aligned wit
 - Timeout and cancellation tests
 - Error scenario tests (job failures, malformed responses)
 
-**Acceptance Criteria**:
-- All job functions work end-to-end (Submit → Poll → Fetch)
-- Timeout and cancellation are reliable
-- Results are paginated correctly (complete datasets by default)
-- One-call helpers simplify common workflows
-- Error messages are actionable
-
-**Duration**: 2-3 weeks
+**Acceptance Criteria** (All Met):
+- ✅ All job functions work end-to-end (Submit → Poll → Fetch)
+- ✅ Timeout and cancellation are reliable
+- ✅ Results are paginated correctly (complete datasets by default)
+- ✅ One-call helpers simplify common workflows
+- ✅ Error messages are actionable
 
 ---
 
-## Phase 3: UI Integration & Job Center
+## Phase 3: UI Integration & Job Center ✅
 
 **Goal**: Wire the UX prototype to the job engine, add Job Center UI, and implement export functionality.
+
+**Status**: Complete - Delivered in v0.4.0, enhanced through v0.6.0
 
 **Deliverables**:
 
@@ -168,77 +170,57 @@ This roadmap outlines the phased development of the AGenesysToolKit, aligned wit
 - Performance tests: Large datasets, multiple concurrent jobs
 - UX testing: Snackbar timing, toast visibility, button states
 
-**Acceptance Criteria**:
-- Job Center displays all active/completed jobs with real-time updates
-- Users can cancel jobs and see immediate feedback
-- Export works for all supported formats (JSON, TXT, optional XLSX)
-- Snackbar notifications are clear and actionable
-- Error messages provide context and recovery options
-- No UI freezing or blocking during long operations
-
-**Duration**: 3-4 weeks
+**Acceptance Criteria** (All Met):
+- ✅ Job Center displays all active/completed jobs with real-time updates
+- ✅ Users can cancel jobs and see immediate feedback
+- ✅ Export works for all supported formats (JSON, TXT, optional XLSX)
+- ✅ Snackbar notifications are clear and actionable
+- ✅ Error messages provide context and recovery options
+- ✅ No UI freezing or blocking during long operations
 
 ---
 
-## Phase 4+: Future Enhancements (Backlog)
+## Phase 4+: Future Enhancements (Backlog) 🔮
 
-These are potential future phases, subject to user feedback and prioritization:
+**Status**: Not Started - Deferred to v1.0.0 and beyond
 
-### OAuth & Authentication
-- Client credentials flow
-- Authorization code flow (for user-context operations)
-- Token refresh logic
-- Secure token storage (Windows Credential Manager)
+These are potential future phases, subject to user feedback and prioritization. See [BACKLOG.md](./BACKLOG.md) for the complete list of planned future enhancements.
 
-### Additional Workspaces & Modules
-- **Orchestration**: User management, queue management, routing rules
-- **Conversations**: Transcript viewer, recording downloads, participant history
-- **Operations**: Topic subscriptions (real-time events), presence monitoring, queue stats
-
-### Advanced Features
-- Caching layer for frequently accessed resources
-- Offline mode with local storage
-- Advanced export templates (custom CSV columns, Excel formatting)
-- Export scheduling (daily reports, etc.)
-- Webhook/event forwarding to external systems
-- Multi-org support with profile switching
-- Dark mode and accessibility improvements
-
-### Performance & Scalability
-- Parallel pagination (fetch multiple pages simultaneously)
-- Streaming results (display as they arrive, don't wait for completion)
-- Result caching and incremental updates
-- Database backend for large datasets (SQLite)
-
-### Testing & Quality
-- Comprehensive unit test coverage (>80%)
-- Integration test suite with mock API server
-- UI automation tests (Pester + WPF testing)
-- Performance benchmarks and regression tests
-- Security audits and penetration testing
+**Key Future Areas:**
+- Enhanced OAuth (token refresh, secure storage)
+- Additional workspaces & modules (Operations, Advanced Conversations)
+- Performance optimizations (parallel pagination, caching, database backend)
+- Advanced features (offline mode, dark mode, multi-org support)
+- Testing & Quality improvements (>80% unit test coverage)
 
 ---
 
 ## Version History
 
-- **v0.1.0** (Phase 0): Repository foundation, architecture, and smoke tests
-- **v0.2.0** (Phase 1): Core HTTP & pagination primitives
-- **v0.3.0** (Phase 2): Job pattern and analytics endpoints
-- **v0.4.0** (Phase 3): UI integration, Job Center, and exports
-- **v0.5.0**: Module implementation phase - 56% complete (5 of 9 modules)
+**Completed Releases:**
+- **v0.1.0** (Phase 0 ✅): Repository foundation, architecture, and smoke tests
+- **v0.2.0** (Phase 1 ✅): Core HTTP & pagination primitives
+- **v0.3.0** (Phase 2 ✅): Job pattern, OAuth authentication, and analytics endpoints
+- **v0.4.0** (Phase 3 ✅): UI integration, Job Center, export packets, and timeline reconstruction
+- **v0.5.0** (Modules 56%): 5 of 9 modules implemented
   - ✅ Conversations::Conversation Lookup
   - ✅ Conversations::Analytics Jobs
   - ✅ Conversations::Incident Packet (standalone)
   - ✅ Routing & People::Users & Presence
   - ✅ Orchestration::Config Export
-- **v0.6.0** (Current): All modules complete - 100% implementation
+- **v0.6.0** (Modules 100% ✅): All planned modules complete
   - ✅ Routing & People::Routing Snapshot - Real-time queue metrics with auto-refresh
   - ✅ Conversations::Abandon & Experience - Abandonment metrics and analysis
   - ✅ Conversations::Media & Quality - Recordings, transcripts, evaluations
   - ✅ Orchestration::Dependency / Impact Map - Flow reference search
   - ✅ All 9 planned modules fully implemented
+  - ✅ 16 core modules in production
   - ✅ Smoke tests passing (10/10)
-- **v1.0.0** (Next): Production-ready release with OAuth and enhanced features
+
+**Planned Releases:**
+- **v1.0.0** (Future): Production-ready release with enhanced OAuth, token refresh, and secure storage
+
+**Current Status**: v0.6.0 - All phases 0-3 complete, all 9 modules operational, 16 core modules in production
 
 ---
 
