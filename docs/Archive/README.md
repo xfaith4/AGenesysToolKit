@@ -14,6 +14,7 @@ Historical records of how specific features were implemented:
 - `PHASE0_REPORT.md` - Repository foundation phase completion
 - `AUDIT_SUMMARY.md` - Security and parameter flow audit results
 - `PARAMETER_MAPPING.md` - Parameter flow documentation
+- `OFFLINEDEMO_TEST_PLAN.md` - Manual testing guide for offline demo mode
 
 ### Bug Fixes & Features
 - `BUGFIX_API_CALLS.md` - Historical bug fix for API call functionality
@@ -66,5 +67,5 @@ They may be removed in future versions if no longer needed.
 
 ---
 
-**Last Updated**: 2026-01-28  
-**Archived Items**: 22 documents
+**Last Updated**: 2026-02-13  
+**Archived Items**: 23 documents
