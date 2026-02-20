@@ -1,0 +1,32 @@
+{
+  "_comment": "Genesys Cloud Admin Toolbox — Configuration File",
+  "_docs": "Pass this to Initialize-GcAdmin -ConfigPath gc-admin.json",
+
+  "region": "mypurecloud.com",
+  "clientId": "your-oauth-client-id",
+  "clientSecret": "your-oauth-client-secret",
+
+  "_tokenAlternative": "Supply 'accessToken' instead of clientId/clientSecret for CI/CD pipelines.",
+  "accessToken": null,
+
+  "guardrails": [
+    {
+      "_comment": "Example: flag any queue whose name starts with 'TEST' in production",
+      "name": "NoTestQueuesInProd",
+      "category": "Config",
+      "severity": "CRIT",
+      "description": "Test queues must not exist in the production org.",
+      "threshold": null,
+      "checkScript": "\n        param($Ctx, $Threshold, $ApiCall)\n        $r = $ApiCall.Invoke('/api/v2/routing/queues?pageSize=100')\n        $test = @($r.entities | Where-Object { $_.name -like 'TEST*' })\n        if ($test.Count -gt 0) {\n          return @{ Pass=$false; Detail=\"$($test.Count) TEST queue(s) found: $(($test.name) -join ', ')\" }\n        }\n        return $true\n      "
+    },
+    {
+      "_comment": "Example: ensure ACW timeout never exceeds 5 minutes",
+      "name": "MaxACWTimeout",
+      "category": "Routing",
+      "severity": "WARN",
+      "description": "After-call work timeout should not exceed 5 minutes (300 000 ms).",
+      "threshold": 300000,
+      "checkScript": "\n        param($Ctx, $Threshold, $ApiCall)\n        $r = $ApiCall.Invoke('/api/v2/routing/queues?pageSize=100')\n        $over = @($r.entities | Where-Object { $_.acwSettings -and $_.acwSettings.timeoutMs -gt $Threshold })\n        if ($over.Count -gt 0) {\n          return @{ Pass=$false; Detail=\"$($over.Count) queue(s) exceed ACW limit\" }\n        }\n        return $true\n      "
+    }
+  ]
+}
