@@ -1,4 +1,4 @@
-# AGenesysToolKit
+﻿# AGenesysToolKit
 
 > **A professional toolkit for Genesys Cloud platform operations, analytics, and administration.**
 
@@ -58,7 +58,7 @@ cd AGenesysToolKit
    - Required scopes: `conversations`, `analytics`, `notifications`, `users`
 
 2. **Update the application**:
-   - Edit `App/GenesysCloudTool_UX_Prototype.ps1`
+   - Edit `App/GenesysCloudTool.ps1`
    - Find `Set-GcAuthConfig` section and add your Client ID
 
    For detailed instructions, see [CONFIGURATION.md](docs/CONFIGURATION.md)
@@ -67,7 +67,7 @@ cd AGenesysToolKit
 
 ```powershell
 # Launch the application
-./App/GenesysCloudTool_UX_Prototype.ps1
+./App/GenesysCloudTool.ps1
 
 # In the UI:
 # 1. Click "Login..." button
@@ -127,7 +127,7 @@ Exported packets are saved to `artifacts/` directory and accessible via the Arti
   ArtifactGenerator.psm1  # Incident packet generator
 
 /App               # Application entry points
-  GenesysCloudTool_UX_Prototype.ps1   # WPF UI application
+  GenesysCloudTool.ps1   # WPF UI application
 
 /docs              # Documentation
   ARCHITECTURE.md    # Core contracts, pagination policy, workspaces

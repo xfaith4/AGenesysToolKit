@@ -9,6 +9,11 @@
   "_tokenAlternative": "Supply 'accessToken' instead of clientId/clientSecret for CI/CD pipelines.",
   "accessToken": null,
 
+  "_genesysCoreComment": "Optional: path to Genesys.Core.psd1. Leave modulePath null to auto-discover from the sibling directory (clone https://github.com/xfaith4/Genesys.Core next to this repo). Set via Backstage › Integration.",
+  "genesysCore": {
+    "modulePath": null
+  },
+
   "guardrails": [
     {
       "_comment": "Example: flag any queue whose name starts with 'TEST' in production",

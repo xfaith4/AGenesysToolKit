@@ -1,4 +1,4 @@
-# Architectural Decision Records
+﻿# Architectural Decision Records
 
 This file captures major architectural decisions for AGenesysToolKit. Each
 record explains the context, the options considered, the decision made, and
@@ -19,7 +19,7 @@ The project currently contains two parallel UI implementations:
 
 | Layer | Technology | Location | Status |
 |---|---|---|---|
-| Primary UI | PowerShell + WPF/XAML | `App/GenesysCloudTool_UX_Prototype.ps1` | ~10,400 lines, fully featured |
+| Primary UI | PowerShell + WPF/XAML | `App/GenesysCloudTool.ps1` | ~10,400 lines, fully featured |
 | Secondary UI | C# + .NET MAUI | `Apps/ExtensionAuditMaui/` | ~8 source files, extension audit only |
 
 The WPF application is Windows-only (requires .NET Framework or .NET 6+/Windows).
@@ -101,54 +101,51 @@ Rationale:
 
 ---
 
-## ADR-002: Monolith Decomposition — App/GenesysCloudTool_UX_Prototype.ps1
+## ADR-002: Monolith Decomposition — App/GenesysCloudTool.ps1
 
-**Status**: IN PROGRESS
+**Status**: COMPLETE ✅
 
 **Date**: 2026-02-21
 
 ### Context
 
-The primary application file (`App/GenesysCloudTool_UX_Prototype.ps1`) was
-~10,700 lines at the time this decision was recorded. It contains:
-- XAML helper utilities
-- The main window XAML definition
-- Application state management
-- ~25 workspace view functions, each containing inline XAML + event handlers
-- Authentication UI
-- Job monitoring UI
-- All WPF event wiring
+The primary application file was originally named
+`App/GenesysCloudTool_UX_Prototype.ps1` and was ~10,700 lines. It contained:
+XAML helper utilities, the main window XAML definition, application state
+management, ~25 workspace view functions (each with inline XAML + event
+handlers), authentication UI, job monitoring UI, and all WPF event wiring.
 
-This makes the file impossible to unit test (UI and logic are fused), expensive
-to merge (every feature change touches the same file), and difficult to navigate.
+This made the file impossible to unit test (UI and logic were fused), expensive
+to merge (every feature change touched the same file), and difficult to navigate.
 
 ### Decision
 
 Decompose incrementally by extraction, not by rewrite. Each extraction step
-should be independently verifiable (run the app, confirm it loads).
+independently verifiable (run the app, confirm it loads).
 
-**Decomposition order (priority):**
+**Decomposition — completed steps:**
 
-1. **Utilities** — Functions with no UI dependency
-   - `App/XamlHelpers.ps1` — `Escape-GcXml`, `ConvertFrom-GcXaml` ✅ DONE
-   - `App/AppLogger.ps1` — `Write-GcAppLog`, `ConvertTo-GcAppLogSafeData` (duplicates Core/ patterns)
+1. **Utilities** — Functions with no UI dependency ✅ DONE
+   - `App/XamlHelpers.ps1` — `Escape-GcXml`, `ConvertFrom-GcXaml`
+   - `App/CoreIntegration.ps1` — Genesys.Core discovery engine (4-level chain)
+   - `App/AppLogger.ps1` — `Write-GcAppLog`, `Write-GcTrace`, `Write-GcDiag`, `Format-GcDiagSecret`, `ConvertTo-GcAppLogSafeData`, `Test-GcTraceEnabled`
 
-2. **Shell XAML** — External file, loaded at startup
-   - `App/Shell.xaml` — Main window, backstage, snackbar ✅ DONE
+2. **Shell XAML** — External file, loaded at startup ✅ DONE
+   - `App/Shell.xaml` — Main window, backstage, snackbar
 
-3. **Per-workspace view files** — Each workspace becomes its own file
-   - `App/Views/Operations/` — Subscriptions, presence, queue stats
-   - `App/Views/Conversations/` — Lookup, analytics jobs, packet, media, abandonment
-   - `App/Views/RoutingPeople/` — Users, routing snapshot
-   - `App/Views/Orchestration/` — Config export, dependency map
-   - `App/Views/Reports/` — Report views
+3. **Per-workspace view files** — Each workspace becomes its own file ✅ DONE
+   - `App/Views/Operations.ps1` — Subscriptions, Operational Event Logs, Audit Logs, OAuth / Token Usage (1,350 lines)
+   - `App/Views/Conversations.ps1` — Lookup, Timeline, Analytics Jobs, Incident Packet, Abandon & Experience, Media & Quality (1,992 lines)
+   - `App/Views/Orchestration.ps1` — Flows, Data Actions, Config Export, Dependency / Impact Map (995 lines)
+   - `App/Views/RoutingPeople.ps1` — Queues, Skills, Users & Presence, Routing Snapshot (859 lines)
+   - `App/Views/Reports.ps1` — Report Builder, Export History, Quick Exports (987 lines)
 
-4. **AppState module** — `$script:AppState` extracted to `App/AppState.ps1`
-   with explicit init and accessor functions
+4. **AppState module** ✅ DONE
+   - `App/AppState.ps1` — `Initialize-GcAppState`, `$script:WorkspaceModules`, `$script:AddonsByRoute`, `Sync-AppStateFromUi`, `Get-CallContext`
 
-5. **File rename** — Once the main file contains only orchestration logic
-   (wiring views to state), rename from `GenesysCloudTool_UX_Prototype.ps1`
-   to `GenesysCloudTool.ps1`
+5. **File rename** ✅ DONE
+   - `GenesysCloudTool_UX_Prototype.ps1` → `GenesysCloudTool.ps1`
+   - All active references updated (tests, docs, comments)
 
 ### Acceptance Criteria
 
@@ -198,3 +195,117 @@ the active API token.
 - The blocklist will miss novel injection patterns — it is not a trust boundary
 - This decision should be revisited if the tool is ever deployed in a multi-tenant
   or shared-config environment where untrusted users can write to the config file
+
+---
+
+## ADR-004: Genesys.Core Integration — Frontend/Backend Split
+
+**Status**: DECIDED — AGenesysToolKit is the frontend; Genesys.Core is the optional backend.
+
+**Date**: 2026-02-21
+
+### Context
+
+[Genesys.Core](https://github.com/xfaith4/Genesys.Core) is a companion repository:
+a catalog-driven, batch data collection engine that executes governed Genesys Cloud
+dataset runs and produces deterministic, auditable artifacts:
+
+```text
+out/<dataset>/<runId>/
+  manifest.json   — dataset key, run window, git SHA, item counts, warnings
+  events.jsonl    — structured trace of every retry, 429 backoff, and pagination step
+  summary.json    — fast "coffee view" summary
+  data/*.jsonl    — normalized, PII-redacted dataset records
+```
+
+Its own AGENTS.md states the design intent: *"UIs must be clients of the Core — not
+reimplementations of the Core."*
+
+AGenesysToolKit's Core/ modules independently reimplemented several of the same
+concerns: HTTP retry with Retry-After, pagination (nextUri/pageNumber/cursor/async
+jobs), and bulk data fetches for users, queues, and analytics. AGenesysToolKit also
+provides capabilities Genesys.Core has no equivalent for: OAuth PKCE, WebSocket
+subscriptions, timeline reconstruction, incident packet generation, and a WPF UI.
+
+### Decision
+
+Adopt Genesys.Core as an **optional** backend dependency. Integration is:
+
+- **Opt-in at runtime**: discovered automatically if present; absent if not.
+  The application starts and runs fully without it.
+- **Never bundled**: Genesys.Core remains its own repository. Users who want
+  the extended dataset capabilities clone it separately.
+- **Auth-bridged**: AGenesysToolKit holds the OAuth token from its PKCE flow and
+  passes `@{ Authorization = "Bearer $token" }` to `Invoke-Dataset`. Genesys.Core
+  has no auth layer; it only accepts headers.
+
+### The Seam
+
+```text
+AGenesysToolKit (WPF frontend)
+  └─ App/CoreIntegration.ps1         → discovery, load, status
+  └─ AppState.GcCoreAvailable        → $true once module is loaded
+
+Genesys.Core (PowerShell module backend)
+  └─ Invoke-Dataset -Dataset <key> -Headers $headers -OutputRoot $artifactsDir
+  └─ out/<dataset>/<runId>/...       → read by AGenesysToolKit display layer
+```
+
+### Discovery Chain (priority order)
+
+| Priority | Source | Notes |
+| --- | --- | --- |
+| 1 | `gc-admin.json` → `genesysCore.modulePath` | Saved from a previous session or manual config |
+| 2 | `GC_CORE_MODULE_PATH` env var | CI/CD pipelines, advanced users |
+| 3 | Sibling directory convention | `../Genesys.Core/src/ps-module/Genesys.Core/Genesys.Core.psd1` — the standard GitHub side-by-side clone layout |
+| 4 | PowerShell module path | `Get-Module -Name Genesys.Core -ListAvailable` — if installed via Install-Module |
+| 5 | Not found | Graceful degradation; UI shows "Core: not found" chip in status bar |
+
+### What AGenesysToolKit Owns (stays in this repo)
+
+| Capability | Reason |
+| --- | --- |
+| OAuth PKCE | Genesys.Core accepts headers; it has no auth layer |
+| WebSocket subscriptions | Genesys.Core is batch-only; streaming is incompatible |
+| Timeline reconstruction + incident packets | No equivalent in Genesys.Core |
+| Guardrail/policy engine | Domain-specific governance; not a data collection concern |
+| Runspace-based job runner | UI-responsive threading is a UI concern |
+| Offline demo mode | `GC_TOOLKIT_OFFLINE_DEMO` bypasses HTTP at the `Invoke-GcRequest` level; Genesys.Core always makes live calls |
+| WPF workspaces | Presentation is the frontend's job |
+
+### What Genesys.Core Provides (net-new, no equivalent in AGenesysToolKit)
+
+- Audit logs (`audit-logs` dataset — async submit/poll/results)
+- API usage by org, client, user (`usage.*` datasets)
+- Organization details and rate limits (`organization.*` datasets)
+- All divisions (`authorization.get.all.divisions`)
+- 26 additional catalog-derived datasets synchronized from the Genesys Cloud Swagger
+- PII redaction layer (`Protect-RecordData`) applied automatically before artifact write
+- Structured run events per page/retry for full observability of data collection mechanics
+
+### Consequences
+
+**Positive:**
+
+- AGenesysToolKit gains 31 datasets of coverage without writing new HTTP code
+- Clean architectural boundary: data collection vs. data presentation
+- Users who only need the WPF UI are unaffected; Genesys.Core is purely optional
+- Both repositories can evolve independently without coupling
+
+**Negative:**
+
+- Offline demo mode (`GC_TOOLKIT_OFFLINE_DEMO`) does not suppress Genesys.Core HTTP
+  calls. Offline mode for Core-backed dataset views requires the `-RequestInvoker`
+  injectable mock parameter in `Invoke-Dataset`.
+- AGenesysToolKit must read JSONL files from `data/*.jsonl` to display Core dataset
+  output; the existing in-memory object model does not apply.
+- If Genesys.Core's output contract changes, the AGenesysToolKit display layer must
+  be updated accordingly.
+
+### Action Items
+
+1. ✅ `App/CoreIntegration.ps1` — discovery engine with 4-level fallback chain
+2. ✅ `App/Shell.xaml` — Core status indicator in status bar + Integration tab in Backstage
+3. ✅ `App/gc-admin.json` — `genesysCore.modulePath` field added
+4. Build Audit Logs view as the first dataset-backed workspace (next sprint)
+5. Establish the `Read-GcCoreDataset` helper pattern for loading JSONL output into WPF DataGrids

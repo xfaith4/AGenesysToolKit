@@ -1,4 +1,4 @@
-# Security Policy
+﻿# Security Policy
 
 ## Overview
 
@@ -69,7 +69,7 @@ Set-GcAuthConfig -ClientId $config.ClientId
    - Configure redirect URI: `http://localhost:8085/callback`
 
 2. **Store Client ID securely**
-   - Edit `App/GenesysCloudTool_UX_Prototype.ps1`
+   - Edit `App/GenesysCloudTool.ps1`
    - Update `Set-GcAuthConfig` section
    - Do NOT commit if Client ID is sensitive
 

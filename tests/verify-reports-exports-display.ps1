@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # Verification script for Reports & Exports module display fix
 # This script verifies that the ListBox displays artifact items correctly
 # instead of showing "Object[]Array"
@@ -23,7 +23,7 @@ $testsFailed = 0
 # Test 1: Verify the fix is present in the code
 Write-Host "Test 1: Verify fix implementation" -ForegroundColor Cyan
 try {
-  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
   $content = Get-Content -Path $appFile -Raw
   
   # Check for the fix pattern: ItemsSource = null followed by Items.Clear() and Items.Add()
@@ -53,7 +53,7 @@ Write-Host ""
 # Test 2: Verify the old buggy pattern is NOT present
 Write-Host "Test 2: Verify old buggy pattern removed" -ForegroundColor Cyan
 try {
-  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
   $content = Get-Content -Path $appFile -Raw
   
   # Current implementation uses a scriptblock variable ($refreshArtifactList), not a named function.
@@ -79,7 +79,7 @@ Write-Host ""
 # Test 3: Verify the XAML DataTemplate is still present
 Write-Host "Test 3: Verify XAML DataTemplate configuration" -ForegroundColor Cyan
 try {
-  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
   $content = Get-Content -Path $appFile -Raw
   
   # Check for ListBox.ItemTemplate with DisplayName and DisplayTime bindings
@@ -109,7 +109,7 @@ Write-Host ""
 # Test 4: Verify all three Reports & Exports modules route to the same view
 Write-Host "Test 4: Verify module routing" -ForegroundColor Cyan
 try {
-  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
   $content = Get-Content -Path $appFile -Raw
   
   # Use more specific patterns that match within the switch statement context

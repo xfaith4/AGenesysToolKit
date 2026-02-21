@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # Test script to validate Reports & Exports UI implementation
 
 Set-StrictMode -Version Latest
@@ -20,7 +20,7 @@ $testsFailed = 0
 # Test 1: Check if New-ReportsExportsView function exists
 Write-Host "Test 1: New-ReportsExportsView function exists" -ForegroundColor Cyan
 try {
-  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
   $content = Get-Content -Path $appFile -Raw
   
   if ($content -match 'function New-ReportsExportsView') {
@@ -39,7 +39,7 @@ Write-Host ""
 # Test 2: Check navigation routing
 Write-Host "Test 2: Navigation routes to New-ReportsExportsView" -ForegroundColor Cyan
 try {
-  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
   $content = Get-Content -Path $appFile -Raw
   
   # Count occurrences of New-ReportsExportsView
@@ -62,7 +62,7 @@ Write-Host ""
 # Test 3: Check XAML structure
 Write-Host "Test 3: XAML contains required UI elements" -ForegroundColor Cyan
 try {
-  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
   $content = Get-Content -Path $appFile -Raw
   
   $requiredElements = @(
@@ -99,7 +99,7 @@ Write-Host ""
 # Test 4: Check event handlers
 Write-Host "Test 4: Event handlers implemented" -ForegroundColor Cyan
 try {
-  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
   $content = Get-Content -Path $appFile -Raw
   
   $requiredHandlers = @(
@@ -134,7 +134,7 @@ Write-Host ""
 # Test 5: Check helper functions
 Write-Host "Test 5: Helper functions implemented" -ForegroundColor Cyan
 try {
-  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
   $content = Get-Content -Path $appFile -Raw
   
   $requiredFunctions = @(
@@ -167,7 +167,7 @@ Write-Host ""
 # Test 6: Check integration with Core modules
 Write-Host "Test 6: Integration with Core modules" -ForegroundColor Cyan
 try {
-  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+  $appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
   $content = Get-Content -Path $appFile -Raw
   
   $requiredCalls = @(

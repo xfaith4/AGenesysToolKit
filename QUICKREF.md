@@ -1,4 +1,4 @@
-# Quick Reference Guide - AGenesysToolKit
+﻿# Quick Reference Guide - AGenesysToolKit
 
 Quick reference for common tasks and workflows. For detailed documentation, see [README.md](README.md).
 
@@ -28,7 +28,7 @@ cd AGenesysToolKit
 
 ```powershell
 # Edit main application file
-notepad App/GenesysCloudTool_UX_Prototype.ps1
+notepad App/GenesysCloudTool.ps1
 
 # Find and update this section:
 Set-GcAuthConfig `
@@ -43,7 +43,7 @@ Set-GcAuthConfig `
 
 ```powershell
 # Launch application
-./App/GenesysCloudTool_UX_Prototype.ps1
+./App/GenesysCloudTool.ps1
 
 # In UI:
 # 1. Click "Login..." button
@@ -57,7 +57,7 @@ Set-GcAuthConfig `
 
 ```powershell
 # From repository root
-./App/GenesysCloudTool_UX_Prototype_v2_1.ps1
+./App/GenesysCloudTool.ps1
 ```
 
 **Tip**: Create a desktop shortcut for one-click launch. See [DEPLOYMENT.md](DEPLOYMENT.md).
@@ -351,7 +351,7 @@ Location: `%APPDATA%\AGenesysToolKit\user-settings.json` (future)
 
 ### Application Config
 
-Location: `App/GenesysCloudTool_UX_Prototype_v2_1.ps1` (OAuth config section)
+Location: `App/GenesysCloudTool.ps1` (OAuth config section)
 
 ### Artifacts Output
 

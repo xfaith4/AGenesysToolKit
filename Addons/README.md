@@ -1,10 +1,10 @@
-# Addons
+﻿# Addons
 
 Addons are **manifest-driven** extensions that live under `Addons/` and can appear as **modules** under one of the existing left-rail workspaces in the WPF app.
 
 ## How discovery works
 
-At app startup, `App/GenesysCloudTool_UX_Prototype.ps1` scans for `*.addon.psd1` files under `Addons/` (recursively) and:
+At app startup, `App/GenesysCloudTool.ps1` scans for `*.addon.psd1` files under `Addons/` (recursively) and:
 
 - Adds the addon `Module` to the specified `Workspace` in the module rail
 - Routes `Workspace::Module` to the addon when selected

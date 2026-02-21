@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 #Requires -Version 5.1
 
 <#
@@ -13,7 +13,7 @@
 # Import the app script to test the functions (but don't show UI)
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $appRoot = Join-Path -Path (Split-Path -Parent $scriptRoot) -ChildPath 'App'
-$appScript = Join-Path -Path $appRoot -ChildPath 'GenesysCloudTool_UX_Prototype.ps1'
+$appScript = Join-Path -Path $appRoot -ChildPath 'GenesysCloudTool.ps1'
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Live Event Stream Refactoring Tests" -ForegroundColor Cyan

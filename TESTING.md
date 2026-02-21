@@ -1,4 +1,4 @@
-# Testing Guide - AGenesysToolKit
+﻿# Testing Guide - AGenesysToolKit
 
 This guide provides comprehensive testing procedures for AGenesysToolKit, from quick smoke tests to full integration testing.
 
@@ -173,7 +173,7 @@ These tests are available for specific scenarios:
 
 1. **Launch Application**
    ```powershell
-   ./App/GenesysCloudTool_UX_Prototype.ps1
+   ./App/GenesysCloudTool.ps1
    ```
 
 2. **Verify Main Window**
@@ -296,13 +296,13 @@ See [docs/HOW_TO_TEST_JOBRUNNER.md](docs/HOW_TO_TEST_JOBRUNNER.md) for detailed 
 
 1. **Configure OAuth Client**
    ```powershell
-   # Edit App/GenesysCloudTool_UX_Prototype.ps1
+   # Edit App/GenesysCloudTool.ps1
    # Update Set-GcAuthConfig with your Client ID
    ```
 
 2. **Run Application**
    ```powershell
-   ./App/GenesysCloudTool_UX_Prototype.ps1
+   ./App/GenesysCloudTool.ps1
    ```
 
 3. **Authenticate**

@@ -1,4 +1,4 @@
-# How to Test OAuth Implementation
+﻿# How to Test OAuth Implementation
 
 This document provides quick-start instructions for testing the OAuth Authorization Code + PKCE implementation.
 
@@ -35,7 +35,7 @@ This test verifies the OAuth flow works end-to-end with a real Genesys Cloud acc
 
 ### Step 2: Configure Application
 
-1. Open `App/GenesysCloudTool_UX_Prototype_v2_1.ps1` in a text editor
+1. Open `App/GenesysCloudTool.ps1` in a text editor
 2. Find the `Set-GcAuthConfig` section (around line 94)
 3. Replace `YOUR_CLIENT_ID_HERE` with your actual Client ID from Step 1
 4. Verify the region matches your organization (e.g., `mypurecloud.com`, `mypurecloud.ie`)
@@ -59,7 +59,7 @@ Set-GcAuthConfig `
    ```
 3. Launch the application:
    ```powershell
-   .\App\GenesysCloudTool_UX_Prototype_v2_1.ps1
+   .\App\GenesysCloudTool.ps1
    ```
 4. Click the **Login…** button in the top-right corner
 5. Your browser will open to the Genesys Cloud login page
@@ -264,7 +264,7 @@ Once OAuth is working:
 
 If you just want to verify the code runs:
 
-1. Launch application: `.\App\GenesysCloudTool_UX_Prototype_v2_1.ps1`
+1. Launch application: `.\App\GenesysCloudTool.ps1`
 2. Click Login (expect "Configuration Required" warning)
 3. Close application
 

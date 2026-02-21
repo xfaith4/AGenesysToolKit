@@ -1,4 +1,4 @@
-# Contributing to AGenesysToolKit
+﻿# Contributing to AGenesysToolKit
 
 Thank you for your interest in contributing to AGenesysToolKit! This document provides guidelines and best practices for contributing to the project.
 
@@ -301,7 +301,7 @@ if ($ErrorCount -eq 0) {
 4. **Test manually** with the UI if you've changed app-facing code:
 
    ```powershell
-   ./App/GenesysCloudTool_UX_Prototype_v2_1.ps1
+   ./App/GenesysCloudTool.ps1
    ```
 
 ### PR Guidelines

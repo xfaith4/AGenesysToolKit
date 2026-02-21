@@ -1,10 +1,10 @@
-# XamlHelpers.ps1
+﻿# XamlHelpers.ps1
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared XAML utility functions.
-# Dot-sourced by GenesysCloudTool_UX_Prototype.ps1 and any other script that
+# Dot-sourced by GenesysCloudTool.ps1 and any other script that
 # needs to parse XAML strings or escape XML characters.
 #
-# Extracted from GenesysCloudTool_UX_Prototype.ps1 as the first decomposition
+# Extracted from GenesysCloudTool.ps1 as the first decomposition
 # step. Moving these here allows them to be unit-tested independently.
 # ─────────────────────────────────────────────────────────────────────────────
 

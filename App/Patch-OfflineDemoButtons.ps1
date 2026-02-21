@@ -1,9 +1,9 @@
-# Patch-OfflineDemoButtons.ps1
+﻿# Patch-OfflineDemoButtons.ps1
 # Enables primary action buttons when OfflineDemo is enabled OR AccessToken exists.
 # Also removes a stray broken patch line inside Set-OfflineDemoMode (if present).
 [CmdletBinding()]
 param(
-  [string]$Path = "G:\Development\20_Staging\AGenesysToolKit\App\GenesysCloudTool_UX_Prototype.ps1"
+  [string]$Path = "G:\Development\20_Staging\AGenesysToolKit\App\GenesysCloudTool.ps1"
 )
 
 if (-not (Test-Path -LiteralPath $Path)) {

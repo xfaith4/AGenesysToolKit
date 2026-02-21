@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File:*)",
+      "Bash(wc:*)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -Command:*)"
+    ]
+  }
+}

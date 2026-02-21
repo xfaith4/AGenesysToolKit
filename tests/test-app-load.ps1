@@ -1,4 +1,4 @@
-### BEGIN: tests/test-app-load.ps1
+﻿### BEGIN: tests/test-app-load.ps1
 # Test script to verify the main app loads without errors
 # This validates that all functions are defined and modules import correctly
 
@@ -10,7 +10,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool_UX_Prototype.ps1'
+$appFile = Join-Path -Path $repoRoot -ChildPath 'App/GenesysCloudTool.ps1'
 
 Write-Host "Testing: $appFile" -ForegroundColor Gray
 Write-Host ""

@@ -1,4 +1,4 @@
-# Deployment Guide - AGenesysToolKit
+﻿# Deployment Guide - AGenesysToolKit
 
 This guide provides step-by-step instructions for deploying AGenesysToolKit to production environments for use by Genesys Cloud operations teams.
 
@@ -207,7 +207,7 @@ cd AGenesysToolKit
 
 **Option A: Embedded Configuration** (for packaged deployment)
 
-Edit `App/GenesysCloudTool_UX_Prototype.ps1`:
+Edit `App/GenesysCloudTool.ps1`:
 
 ```powershell
 # Find the Set-GcAuthConfig section
@@ -292,7 +292,7 @@ if ($psVersion.Major -lt 5 -or ($psVersion.Major -eq 5 -and $psVersion.Minor -lt
 }
 
 # Launch application
-$appPath = Join-Path $PSScriptRoot "App\GenesysCloudTool_UX_Prototype.ps1"
+$appPath = Join-Path $PSScriptRoot "App\GenesysCloudTool.ps1"
 
 if (-not (Test-Path $appPath)) {
     Write-Error "Application not found at: $appPath"
@@ -498,7 +498,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
 **Enable Verbose Logging**:
 ```powershell
 $VerbosePreference = 'Continue'
-./App/GenesysCloudTool_UX_Prototype.ps1
+./App/GenesysCloudTool.ps1
 ```
 
 **Check Job Logs**:

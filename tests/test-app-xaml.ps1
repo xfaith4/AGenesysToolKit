@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # Test to verify the main script's XAML can be parsed without errors
 
 #Requires -Version 5.1
@@ -8,14 +8,14 @@ $ErrorActionPreference = 'Stop'
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Testing GenesysCloudTool_UX_Prototype.ps1 XAML Parsing" -ForegroundColor Cyan
+Write-Host "Testing GenesysCloudTool.ps1 XAML Parsing" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Get the script path
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $repoRoot = Split-Path -Parent $scriptRoot
-$appScript = Join-Path $repoRoot "App/GenesysCloudTool_UX_Prototype.ps1"
+$appScript = Join-Path $repoRoot "App/GenesysCloudTool.ps1"
 
 Write-Host "Testing script: $appScript" -ForegroundColor Yellow
 Write-Host ""

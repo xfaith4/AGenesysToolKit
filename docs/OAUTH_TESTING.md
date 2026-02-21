@@ -1,4 +1,4 @@
-# OAuth Flow Testing Guide
+﻿# OAuth Flow Testing Guide
 
 This guide provides step-by-step instructions for testing the OAuth Authorization Code + PKCE implementation for Genesys Cloud authentication.
 
@@ -18,7 +18,7 @@ This guide provides step-by-step instructions for testing the OAuth Authorizatio
 **Steps**:
 1. Open PowerShell
 2. Navigate to repository root: `cd path\to\AGenesysToolKit`
-3. Launch application: `.\App\GenesysCloudTool_UX_Prototype_v2_1.ps1`
+3. Launch application: `.\App\GenesysCloudTool.ps1`
 4. Verify the window opens successfully
 
 **Expected Results**:
@@ -46,7 +46,7 @@ This guide provides step-by-step instructions for testing the OAuth Authorizatio
 **Objective**: Test the complete OAuth authorization code + PKCE flow.
 
 **Preparation**:
-1. Configure your OAuth Client ID in `App\GenesysCloudTool_UX_Prototype_v2_1.ps1`:
+1. Configure your OAuth Client ID in `App\GenesysCloudTool.ps1`:
    ```powershell
    Set-GcAuthConfig `
      -Region 'mypurecloud.com' `

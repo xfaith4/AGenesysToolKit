@@ -1,4 +1,4 @@
-# How to Test JobRunner Implementation
+﻿# How to Test JobRunner Implementation
 
 This document provides step-by-step instructions for testing the runspace-based JobRunner implementation that replaces JobSim.
 
@@ -77,7 +77,7 @@ Tests Failed: 0
 **Steps:**
 1. Launch the application:
    ```powershell
-   ./App/GenesysCloudTool_UX_Prototype_v2_1.ps1
+   ./App/GenesysCloudTool.ps1
    ```
 
 2. Navigate to **Operations → Topic Subscriptions**
@@ -363,6 +363,6 @@ After verifying all test scenarios pass:
 ## References
 
 - **JobRunner Implementation:** [Core/JobRunner.psm1](../Core/JobRunner.psm1)
-- **Start-AppJob Usage:** [App/GenesysCloudTool_UX_Prototype_v2_1.ps1](../App/GenesysCloudTool_UX_Prototype_v2_1.ps1)
+- **Start-AppJob Usage:** [App/GenesysCloudTool.ps1](../App/GenesysCloudTool.ps1)
 - **OAuth Setup:** [docs/CONFIGURATION.md](CONFIGURATION.md)
 - **Architecture:** [docs/ARCHITECTURE.md](ARCHITECTURE.md)

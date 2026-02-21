@@ -1,4 +1,4 @@
-# Configuration Guide
+﻿# Configuration Guide
 
 This guide explains how to configure the Genesys Cloud Tool for real operation.
 
@@ -29,7 +29,7 @@ This guide explains how to configure the Genesys Cloud Tool for real operation.
 
 ## Step 2: Configure the Application
 
-Edit the file `App/GenesysCloudTool_UX_Prototype.ps1` and update the OAuth configuration section (around line 90-95):
+Edit the file `App/GenesysCloudTool.ps1` and update the OAuth configuration section (around line 90-95):
 
 ```powershell
 # Initialize Auth Configuration (user should customize these)
@@ -59,7 +59,7 @@ Set-GcAuthConfig `
 From PowerShell, navigate to the repository root and run:
 
 ```powershell
-.\App\GenesysCloudTool_UX_Prototype.ps1
+.\App\GenesysCloudTool.ps1
 ```
 
 ## Step 4: Authenticate
