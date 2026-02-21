@@ -177,7 +177,12 @@ function Initialize-GcAdmin {
         [string]$ClientSecret,
         [string]$AccessToken,
         [string]$ConfigPath,
-        [switch]$NoDefaultGuardrails
+        [switch]$NoDefaultGuardrails,
+
+    # When set, skips loading checkScript blocks defined in the config file.
+    # Use in high-trust-required environments where executing arbitrary code from
+    # config files is unacceptable. Built-in named guardrails are always loaded.
+    [switch]$NoConfigScripts
     )
 
     Write-Host ""
@@ -264,14 +269,42 @@ function Initialize-GcAdmin {
         Register-GcDefaultGuardrails
         # Load custom guardrails from config if present
         if ($cfg['guardrails']) {
-            foreach ($gr in $cfg['guardrails']) {
-                Add-GcGuardrail `
-                    -Name        $gr.name `
-                    -Category    $gr.category `
-                    -Description $gr.description `
-                    -Severity    ($gr.severity ?? 'WARN') `
-                    -Threshold   ($gr.threshold ?? $null) `
-                    -CheckScript ([scriptblock]::Create($gr.checkScript))
+            if ($NoConfigScripts) {
+                Write-GcStatus "Config checkScripts skipped (-NoConfigScripts). Only built-in named guardrails are active." -Level WARN
+            } else {
+                # Security notice: checkScript values from JSON config files are executed as
+                # PowerShell code. Anyone with write access to gc-admin.json can execute
+                # arbitrary code in this process with the active session's API token.
+                # Ensure gc-admin.json is protected by filesystem ACLs and is not world-writable.
+                # Use -NoConfigScripts to disable this behaviour entirely.
+                $dangerousPatterns = @(
+                    'Invoke-Expression', '\biex\b', 'Start-Process', 'Remove-Item',
+                    'Format-Volume', 'net\s+user', 'cmd\.exe', 'powershell\.exe',
+                    '\[System\.Reflection', '\.DownloadFile', '\.DownloadString',
+                    'WebClient', 'Invoke-WebRequest', 'curl\s'
+                )
+                foreach ($gr in $cfg['guardrails']) {
+                    if ([string]::IsNullOrWhiteSpace($gr.checkScript)) { continue }
+
+                    $blocked = $false
+                    foreach ($pattern in $dangerousPatterns) {
+                        if ($gr.checkScript -match $pattern) {
+                            Write-GcStatus "Guardrail '$($gr.name)' checkScript contains disallowed pattern '$pattern' — skipped for safety." -Level CRIT
+                            $blocked = $true
+                            break
+                        }
+                    }
+                    if ($blocked) { continue }
+
+                    Write-GcStatus "Loading config guardrail '$($gr.name)' (executes custom code from config)" -Level WARN
+                    Add-GcGuardrail `
+                        -Name        $gr.name `
+                        -Category    $gr.category `
+                        -Description $gr.description `
+                        -Severity    ($gr.severity ?? 'WARN') `
+                        -Threshold   ($gr.threshold ?? $null) `
+                        -CheckScript ([scriptblock]::Create($gr.checkScript))
+                }
             }
         }
         Write-GcStatus "$($script:Policies.Count) guardrail policies active" -Level OK

@@ -268,7 +268,7 @@ $packet = Export-GcConversationPacket `
 
 ## Development Status
 
-### Current Phase: Production-Ready ✅ (v0.6.0)
+### Current Phase: Production-Ready ✅ (v1.0.0)
 
 All 9 planned modules implemented and tested. The toolkit is ready for deployment to engineering teams.
 
@@ -334,6 +334,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history and [docs/ROADMAP.md](docs/
 
 - [**CONTRIBUTING.md**](CONTRIBUTING.md) - How to contribute, development setup, and coding standards
 - [**ARCHITECTURE.md**](docs/ARCHITECTURE.md) - Core design patterns, contracts, and system architecture
+- [**DECISIONS.md**](docs/DECISIONS.md) - Architectural decision records (ADRs): UI framework, decomposition, guardrails
 - [**STYLE.md**](docs/STYLE.md) - Coding conventions and PowerShell best practices
 - [**TESTING.md**](TESTING.md) - Comprehensive testing guide and test procedures
 

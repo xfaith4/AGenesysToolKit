@@ -5,6 +5,41 @@ All notable changes to AGenesysToolKit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-02-21
+
+### Security
+- **Hardened `checkScript` guardrail loading** — `Initialize-GcAdmin` now validates
+  config-defined checkScript blocks against a blocklist of dangerous patterns before
+  execution. Added `-NoConfigScripts` switch to disable config-sourced script execution
+  entirely in high-trust-required environments. Added explicit `Write-Warning` when
+  custom code from `gc-admin.json` is loaded so operators are never surprised.
+
+### Changed
+- **Unified retry logic with exponential backoff** — `Invoke-GcPagedRequest`'s
+  next-page retry loop now uses the new shared `Invoke-GcWithRetry` helper with
+  exponential backoff (base × 2^attempt, ≤ 30 s ceiling) and jitter, replacing the
+  previous fixed-delay loop. `Invoke-GcRequest` now also uses exponential backoff
+  with jitter and honours `Retry-After` headers on both PS 5.1 and PS 7+ response types.
+- **Silent `catch { }` blocks documented and made observable** — All intentionally
+  silent catch blocks in `Auth.psm1` and `HttpRequests.psm1` now carry explanatory
+  comments and emit `Write-Verbose` diagnostics. Log-write failures in `Write-GcAuthDiag`
+  and `Write-GcToolkitAppLog` now disable the failing log path to prevent repeated
+  silent I/O errors rather than continuing to attempt writes.
+
+### Added
+- **`Invoke-GcWithRetry`** — Private shared retry helper in `HttpRequests.psm1`
+  implementing exponential backoff with jitter and `Retry-After` header support.
+  Used by `Invoke-GcPagedRequest` next-page fetches; available for future callers.
+
+### Removed
+- Nothing removed; this release is fully backwards-compatible.
+
+### Migration from 0.6.0
+No breaking changes. The `-NoConfigScripts` switch is additive. Retry behaviour
+is improved but parameter signatures are unchanged.
+
+---
+
 ## [Unreleased]
 
 ### Added

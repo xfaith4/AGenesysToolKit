@@ -378,5 +378,5 @@ Location: `./artifacts/` (relative to repository root)
 ---
 
 **Last Updated**: 2026-01-14  
-**Version**: 0.6.0  
+**Version**: 1.0.0
 **For**: AGenesysToolKit Users

@@ -60,13 +60,21 @@ function Start-GcAuthDiagnosticsSession {
 
   try {
     New-Item -ItemType Directory -Path $script:GcAuthDiagnostics.LogDirectory -Force | Out-Null
-  } catch { }
+  } catch {
+    # Intentional: log directory creation is best-effort; failure must not block auth flow.
+    Write-Verbose "[Auth] Log directory creation failed: $_"
+  }
 
   try {
     if (-not (Test-Path -LiteralPath $script:GcAuthDiagnostics.LogPath)) {
       "Auth diagnostics started: $(Get-Date -Format o)" | Add-Content -LiteralPath $script:GcAuthDiagnostics.LogPath -Encoding UTF8
     }
-  } catch { }
+  } catch {
+    # Intentional: initial log write is best-effort; failure must not block auth flow.
+    # Disable future write attempts to this path to avoid repeated I/O errors.
+    Write-Verbose "[Auth] Initial log write failed (path: $($script:GcAuthDiagnostics.LogPath)): $_"
+    $script:GcAuthDiagnostics.LogPath = $null
+  }
 }
 
 function Enable-GcAuthDiagnostics {
@@ -185,7 +193,12 @@ function Write-GcAuthDiag {
 
   try {
     Add-Content -LiteralPath $script:GcAuthDiagnostics.LogPath -Value $line -Encoding UTF8
-  } catch { }
+  } catch {
+    # Intentional: log write failure must not bubble out of a diagnostic helper.
+    # Disable further writes to this path to avoid repeated silent I/O errors.
+    Write-Verbose "[Auth] Diagnostic log write failed — disabling log path: $_"
+    $script:GcAuthDiagnostics.LogPath = $null
+  }
 }
 
 function Get-GcToolkitAppLogPath {
@@ -194,7 +207,10 @@ function Get-GcToolkitAppLogPath {
   try {
     $p = [Environment]::GetEnvironmentVariable('GC_TOOLKIT_APP_LOG')
     if (-not [string]::IsNullOrWhiteSpace($p)) { return $p }
-  } catch { }
+  } catch {
+    # Intentional: GetEnvironmentVariable guard for pathological process environments.
+    Write-Verbose "[Auth] GetEnvironmentVariable(GC_TOOLKIT_APP_LOG) failed: $_"
+  }
   return $null
 }
 
@@ -223,7 +239,12 @@ function Write-GcToolkitAppLog {
     }
   }
 
-  try { Add-Content -LiteralPath $path -Value $line -Encoding UTF8 } catch { }
+  try {
+    Add-Content -LiteralPath $path -Value $line -Encoding UTF8
+  } catch {
+    # Intentional: app log write failure must not bubble out of a logging helper.
+    Write-Verbose "[Auth] App log write failed (path: $path): $_"
+  }
 }
 
 function Get-GcAuthExceptionInfo {

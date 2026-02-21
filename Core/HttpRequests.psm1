@@ -15,7 +15,10 @@ function Test-GcOfflineDemoEnabled {
     if ($v -and ($v -match '^(1|true|yes|on)$')) {
       return $true
     }
-  } catch { }
+  } catch {
+    # Intentional: GetEnvironmentVariable guard for pathological process environments.
+    Write-Verbose "[HttpRequests] GetEnvironmentVariable($script:OfflineDemoEnvVar) failed: $_"
+  }
   return $false
 }
 
@@ -23,7 +26,10 @@ function Test-GcToolkitTraceEnabled {
   try {
     $v = [Environment]::GetEnvironmentVariable($script:TraceEnvVar)
     return ($v -and ($v -match '^(1|true|yes|on)$'))
-  } catch { }
+  } catch {
+    # Intentional: GetEnvironmentVariable guard for pathological process environments.
+    Write-Verbose "[HttpRequests] GetEnvironmentVariable($script:TraceEnvVar) failed: $_"
+  }
   return $false
 }
 
@@ -83,10 +89,16 @@ function Write-GcToolkitTrace {
   try {
     $path = Get-GcToolkitTraceLogPath
     if ($path) { Add-Content -LiteralPath $path -Value $line -Encoding utf8 }
-  } catch { }
+  } catch {
+    # Intentional: trace log write failure must not bubble out of a tracing helper.
+    # Write-Verbose is used as fallback (never throws in practice).
+    Write-Verbose "[HttpRequests] Trace file write failed: $_"
+  }
 
   # Always also emit to Verbose so developers can opt-in to console output.
-  try { Write-Verbose $line } catch { }
+  try { Write-Verbose $line } catch {
+    # Intentional: Write-Verbose guard for restricted runspace environments.
+  }
 }
 
 function Get-GcToolkitAppLogPath {
@@ -173,7 +185,12 @@ function Write-GcToolkitAppLog {
       $line += " | data=<unserializable>"
     }
   }
-  try { Add-Content -LiteralPath $path -Value $line -Encoding UTF8 } catch { }
+  try {
+    Add-Content -LiteralPath $path -Value $line -Encoding UTF8
+  } catch {
+    # Intentional: app log write failure must not bubble out of a logging helper.
+    Write-Verbose "[HttpRequests] App log write failed (path: $path): $_"
+  }
 }
 
 function Set-GcAppState {
@@ -383,6 +400,99 @@ function Join-GcUri {
   return "$base/$rel`?$QueryString"
 }
 
+function Invoke-GcWithRetry {
+  <#
+  .SYNOPSIS
+    Private retry helper used by Invoke-GcRequest and Invoke-GcPagedRequest.
+
+  .DESCRIPTION
+    Wraps a scriptblock in a retry loop with:
+      - Exponential backoff with jitter (base * 2^attempt + 0–1 s jitter)
+      - Retry-After header honoured when present on 429/503 responses
+      - Trace logging on every retry and final failure
+      - Configurable max delay ceiling
+
+  .PARAMETER ScriptBlock
+    The operation to retry. Must throw on failure.
+
+  .PARAMETER RetryCount
+    Maximum number of retries (0 = no retries; default: 2).
+
+  .PARAMETER BaseDelaySeconds
+    Delay for the first retry. Doubles on each subsequent attempt (default: 2).
+
+  .PARAMETER MaxDelaySeconds
+    Ceiling on computed exponential delay before jitter (default: 30).
+
+  .PARAMETER OperationLabel
+    Human-readable label for trace messages (e.g. "GET /api/v2/users").
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][scriptblock] $ScriptBlock,
+    [int]    $RetryCount        = 2,
+    [int]    $BaseDelaySeconds  = 2,
+    [int]    $MaxDelaySeconds   = 30,
+    [string] $OperationLabel    = 'HTTP'
+  )
+
+  $attempt = 0
+  while ($true) {
+    try {
+      return & $ScriptBlock
+    } catch {
+      $attempt++
+
+      if ($attempt -gt $RetryCount) {
+        Write-GcToolkitTrace -Level ERROR -Message ("[RETRY] $OperationLabel — max retries ($RetryCount) exceeded: $($_.Exception.Message)")
+        throw
+      }
+
+      # Respect Retry-After header (seconds) when the server provides it.
+      $retryAfterSec = $null
+      try {
+        $resp = $_.Exception.Response
+        if ($resp) {
+          $raRaw = $null
+          # PS 5.1 HttpWebResponse
+          if ($resp -is [System.Net.HttpWebResponse]) {
+            $raRaw = $resp.Headers['Retry-After']
+          }
+          # PS 7+ HttpResponseMessage
+          if ($resp -is [System.Net.Http.HttpResponseMessage]) {
+            $retryHeader = $resp.Headers.RetryAfter
+            if ($retryHeader -and $retryHeader.Delta) {
+              $retryAfterSec = [int]$retryHeader.Delta.TotalSeconds
+            } elseif ($retryHeader -and $retryHeader.Date) {
+              $retryAfterSec = [int]([DateTime]::UtcNow - $retryHeader.Date.UtcDateTime).TotalSeconds * -1
+            }
+          }
+          if ($raRaw -and $null -eq $retryAfterSec) {
+            $parsed = 0
+            if ([int]::TryParse($raRaw, [ref]$parsed)) { $retryAfterSec = $parsed }
+          }
+        }
+      } catch {
+        # Intentional: Retry-After extraction is best-effort; failure does not block retry.
+        Write-Verbose "[HttpRequests] Retry-After header extraction failed: $_"
+      }
+
+      if ($null -ne $retryAfterSec -and $retryAfterSec -gt 0) {
+        $delaySec = $retryAfterSec
+        Write-GcToolkitTrace -Level WARN -Message ("[RETRY] $OperationLabel — attempt $attempt/$RetryCount honouring Retry-After: ${delaySec}s — $($_.Exception.Message)")
+      } else {
+        # Exponential backoff: base * 2^(attempt-1), capped, plus up to 1 s of jitter.
+        $exponential = [Math]::Min($BaseDelaySeconds * [Math]::Pow(2, $attempt - 1), $MaxDelaySeconds)
+        $jitterSec   = (Get-Random -Minimum 0 -Maximum 1000) / 1000.0
+        $delaySec    = $exponential + $jitterSec
+        Write-GcToolkitTrace -Level WARN -Message ("[RETRY] $OperationLabel — attempt $attempt/$RetryCount sleeping ${delaySec}s — $($_.Exception.Message)")
+      }
+
+      Start-Sleep -Seconds $delaySec
+    }
+  }
+}
+
 function Invoke-GcRequest {
   <#
   .SYNOPSIS
@@ -512,7 +622,10 @@ function Invoke-GcRequest {
           Uri        = $uri
           ElapsedMs  = $sw.ElapsedMilliseconds
         }
-      } catch { }
+      } catch {
+        # Intentional: telemetry write must not mask a successful API response.
+        Write-Verbose "[HttpRequests] Success telemetry write failed: $_"
+      }
       return $result
     } catch {
       $attempt++
@@ -525,7 +638,10 @@ function Invoke-GcRequest {
           try {
             if ($_.Exception.Response -is [System.Net.HttpWebResponse]) { $statusCode = [int]$_.Exception.Response.StatusCode }
             if ($_.Exception.Response -is [System.Net.Http.HttpResponseMessage]) { $statusCode = [int]$_.Exception.Response.StatusCode }
-          } catch { }
+          } catch {
+            # Intentional: status code extraction is best-effort across PS 5.1/7+ response types.
+            Write-Verbose "[HttpRequests] Status code extraction failed: $_"
+          }
           Write-GcToolkitAppLog -Level 'ERROR' -Category 'http' -Message 'Request failed' -Data @{
             Method     = $Method
             Uri        = $uri
@@ -533,21 +649,47 @@ function Invoke-GcRequest {
             Error      = $_.Exception.Message
             ElapsedMs  = $sw.ElapsedMilliseconds
           }
-        } catch { }
+        } catch {
+          # Intentional: failure telemetry must not mask the original exception being re-thrown.
+          Write-Verbose "[HttpRequests] Failure telemetry write failed: $_"
+        }
         throw
       }
 
-      Write-GcToolkitTrace -Level WARN -Message ("HTTP RETRY {0}/{1} {2} :: {3}" -f $attempt, $RetryCount, $uri, $_.Exception.Message)
+      # Respect Retry-After when present (same logic as Invoke-GcWithRetry).
+      $retryDelaySec = $null
+      try {
+        $resp = $_.Exception.Response
+        if ($resp -is [System.Net.HttpWebResponse]) {
+          $raRaw = $resp.Headers['Retry-After']
+          $parsed = 0
+          if ($raRaw -and [int]::TryParse($raRaw, [ref]$parsed)) { $retryDelaySec = $parsed }
+        }
+      } catch {
+        # Intentional: Retry-After extraction is best-effort.
+        Write-Verbose "[HttpRequests] Retry-After extraction failed: $_"
+      }
+      if ($null -eq $retryDelaySec) {
+        $exponential   = [Math]::Min($RetryDelaySeconds * [Math]::Pow(2, $attempt - 1), 30)
+        $jitterSec     = (Get-Random -Minimum 0 -Maximum 1000) / 1000.0
+        $retryDelaySec = $exponential + $jitterSec
+      }
+
+      Write-GcToolkitTrace -Level WARN -Message ("HTTP RETRY {0}/{1} {2} sleeping {3}s :: {4}" -f $attempt, $RetryCount, $uri, $retryDelaySec, $_.Exception.Message)
       Write-Verbose ("Retry {0}/{1} after error: {2}" -f $attempt, $RetryCount, $_.Exception.Message)
       try {
         Write-GcToolkitAppLog -Level 'WARN' -Category 'http' -Message 'Retry' -Data @{
-          Attempt    = $attempt
-          RetryCount = $RetryCount
-          Uri        = $uri
-          Error      = $_.Exception.Message
+          Attempt       = $attempt
+          RetryCount    = $RetryCount
+          Uri           = $uri
+          DelaySec      = $retryDelaySec
+          Error         = $_.Exception.Message
         }
-      } catch { }
-      Start-Sleep -Seconds $RetryDelaySeconds
+      } catch {
+        # Intentional: retry telemetry must not mask the retry logic itself.
+        Write-Verbose "[HttpRequests] Retry telemetry write failed: $_"
+      }
+      Start-Sleep -Seconds $retryDelaySec
     }
   }
 }
@@ -739,37 +881,31 @@ function Invoke-GcPagedRequest {
 
     # Fetch next page
     if ($nextCallUri) {
-      # Reuse the same headers/token/body, just hit the resolved next URI
+      # Reuse the same headers/token/body, just hit the resolved next URI.
+      # Build params once outside the retry lambda so the closure captures them cleanly.
       Write-Verbose ("GC {0} {1}" -f $Method, $nextCallUri)
+      Write-GcToolkitTrace -Level INFO -Message ("HTTP {0} {1} [next-page]" -f $Method, $nextCallUri)
 
-      $attempt = 0
-      while ($true) {
-        try {
-          $irmParams = @{
-            Uri     = $nextCallUri
-            Method  = $Method
-            Headers = if ($Headers) { $Headers } else { @{} }
-          }
+      $nextPageHeaders = @{}
+      if ($Headers) { foreach ($k in $Headers.Keys) { $nextPageHeaders[$k] = $Headers[$k] } }
+      if ($AccessToken) { $nextPageHeaders['Authorization'] = "Bearer $($AccessToken)" }
+      if (-not $nextPageHeaders.ContainsKey('Content-Type')) { $nextPageHeaders['Content-Type'] = "application/json; charset=utf-8" }
 
-          if ($AccessToken) { $irmParams.Headers['Authorization'] = "Bearer $($AccessToken)" }
-          if (-not $irmParams.Headers.ContainsKey('Content-Type')) { $irmParams.Headers['Content-Type'] = "application/json; charset=utf-8" }
-
-          if ($Method -in @('POST','PUT','PATCH') -and $null -ne $Body) {
-            if ($Body -is [string]) {
-              $irmParams['Body'] = $Body
-            } else {
-              $irmParams['Body'] = ($Body | ConvertTo-Json -Depth 25)
-            }
-          }
-
-          $lastResponse = Invoke-RestMethod @irmParams
-          break
-        } catch {
-          $attempt++
-          if ($attempt -gt $RetryCount) { throw }
-          Start-Sleep -Seconds $RetryDelaySeconds
-        }
+      $nextPageIrmParams = @{
+        Uri     = $nextCallUri
+        Method  = $Method
+        Headers = $nextPageHeaders
       }
+      if ($Method -in @('POST','PUT','PATCH') -and $null -ne $Body) {
+        $nextPageIrmParams['Body'] = if ($Body -is [string]) { $Body } else { ($Body | ConvertTo-Json -Depth 25) }
+      }
+
+      # Use the shared retry helper: exponential backoff + Retry-After support + trace logging.
+      $lastResponse = Invoke-GcWithRetry `
+        -RetryCount       $RetryCount `
+        -BaseDelaySeconds $RetryDelaySeconds `
+        -OperationLabel   ("$Method $nextCallUri [page $($pagesFetched + 1)]") `
+        -ScriptBlock      { Invoke-RestMethod @nextPageIrmParams }
     }
     else {
       $lastResponse = Invoke-GcRequest -Path $resolvedPath -Method $Method -InstanceName $InstanceName -BaseUri $BaseUri `
