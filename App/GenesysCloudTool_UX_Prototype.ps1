@@ -969,7 +969,10 @@ function Refresh-PrimaryActionButtons {
   foreach ($handles in @($script:PrimaryActionHandleMaps)) {
     try {
       Enable-PrimaryActionButtons -Handles $handles -SkipRegistration
-    } catch { }
+    } catch {
+      # Intentional: a single handle map failing must not prevent the others from refreshing.
+      Write-Verbose "[Refresh-PrimaryActionButtons] Suppressed per-map error: $_"
+    }
   }
 }
 
@@ -4762,8 +4765,10 @@ function New-ConversationLookupView {
 
           <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
             <Button x:Name="BtnConvSearch" Content="Search" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
-            <Button x:Name="BtnConvExportJson" Content="Export JSON" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
-            <Button x:Name="BtnConvExportCsv" Content="Export CSV" Width="100" Height="32" IsEnabled="False"/>
+            <Button x:Name="BtnConvExportJson" Content="Export JSON" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"
+                    ToolTip="Run a search first — export becomes available once results are loaded."/>
+            <Button x:Name="BtnConvExportCsv" Content="Export CSV" Width="100" Height="32" IsEnabled="False"
+                    ToolTip="Run a search first — export becomes available once results are loaded."/>
           </StackPanel>
         </Grid>
 
@@ -4863,6 +4868,10 @@ function New-ConversationLookupView {
 
   if ($btnConvSearch) { $btnConvSearch.Add_Click({
     Set-Status "Searching conversations..."
+    Set-ControlEnabled -Control $btnConvSearch -Enabled $false
+    Set-ControlEnabled -Control $btnConvExportJson -Enabled $false -DisabledReason 'Searching — export will be available once results are loaded.'
+    Set-ControlEnabled -Control $btnConvExportCsv -Enabled $false -DisabledReason 'Searching — export will be available once results are loaded.'
+    Set-ControlEnabled -Control $btnConvOpenTimeline -Enabled $false
 
     # Build date range
     $endTime = Get-Date
@@ -4919,9 +4928,14 @@ function New-ConversationLookupView {
     } -ArgumentList @($queryBody, $script:AppState.AccessToken, $script:AppState.Region, $maxResults) -OnCompleted ({
       param($job)
 
-      if ($job.Result) {
-        $script:ConversationsData = $job.Result
-        $displayData = $job.Result | ForEach-Object {
+      $authReady = Test-AuthReady
+      $authReason = if ($authReady) { $null } else { Get-AuthUnavailableReason }
+      Set-ControlEnabled -Control $btnConvSearch -Enabled $authReady -DisabledReason $authReason
+
+      $results = @($job.Result)
+      if ($results.Count -gt 0) {
+        $script:ConversationsData = $results
+        $displayData = $results | ForEach-Object {
           $startTime = if ($_.conversationStart) {
             try { [DateTime]::Parse($_.conversationStart).ToString('yyyy-MM-dd HH:mm:ss') }
             catch { $_.conversationStart }
@@ -4970,15 +4984,34 @@ function New-ConversationLookupView {
           }
         }
         if ($gridConversations) { $gridConversations.ItemsSource = $displayData }
-        if ($txtConvCount) { $txtConvCount.Text = "($($job.Result.Count) conversations)" }
-        Set-Status "Found $($job.Result.Count) conversations."
+        if ($txtConvCount) { $txtConvCount.Text = "($($results.Count) conversations)" }
+        Set-ControlEnabled -Control $btnConvExportJson -Enabled $true
+        Set-ControlEnabled -Control $btnConvExportCsv -Enabled $true
+        Set-ControlEnabled -Control $btnConvOpenTimeline -Enabled $false
+        Set-Status "Found $($results.Count) conversations."
       } else {
+        $script:ConversationsData = @()
         if ($gridConversations) { $gridConversations.ItemsSource = @() }
         if ($txtConvCount) { $txtConvCount.Text = "(0 conversations)" }
+        Set-ControlEnabled -Control $btnConvExportJson -Enabled $false -DisabledReason 'No conversations found. Refine your search criteria and try again.'
+        Set-ControlEnabled -Control $btnConvExportCsv -Enabled $false -DisabledReason 'No conversations found. Refine your search criteria and try again.'
+        Set-ControlEnabled -Control $btnConvOpenTimeline -Enabled $false
         Set-Status "Search failed or returned no results."
       }
     }.GetNewClosure())
   }.GetNewClosure()) }
+
+  if ($gridConversations -and $btnConvOpenTimeline) {
+    $gridConversations.Add_SelectionChanged({
+      $selected = $gridConversations.SelectedItem
+      $canOpen = $false
+      if ($selected -and $selected.PSObject.Properties.Match('ConversationId').Count -gt 0) {
+        $convId = [string]$selected.ConversationId
+        $canOpen = (-not [string]::IsNullOrWhiteSpace($convId) -and $convId -ne 'N/A')
+      }
+      Set-ControlEnabled -Control $btnConvOpenTimeline -Enabled $canOpen
+    }.GetNewClosure())
+  }
 
   if ($btnConvExportJson) { $btnConvExportJson.Add_Click({
     if (-not $script:ConversationsData -or $script:ConversationsData.Count -eq 0) {
