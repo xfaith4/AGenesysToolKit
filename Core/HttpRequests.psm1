@@ -848,6 +848,8 @@ function Invoke-GcPagedRequest {
   try { $cursor = $lastResponse.cursor } catch { Write-Verbose "Ignored error: $_" }
   try { $nextCursor = $lastResponse.nextCursor } catch { Write-Verbose "Ignored error: $_" }
 
+  while ($true) {
+
     if ($MaxPages -gt 0 -and $pagesFetched -ge $MaxPages) { break }
     if ($MaxItems -gt 0 -and $items.Count -ge $MaxItems) { break }
 
