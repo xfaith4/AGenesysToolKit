@@ -590,7 +590,7 @@ function Register-GcDefaultGuardrails {
             if ($bad.Count -gt 3) {
                 return @{ Pass=$false; Detail="$($bad.Count) queue(s) have no skill evaluation" }
             }
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
         return $true
     }
 
@@ -603,7 +603,7 @@ function Register-GcDefaultGuardrails {
             if ($unpub.Count -gt 0) {
                 return @{ Pass=$false; Detail="$($unpub.Count) flow(s) have no published version" }
             }
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
         return $true
     }
 
@@ -636,7 +636,7 @@ function Register-GcDefaultGuardrails {
                     return @{ Pass=$false; Detail="${rate}% abandonment in last 4 h (threshold: ${Threshold}%)" }
                 }
             }
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
         return $true
     }
 
@@ -667,7 +667,7 @@ function Register-GcDefaultGuardrails {
                     return @{ Pass=$false; Detail="Avg handle time ${avgSec}s (threshold: ${Threshold}s)" }
                 }
             }
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
         return $true
     }
 
@@ -682,7 +682,7 @@ function Register-GcDefaultGuardrails {
             if ($count -gt 50) {
                 return @{ Pass=$false; Detail="$count data actions — review for orphans (use Search-GcFlowReferences)" }
             }
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
         return $true
     }
 
@@ -695,7 +695,7 @@ function Register-GcDefaultGuardrails {
             if ($orphans.Count -gt 5) {
                 return @{ Pass=$false; Detail="$($orphans.Count) skill(s) have no assigned users" }
             }
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
         return $true
     }
 
@@ -723,7 +723,7 @@ function Register-GcDefaultGuardrails {
             if ($broken.Count -gt 0) {
                 return @{ Pass=$false; Detail="$($broken.Count) integration(s) are in error state" }
             }
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
         return $true
     }
 }
@@ -970,7 +970,7 @@ function Invoke-GcCapacitySnapshot {
         try {
             $mu = Invoke-GcApi -Path "/api/v2/routing/queues/$($q.id)/members?pageSize=1"
             $members = $mu.total
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
 
         if ($members -eq 0) {
             Write-GcStatus "UNSTAFFED: $($q.name)" -Level CRIT

@@ -678,6 +678,7 @@ function Invoke-ExecutiveDailySummaryReport {
                       }
                     } catch {
                       # Skip segments with invalid timestamps
+                      Write-Verbose "Skipped segment with invalid timestamps: $_"
                     }
                   }
                 }

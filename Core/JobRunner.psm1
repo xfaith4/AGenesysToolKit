@@ -109,7 +109,7 @@ function Add-GcJobLog {
     $path = $null
     try { $path = [Environment]::GetEnvironmentVariable('GC_TOOLKIT_TRACE_LOG') } catch { $path = $null }
     if ($path) { Add-Content -LiteralPath $path -Value $line -Encoding utf8 }
-  } catch { }
+  } catch { Write-Verbose "Ignored error: $_" }
 }
 
 function Start-GcJob {
@@ -262,9 +262,7 @@ function Start-GcJob {
             if ($nonStringOut.Count -eq 1 -and ($stringOut.Count -gt 0)) {
               $Job.Result = $nonStringOut[0]
             }
-          } catch { }
-
-          # Capture verbose/information streams when toolkit tracing is enabled.
+          } catch { Write-Verbose "Ignored error: $_" }
           $traceEnabled = $false
           try {
             $v = [Environment]::GetEnvironmentVariable('GC_TOOLKIT_TRACE')
@@ -283,7 +281,7 @@ function Start-GcJob {
                   Add-GcJobLog -Job $Job -Message ("INFO: {0}" -f $msg)
                 }
               }
-            } catch { }
+            } catch { Write-Verbose "Ignored error: $_" }
           }
           
           # Check for errors
@@ -355,7 +353,7 @@ function Start-GcJob {
         if ($nonStringOut.Count -eq 1 -and ($stringOut.Count -gt 0)) {
           $Job.Result = $nonStringOut[0]
         }
-      } catch { }
+      } catch { Write-Verbose "Ignored error: $_" }
 
       $traceEnabled = $false
       try {
@@ -375,7 +373,7 @@ function Start-GcJob {
               Add-GcJobLog -Job $Job -Message ("INFO: {0}" -f $msg)
             }
           }
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
       }
       
       # Check for errors
