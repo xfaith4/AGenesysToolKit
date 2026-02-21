@@ -53,6 +53,7 @@
             <ListBoxItem Content="Conversations"/>
             <ListBoxItem Content="Operations"/>
             <ListBoxItem Content="Reports &amp; Exports"/>
+            <ListBoxItem Content="Audits"/>
           </ListBox>
         </DockPanel>
       </Border>

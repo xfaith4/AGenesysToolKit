@@ -25,6 +25,7 @@ Import-Module (Join-Path -Path $coreRoot -ChildPath 'Analytics.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Dependencies.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'Reporting.psm1') -Force
 Import-Module (Join-Path -Path $coreRoot -ChildPath 'ReportTemplates.psm1') -Force
+Import-Module (Join-Path -Path $coreRoot -ChildPath 'ExtensionAudit.psm1') -Force
 
 # -----------------------------
 # XAML Helpers (extracted to App/XamlHelpers.ps1)
@@ -64,6 +65,7 @@ Import-Module (Join-Path -Path $coreRoot -ChildPath 'ReportTemplates.psm1') -For
 . (Join-Path $scriptRoot 'Views/Orchestration.ps1')
 . (Join-Path $scriptRoot 'Views/RoutingPeople.ps1')
 . (Join-Path $scriptRoot 'Views/Reports.ps1')
+. (Join-Path $scriptRoot 'Views/Audits.ps1')
 
 # -----------------------------
 # State + helpers
@@ -737,7 +739,8 @@ function Get-PrimaryActionKeys {
     'BtnSearchReferences',
     'BtnSnapshotRefresh',
     'BtnStart',
-    'BtnRunReport'
+    'BtnRunReport',
+    'BtnAuditRun'
   )
 }
 
@@ -3955,6 +3958,10 @@ function Set-ContentForModule([string]$workspace, [string]$module) {
     'Reports & Exports::Quick Exports' {
       $TxtSubtitle.Text = 'Contextual export buttons for grid-based views'
       $MainHost.Content = (New-ReportsExportsView)
+    }
+    'Audits::Extension Audit' {
+      $TxtSubtitle.Text = 'Detect extension misconfigurations and user anomalies'
+      $MainHost.Content = (New-ExtensionAuditView)
     }
     default {
       $route = "$workspace::$module"

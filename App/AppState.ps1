@@ -99,6 +99,9 @@ $script:WorkspaceModules = [ordered]@{
     'Export History',
     'Quick Exports'
   )
+  'Audits' = @(
+    'Extension Audit'
+  )
 }
 
 # Runtime addon route table — populated by Initialize-GcAddons at startup.
