@@ -104,7 +104,7 @@ function Get-GcRecordings {
             $recording.conversation.id) {
           Add-Member -InputObject $recording -NotePropertyName 'conversationId' -NotePropertyValue $recording.conversation.id -Force
         }
-      } catch { }
+      } catch { Write-Verbose "Ignored error: $_" }
     }
 
     return @($results)
@@ -180,7 +180,7 @@ function Get-GcRecordingMedia {
       if ($userRecording.conversation -and $userRecording.conversation.id) {
         $conversationId = [string]$userRecording.conversation.id
       }
-    } catch { }
+    } catch { Write-Verbose "Ignored error: $_" }
 
     if (-not [string]::IsNullOrWhiteSpace($conversationId)) {
       try {
@@ -188,7 +188,7 @@ function Get-GcRecordingMedia {
           -Path "/api/v2/conversations/$conversationId/recordings/$RecordingId" `
           -AccessToken $AccessToken -InstanceName $InstanceName
         if ($recording) { return $recording }
-      } catch { }
+      } catch { Write-Verbose "Ignored error: $_" }
     }
 
     return $userRecording

@@ -39,7 +39,7 @@ function Test-GcToolkitTraceBodyEnabled {
     if (Test-GcOfflineDemoEnabled) { return $true }
     $v = [Environment]::GetEnvironmentVariable($script:TraceBodyEnvVar)
     return ($v -and ($v -match '^(1|true|yes|on)$'))
-  } catch { }
+  } catch { Write-Verbose "Ignored error: $_" }
   return $false
 }
 
@@ -47,7 +47,7 @@ function Get-GcToolkitTraceLogPath {
   try {
     $p = [Environment]::GetEnvironmentVariable($script:TraceLogEnvVar)
     if (-not [string]::IsNullOrWhiteSpace($p)) { return $p }
-  } catch { }
+  } catch { Write-Verbose "Ignored error: $_" }
   return $null
 }
 
@@ -98,6 +98,7 @@ function Write-GcToolkitTrace {
   # Always also emit to Verbose so developers can opt-in to console output.
   try { Write-Verbose $line } catch {
     # Intentional: Write-Verbose guard for restricted runspace environments.
+    $null = $_
   }
 }
 
@@ -107,7 +108,7 @@ function Get-GcToolkitAppLogPath {
   try {
     $p = [Environment]::GetEnvironmentVariable('GC_TOOLKIT_APP_LOG')
     if (-not [string]::IsNullOrWhiteSpace($p)) { return $p }
-  } catch { }
+  } catch { Write-Verbose "Ignored error: $_" }
   return $null
 }
 
@@ -252,35 +253,35 @@ function Normalize-GcInstanceName {
     if ($text.Length -ge 2) { $text = $text.Substring(1, $text.Length - 2) }
   }
 
-  $host = $text
+  $gcHost = $text
 
   # If a full URL was provided, extract Host; otherwise, strip any path fragment.
-  if ($host -match '^[a-zA-Z][a-zA-Z0-9+\.-]*://') {
+  if ($gcHost -match '^[a-zA-Z][a-zA-Z0-9+\.-]*://') {
     try {
-      $uri = [Uri]$host
-      if ($uri.Host) { $host = $uri.Host }
-    } catch { }
+      $uri = [Uri]$gcHost
+      if ($uri.Host) { $gcHost = $uri.Host }
+    } catch { Write-Verbose "Ignored error: $_" }
   } else {
-    $host = ($host -split '/')[0]
+    $gcHost = ($gcHost -split '/')[0]
   }
 
   # Strip :port if present.
-  if ($host -match '^(?<h>[^:]+):\d+$') {
-    $host = $matches['h']
+  if ($gcHost -match '^(?<h>[^:]+):\d+$') {
+    $gcHost = $matches['h']
   }
 
   # Remove invisible/whitespace characters that commonly sneak in during copy/paste.
-  $host = $host -replace "[\u200B-\u200D\uFEFF]", ""
-  $host = $host -replace "\s+", ""
+  $gcHost = $gcHost -replace "[\u200B-\u200D\uFEFF]", ""
+  $gcHost = $gcHost -replace "\s+", ""
 
-  $host = $host.Trim().Trim('.').ToLowerInvariant()
+  $gcHost = $gcHost.Trim().Trim('.').ToLowerInvariant()
 
   # Allow users to paste api./apps./login. URLs and normalize back to region.
-  if ($host -match '^(api|apps|login|signin|sso|auth)\.(?<rest>.+)$') {
-    $host = $matches['rest']
+  if ($gcHost -match '^(api|apps|login|signin|sso|auth)\.(?<rest>.+)$') {
+    $gcHost = $matches['rest']
   }
 
-  return $host
+  return $gcHost
 }
 
 function Normalize-GcAccessToken {
@@ -313,7 +314,7 @@ function Normalize-GcAccessToken {
       if ($obj -and $obj.access_token) {
         $raw = [string]$obj.access_token
       }
-    } catch { }
+    } catch { Write-Verbose "Ignored error: $_" }
   }
 
   # Handle common header formats.
@@ -840,14 +841,12 @@ function Invoke-GcPagedRequest {
   $cursor     = $null
   $nextCursor = $null
 
-  try { $nextPage = $lastResponse.nextPage } catch { }
-  try { $nextUri = $lastResponse.nextUri } catch { }
-  try { $pageCount = $lastResponse.pageCount } catch { }
-  try { $pageNumber = $lastResponse.pageNumber } catch { }
-  try { $cursor = $lastResponse.cursor } catch { }
-  try { $nextCursor = $lastResponse.nextCursor } catch { }
-
-  while ($true) {
+  try { $nextPage = $lastResponse.nextPage } catch { Write-Verbose "Ignored error: $_" }
+  try { $nextUri = $lastResponse.nextUri } catch { Write-Verbose "Ignored error: $_" }
+  try { $pageCount = $lastResponse.pageCount } catch { Write-Verbose "Ignored error: $_" }
+  try { $pageNumber = $lastResponse.pageNumber } catch { Write-Verbose "Ignored error: $_" }
+  try { $cursor = $lastResponse.cursor } catch { Write-Verbose "Ignored error: $_" }
+  try { $nextCursor = $lastResponse.nextCursor } catch { Write-Verbose "Ignored error: $_" }
 
     if ($MaxPages -gt 0 -and $pagesFetched -ge $MaxPages) { break }
     if ($MaxItems -gt 0 -and $items.Count -ge $MaxItems) { break }
@@ -924,12 +923,12 @@ function Invoke-GcPagedRequest {
     $cursor     = $null
     $nextCursor = $null
 
-    try { $nextPage = $lastResponse.nextPage } catch { }
-    try { $nextUri = $lastResponse.nextUri } catch { }
-    try { $pageCount = $lastResponse.pageCount } catch { }
-    try { $pageNumber = $lastResponse.pageNumber } catch { }
-    try { $cursor = $lastResponse.cursor } catch { }
-    try { $nextCursor = $lastResponse.nextCursor } catch { }
+    try { $nextPage = $lastResponse.nextPage } catch { Write-Verbose "Ignored error: $_" }
+    try { $nextUri = $lastResponse.nextUri } catch { Write-Verbose "Ignored error: $_" }
+    try { $pageCount = $lastResponse.pageCount } catch { Write-Verbose "Ignored error: $_" }
+    try { $pageNumber = $lastResponse.pageNumber } catch { Write-Verbose "Ignored error: $_" }
+    try { $cursor = $lastResponse.cursor } catch { Write-Verbose "Ignored error: $_" }
+    try { $nextCursor = $lastResponse.nextCursor } catch { Write-Verbose "Ignored error: $_" }
   }
 
   if ($items.Count -gt 0) { return $items }

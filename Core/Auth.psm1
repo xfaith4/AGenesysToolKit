@@ -289,10 +289,10 @@ function Get-GcAuthExceptionInfo {
             if ($body -and $body.Length -gt 8192) { $body = $body.Substring(0, 8192) + '…' }
             $info.Http.Body = $body
           }
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
       }
     }
-  } catch { }
+  } catch { Write-Verbose "Ignored error: $_" }
 
   # PowerShell 7 HttpResponseException often stores response in ErrorDetails
   try {
@@ -301,7 +301,7 @@ function Get-GcAuthExceptionInfo {
       if ($details.Length -gt 8192) { $details = $details.Substring(0, 8192) + '…' }
       $info.ErrorDetails = $details
     }
-  } catch { }
+  } catch { Write-Verbose "Ignored error: $_" }
 
   return $info
 }
@@ -587,8 +587,8 @@ function Start-GcAuthCodeFlow {
       if ($host -eq 'localhost') {
         [void]$prefixSet.Add(("{0}://127.0.0.1:{1}/" -f $scheme, $port))
         [void]$prefixSet.Add(("{0}://127.0.0.1:{1}{2}" -f $scheme, $port, $exactPath))
-        try { [void]$prefixSet.Add(("{0}://[::1]:{1}/" -f $scheme, $port)) } catch { }
-        try { [void]$prefixSet.Add(("{0}://[::1]:{1}{2}" -f $scheme, $port, $exactPath)) } catch { }
+        try { [void]$prefixSet.Add(("{0}://[::1]:{1}/" -f $scheme, $port)) } catch { Write-Verbose "Ignored error: $_" }
+        try { [void]$prefixSet.Add(("{0}://[::1]:{1}{2}" -f $scheme, $port, $exactPath)) } catch { Write-Verbose "Ignored error: $_" }
       }
     } else {
       # Best-effort fallback
@@ -597,7 +597,7 @@ function Start-GcAuthCodeFlow {
 
     $listener = New-Object System.Net.HttpListener
     foreach ($p in $prefixSet) {
-      try { [void]$listener.Prefixes.Add($p) } catch { }
+      try { [void]$listener.Prefixes.Add($p) } catch { Write-Verbose "Ignored error: $_" }
     }
     $listener.Start()
 
@@ -641,10 +641,10 @@ function Start-GcAuthCodeFlow {
         HasQuery  = (-not [string]::IsNullOrEmpty($query))
       }
 
-      try { $authCode = $request.QueryString['code'] } catch { }
-      try { $receivedState = $request.QueryString['state'] } catch { }
-      try { $oauthError = $request.QueryString['error'] } catch { }
-      try { $oauthErrorDescription = $request.QueryString['error_description'] } catch { }
+      try { $authCode = $request.QueryString['code'] } catch { Write-Verbose "Ignored error: $_" }
+      try { $receivedState = $request.QueryString['state'] } catch { Write-Verbose "Ignored error: $_" }
+      try { $oauthError = $request.QueryString['error'] } catch { Write-Verbose "Ignored error: $_" }
+      try { $oauthErrorDescription = $request.QueryString['error_description'] } catch { Write-Verbose "Ignored error: $_" }
 
       # Send response to browser
       $responseHtml = $null
@@ -795,7 +795,7 @@ function Get-GcTokenFromAuthCode {
     }
     if (-not $response.access_token) {
       $keys = @()
-      try { $keys = @($response.PSObject.Properties.Name) } catch { }
+      try { $keys = @($response.PSObject.Properties.Name) } catch { Write-Verbose "Ignored error: $_" }
       throw ("Token response missing access_token. Keys: {0}" -f ($keys -join ', '))
     }
 
@@ -889,7 +889,7 @@ function Get-GcClientCredentialsToken {
     if ($null -eq $response) { throw "Token endpoint returned null response." }
     if (-not $response.access_token) {
       $keys = @()
-      try { $keys = @($response.PSObject.Properties.Name) } catch { }
+      try { $keys = @($response.PSObject.Properties.Name) } catch { Write-Verbose "Ignored error: $_" }
       throw ("Token response missing access_token. Keys: {0}" -f ($keys -join ', '))
     }
 

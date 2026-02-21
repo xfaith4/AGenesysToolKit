@@ -511,7 +511,7 @@ function Invoke-GcSampleRequest {
             }
           }
         }
-      } catch { }
+      } catch { Write-Verbose "Ignored error: $_" }
 
       # conversationId filter (common pattern)
       try {
@@ -528,7 +528,7 @@ function Invoke-GcSampleRequest {
             }
           }
         }
-      } catch { }
+      } catch { Write-Verbose "Ignored error: $_" }
 
       return [pscustomobject]@{
         conversations = @($convs)
@@ -546,7 +546,7 @@ function Invoke-GcSampleRequest {
             if ($pred.dimension -eq 'conversationId' -and $pred.value) { $conversationId = [string]$pred.value }
           }
         }
-      } catch { }
+      } catch { Write-Verbose "Ignored error: $_" }
 
       if (-not $conversationId) { $conversationId = 'c-demo-001' }
 
@@ -692,7 +692,7 @@ function Invoke-GcSampleRequest {
       $queueIds = @()
       try {
         $queueIds = @($Body.filter.predicates | Where-Object { $_.dimension -eq 'queueId' } | ForEach-Object { $_.value }) | ForEach-Object { @($_) } | Select-Object -First 1
-      } catch { }
+      } catch { Write-Verbose "Ignored error: $_" }
       if (-not $queueIds) { $queueIds = @($dataset.routing.queues | ForEach-Object { $_.id }) }
 
       $results = foreach ($qid in @($queueIds)) {
@@ -722,7 +722,7 @@ function Invoke-GcSampleRequest {
           if ($rec.startTime -and $rec.endTime) {
             $durationMs = [int](([datetime]$rec.endTime - [datetime]$rec.startTime).TotalMilliseconds)
           }
-        } catch { }
+        } catch { Write-Verbose "Ignored error: $_" }
 
         [pscustomobject]@{
           id                   = $rec.id
@@ -753,7 +753,7 @@ function Invoke-GcSampleRequest {
         if ($r.startTime -and $r.endTime) {
           $durationMs = [int](([datetime]$r.endTime - [datetime]$r.startTime).TotalMilliseconds)
         }
-      } catch { }
+      } catch { Write-Verbose "Ignored error: $_" }
 
       return [pscustomobject]@{
         id                   = $r.id
