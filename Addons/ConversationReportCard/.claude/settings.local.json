@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"g:/Development/20_Staging/GenesysCloud/ConversationReportCard/artifacts/_syntax_check.ps1\")",
+      "Bash(echo \"exit: $?\")"
+    ]
+  }
+}
